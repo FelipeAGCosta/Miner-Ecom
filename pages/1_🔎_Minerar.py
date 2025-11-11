@@ -1,4 +1,5 @@
 import math
+import time
 import urllib.parse as _url
 import pandas as pd
 import streamlit as st
@@ -46,8 +47,7 @@ with col5:
 
 qty_min = st.text_input("Quantidade mínima (só enriquece se informar)", value="")
 
-st.caption("A coleta usa 200 itens/página e até 25 páginas por categoria. Links são clicáveis; use as setas para navegar os resultados.")
-
+st.caption("Conforme mais ampla sua busca e mais filtros aplicar, maior o tempo de execução. (Mostramos tempo decorrido e uma ETA durante o carregamento.)")
 st.divider()
 
 # ----------------------------
@@ -117,18 +117,26 @@ def _make_search_url(row):
         q = str(row["title"]).strip()
     return f"https://www.ebay.com/sch/i.html?_nkw={_url.quote_plus(q)}" if q else None
 
+def _fmt_price(x):
+    try:
+        f = float(x)
+        return f"${f:.2f}"
+    except Exception:
+        return ""
+
 def _render_table(df):
-    # Título, preço, qty, marca, mpn, gtin, link do produto e link de busca
-    base_cols = ["title","price","currency","available_qty","brand","mpn","gtin","item_url","search_url"]
-    use_cols  = [c for c in base_cols if c in df.columns]
+    # Monta colunas de exibição:
+    # - remove "currency"
+    # - "price_disp" formatado com $ e 2 casas
+    show_cols = ["title","price_disp","available_qty","brand","mpn","gtin","item_url","search_url"]
+    exist = [c for c in show_cols if c in df.columns]
     st.dataframe(
-        df[use_cols],
+        df[exist],
         use_container_width=True,
         hide_index=True,
         column_config={
             "title": "Título",
-            "price": "Preço",
-            "currency": "Moeda",
+            "price_disp": "Preço",
             "available_qty": "Qtd (estim.)",
             "brand": "Marca",
             "mpn": "MPN",
@@ -152,24 +160,36 @@ if st.button("🧲 Minerar eBay"):
     qmin_v = _num(qty_min, to_int=True)
 
     try:
-        # 1) Coleta (com fieldgroups=EXTENDED para tentar brand/mpn/gtin sem enriquecer)
+        # Timer / mensagens dinâmicas
+        t0 = time.time()
+        msg = st.empty()
+        progress = st.progress(0, text="Iniciando...")
+
+        # 1) Coleta
         all_rows = []
-        progress = st.progress(0, text="Consultando eBay Browse API…")
         total = len(cat_ids)
         for i, cat_id in enumerate(cat_ids, start=1):
+            cat_t0 = time.time()
             results = search_category_safe(
                 category_id=cat_id,
                 source_price_min=pmin_v,
                 condition=cond,
                 limit_per_page=API_ITEMS_PER_PAGE,
                 max_pages=API_MAX_PAGES,
-                fieldgroups="EXTENDED",   # <--- tenta campos extras no summary
             ) or []
             for r in results:
                 if not r.get("category_id"):
                     r["category_id"] = cat_id
             all_rows.extend(results)
+
+            # ETA simples por categoria concluída
+            elapsed = time.time() - t0
+            per_cat = elapsed / i
+            rem = (total - i) * per_cat
             progress.progress(i/total)
+            msg.markdown(
+                f"⏳ Buscando… (categoria {i}/{total}) — decorrido **{elapsed:0.1f}s** · estimado restante **{rem:0.1f}s**"
+            )
 
         df = pd.DataFrame(all_rows)
         if df.empty:
@@ -184,17 +204,23 @@ if st.button("🧲 Minerar eBay"):
             to_enrich = missing_ids[:MAX_ENRICH]
             if to_enrich:
                 enr = []
-                prog = st.progress(0, text="Enriquecendo itens (detalhe)…")
                 for j, iid in enumerate(to_enrich, start=1):
-                    try:
-                        d = get_item_detail(iid)
-                        if d.get("item_id") and (not d.get("category_id")):
-                            base_cat = df.loc[df["item_id"] == d["item_id"], "category_id"]
-                            if not base_cat.empty:
-                                d["category_id"] = int(base_cat.iloc[0])
-                        enr.append(d)
-                    finally:
-                        prog.progress(j/len(to_enrich))
+                    d = get_item_detail(iid)
+                    if d.get("item_id") and (not d.get("category_id")):
+                        base_cat = df.loc[df["item_id"] == d["item_id"], "category_id"]
+                        if not base_cat.empty:
+                            d["category_id"] = int(base_cat.iloc[0])
+                    enr.append(d)
+
+                    # ETA simples no enriquecimento
+                    elapsed = time.time() - t0
+                    per_item = elapsed / max(1, (len(cat_ids) + j))  # aproximação
+                    rem = (len(to_enrich) - j) * per_item
+                    progress.progress(min(1.0, (i-1)/total + (j/len(to_enrich))/total))
+                    msg.markdown(
+                        f"🔎 Enriquecendo… ({j}/{len(to_enrich)}) — decorrido **{elapsed:0.1f}s** · estimado restante **{rem:0.1f}s**"
+                    )
+
                 if enr:
                     df_enr = _dedup(pd.DataFrame(enr))
                     if not df_enr.empty and "item_id" in df_enr.columns:
@@ -209,18 +235,32 @@ if st.button("🧲 Minerar eBay"):
                         drop_cols = [c for c in df.columns if c.endswith("_enr")]
                         df = df.drop(columns=drop_cols)
 
-        # 3) Filtros finais (preço/qty) + gerar search_url
+        # 3) Filtros finais (preço/qty)
         view = _apply_filters_local(df, pmin_v, pmax_v, qmin_v)
+
+        # 3.1) Ordenação global por preço crescente (antes de paginar)
+        view["price_num"] = pd.to_numeric(view["price"], errors="coerce")
+        view = view.sort_values(by=["price_num","title"], ascending=[True, True], kind="mergesort").reset_index(drop=True)
+
+        # 3.2) Formatação do preço e remoção da coluna currency
+        view["price_disp"] = view["price_num"].apply(_fmt_price)
+        if "currency" in view.columns:
+            view = view.drop(columns=["currency"])
+
+        # 3.3) Link de “outros vendedores”
         if "search_url" not in view.columns:
             view["search_url"] = view.apply(_make_search_url, axis=1)
 
-        # Sanitiza e persiste
+        # 4) Sanitiza e persiste
         engine = make_engine()
         safe_df = sql_safe_frame(view)  # evita NaN no MySQL
         n = upsert_ebay_listings(engine, safe_df)
+
+        elapsed_total = time.time() - t0
+        msg.markdown(f"✅ Concluído em **{elapsed_total:0.1f}s**.")
         st.success(f"Gravados/atualizados: **{n}**")
 
-        # 4) Guarda na sessão para paginação e renderiza página 1
+        # 5) Guarda na sessão para paginação e renderiza página 1
         st.session_state["_results_df"] = view.reset_index(drop=True)
         st.session_state["_page_num"] = 1
 
@@ -243,7 +283,7 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
             st.session_state["_page_num"] = max(1, page - 1)
             st.rerun()
     with info_col:
-        st.write(f"**Total após filtros/dedup:** {len(df)}  |  Página {page}/{total_pages}")
+        st.write(f"**Total: {len(df)} itens | Página {page}/{total_pages}**")
     with next_col:
         if st.button("▶", use_container_width=True, disabled=(page >= total_pages), key="next_page"):
             st.session_state["_page_num"] = min(total_pages, page + 1)
@@ -253,7 +293,7 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
     end = start + PAGE_SIZE
     page_df = df.iloc[start:end].copy()
 
-    # Render com links clicáveis
+    # Render (sem “Moeda”, preço formatado com $ e 2 casas, links clicáveis)
     _render_table(page_df)
 
     st.caption(f"Página {page}/{total_pages} — exibindo {len(page_df)} itens.")
