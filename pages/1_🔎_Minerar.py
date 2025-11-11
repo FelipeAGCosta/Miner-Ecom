@@ -1,5 +1,6 @@
 import math
 import time
+from datetime import timedelta
 import urllib.parse as _url
 import pandas as pd
 import streamlit as st
@@ -47,7 +48,7 @@ with col5:
 
 qty_min = st.text_input("Quantidade mínima (só enriquece se informar)", value="")
 
-st.caption("Conforme mais ampla sua busca e mais filtros aplicar, maior o tempo de execução. (Mostramos tempo decorrido e uma ETA durante o carregamento.)")
+st.caption("Conforme mais ampla sua busca e mais filtros aplicar, maior o tempo de execução. Exibimos tempo decorrido e uma ETA durante o carregamento.")
 st.divider()
 
 # ----------------------------
@@ -59,6 +60,9 @@ def _num(x, to_int=False):
         return int(v) if to_int else v
     except Exception:
         return None
+
+def _fmt_eta(seconds: float) -> str:
+    return str(timedelta(seconds=int(max(0, seconds))))
 
 def _apply_filters_local(df: pd.DataFrame, pmin, pmax, qmin):
     out = df.copy()
@@ -160,16 +164,15 @@ if st.button("🧲 Minerar eBay"):
     qmin_v = _num(qty_min, to_int=True)
 
     try:
-        # Timer / mensagens dinâmicas
+        # Timer / mensagens dinâmicas (sempre visível, com ETA)
         t0 = time.time()
         msg = st.empty()
-        progress = st.progress(0, text="Iniciando...")
+        progress = st.progress(0.0, text="Preparando…")
 
         # 1) Coleta
         all_rows = []
         total = len(cat_ids)
         for i, cat_id in enumerate(cat_ids, start=1):
-            cat_t0 = time.time()
             results = search_category_safe(
                 category_id=cat_id,
                 source_price_min=pmin_v,
@@ -182,14 +185,14 @@ if st.button("🧲 Minerar eBay"):
                     r["category_id"] = cat_id
             all_rows.extend(results)
 
-            # ETA simples por categoria concluída
+            # ETA por categoria concluída
             elapsed = time.time() - t0
             per_cat = elapsed / i
             rem = (total - i) * per_cat
-            progress.progress(i/total)
-            msg.markdown(
-                f"⏳ Buscando… (categoria {i}/{total}) — decorrido **{elapsed:0.1f}s** · estimado restante **{rem:0.1f}s**"
-            )
+            progress.progress(i/total, text=f"Consultando eBay… {i}/{total} · decorrido {elapsed:.1f}s · restante ~{_fmt_eta(rem)}")
+            msg.markdown(f"⏳ Buscando… (categoria {i}/{total}) — decorrido **{elapsed:0.1f}s** · estimado restante **{_fmt_eta(rem)}**")
+
+        progress.progress(1.0, text=f"Coleta concluída em {time.time()-t0:.1f}s")
 
         df = pd.DataFrame(all_rows)
         if df.empty:
@@ -204,6 +207,7 @@ if st.button("🧲 Minerar eBay"):
             to_enrich = missing_ids[:MAX_ENRICH]
             if to_enrich:
                 enr = []
+                t1 = time.time()
                 for j, iid in enumerate(to_enrich, start=1):
                     d = get_item_detail(iid)
                     if d.get("item_id") and (not d.get("category_id")):
@@ -212,14 +216,13 @@ if st.button("🧲 Minerar eBay"):
                             d["category_id"] = int(base_cat.iloc[0])
                     enr.append(d)
 
-                    # ETA simples no enriquecimento
-                    elapsed = time.time() - t0
-                    per_item = elapsed / max(1, (len(cat_ids) + j))  # aproximação
-                    rem = (len(to_enrich) - j) * per_item
-                    progress.progress(min(1.0, (i-1)/total + (j/len(to_enrich))/total))
-                    msg.markdown(
-                        f"🔎 Enriquecendo… ({j}/{len(to_enrich)}) — decorrido **{elapsed:0.1f}s** · estimado restante **{rem:0.1f}s**"
-                    )
+                    # ETA do enriquecimento
+                    elapsed_e = time.time() - t1
+                    rem_e = (len(to_enrich) - j) * (elapsed_e / max(1, j))
+                    progress.progress(min(1.0, j/len(to_enrich)), text=f"Enriquecendo… {j}/{len(to_enrich)} · restante ~{_fmt_eta(rem_e)}")
+                    msg.markdown(f"🔎 Enriquecendo… ({j}/{len(to_enrich)}) — decorrido **{elapsed_e:.1f}s** · estimado restante **{_fmt_eta(rem_e)}**")
+
+                progress.progress(1.0, text="Enriquecimento concluído.")
 
                 if enr:
                     df_enr = _dedup(pd.DataFrame(enr))
@@ -253,7 +256,7 @@ if st.button("🧲 Minerar eBay"):
 
         # 4) Sanitiza e persiste
         engine = make_engine()
-        safe_df = sql_safe_frame(view)  # evita NaN no MySQL
+        safe_df = sql_safe_frame(view)  # evita NaN e currency nula (usa USD)
         n = upsert_ebay_listings(engine, safe_df)
 
         elapsed_total = time.time() - t0
