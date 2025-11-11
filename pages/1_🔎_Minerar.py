@@ -1,106 +1,259 @@
+import math
+import urllib.parse as _url
 import pandas as pd
 import streamlit as st
 from lib.config import make_engine
-from lib.tasks import load_tasks
-from lib.db import upsert_ebay_listings, fetch_recent_items
-from lib.ebay_api import search_by_category
+from lib.tasks import load_categories_tree, flatten_categories
+from lib.db import upsert_ebay_listings, sql_safe_frame
+from lib.ebay_api import search_category_safe, get_item_detail
 
 st.header("🔎 Minerar")
 
-tasks_df = load_tasks()
+# Limites fixos de coleta (máximos seguros para Browse API)
+API_ITEMS_PER_PAGE = 200
+API_MAX_PAGES      = 25
+MAX_ENRICH         = 300   # só usado se houver qty_min
 
-col1, col2, col3, col4 = st.columns([1.2,1,1,1])
+# Carrega categorias / subcategorias
+tree = load_categories_tree()
+flat = flatten_categories(tree)
+
+# ----------------------------
+# Filtros
+# ----------------------------
+col1, col2 = st.columns([1.6, 1.6])
 with col1:
-    options = tasks_df["category_id"].astype(int).unique().tolist() if not tasks_df.empty and "category_id" in tasks_df.columns else []
-    if options:
-        st.session_state.filters["category_id"] = st.selectbox(
-            "Categoria eBay (category_id)", options,
-            index=options.index(st.session_state.filters["category_id"]) if st.session_state.filters["category_id"] in options else 0
-        )
-    else:
-        st.session_state.filters["category_id"] = st.number_input(
-            "Categoria eBay (category_id)", min_value=0, step=1,
-            value=int(st.session_state.filters["category_id"])
-        )
+    root_names = ["Todas as categorias"] + [n["name"] for n in tree]
+    sel_root = st.selectbox("Categoria (nível 1)", root_names, index=0)
+
 with col2:
-    st.session_state.filters["source_price_min"] = st.number_input(
-        "Preço mínimo (US$)", min_value=0.0, step=1.0,
-        value=float(st.session_state.filters["source_price_min"]), format="%.2f"
-    )
+    child_names = ["Todas as subcategorias"]
+    if sel_root != "Todas as categorias":
+        for n in tree:
+            if n["name"] == sel_root:
+                for ch in n.get("children", []) or []:
+                    child_names.append(ch["name"])
+                break
+    sel_child = st.selectbox("Subcategoria (nível 2)", child_names, index=0)
+
+col3, col4, col5 = st.columns([1,1,1])
 with col3:
-    st.session_state.filters["min_qty"] = st.number_input(
-        "Quantidade mínima", min_value=1, step=1, value=int(st.session_state.filters["min_qty"])
-    )
+    pmin = st.text_input("Preço mínimo (US$)", value="")
 with col4:
-    st.session_state.filters["condition"] = st.selectbox(
-        "Condição", ["NEW","USED","REFURBISHED"],
-        index=["NEW","USED","REFURBISHED"].index(st.session_state.filters["condition"])
+    pmax = st.text_input("Preço máximo (US$)", value="")
+with col5:
+    cond = st.selectbox("Condição", ["NEW","USED","REFURBISHED"], index=0)
+
+qty_min = st.text_input("Quantidade mínima (só enriquece se informar)", value="")
+
+st.caption("A coleta usa 200 itens/página e até 25 páginas por categoria. Links são clicáveis; use as setas para navegar os resultados.")
+
+st.divider()
+
+# ----------------------------
+# Helpers
+# ----------------------------
+def _num(x, to_int=False):
+    try:
+        v = float(x)
+        return int(v) if to_int else v
+    except Exception:
+        return None
+
+def _apply_filters_local(df: pd.DataFrame, pmin, pmax, qmin):
+    out = df.copy()
+    if "price" in out.columns:
+        prices = pd.to_numeric(out["price"], errors="coerce")
+        if pmin is not None: out = out[prices >= pmin]
+        if pmax is not None: out = out[prices <= pmax]
+    if qmin is not None and "available_qty" in out.columns:
+        qty = pd.to_numeric(out["available_qty"], errors="coerce")
+        out = out[qty.notna() & (qty >= qmin)]
+    return out
+
+def _dedup(df):
+    if "item_id" not in df.columns:
+        return df
+    return df.dropna(subset=["item_id"]).drop_duplicates(subset=["item_id"], keep="first").copy()
+
+def _resolve_category_ids():
+    ids = []
+    if sel_root == "Todas as categorias":
+        if not flat.empty:
+            ids = flat["category_id"].dropna().astype(int).unique().tolist()
+    else:
+        root_id = None
+        for n in tree:
+            if n["name"] == sel_root:
+                root_id = int(n["category_id"])
+                break
+        if sel_child == "Todas as subcategorias":
+            ids = [root_id]
+            for n in tree:
+                if n["name"] == sel_root:
+                    for ch in n.get("children", []) or []:
+                        ids.append(int(ch["category_id"]))
+                    break
+        else:
+            for n in tree:
+                if n["name"] == sel_root:
+                    for ch in n.get("children", []) or []:
+                        if ch["name"] == sel_child:
+                            ids = [int(ch["category_id"])]
+                            break
+                    break
+            if not ids and root_id:
+                ids = [root_id]
+    return ids
+
+def _make_search_url(row):
+    # Prioriza GTIN se existir, senão usa o título
+    q = None
+    for key in ["gtin", "UPC/EAN/ISBN", "upc", "ean"]:
+        if key in row and pd.notna(row[key]):
+            q = str(row[key]).strip()
+            break
+    if not q and "title" in row:
+        q = str(row["title"]).strip()
+    return f"https://www.ebay.com/sch/i.html?_nkw={_url.quote_plus(q)}" if q else None
+
+def _render_table(df):
+    # Título, preço, qty, marca, mpn, gtin, link do produto e link de busca
+    base_cols = ["title","price","currency","available_qty","brand","mpn","gtin","item_url","search_url"]
+    use_cols  = [c for c in base_cols if c in df.columns]
+    st.dataframe(
+        df[use_cols],
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "title": "Título",
+            "price": "Preço",
+            "currency": "Moeda",
+            "available_qty": "Qtd (estim.)",
+            "brand": "Marca",
+            "mpn": "MPN",
+            "gtin": "UPC/EAN/ISBN",
+            "item_url": st.column_config.LinkColumn("Produto (eBay)", display_text="Abrir"),
+            "search_url": st.column_config.LinkColumn("Ver outros vendedores", display_text="Buscar"),
+        },
     )
 
-st.caption("Ajuste e clique em **Minerar eBay**. Tudo é salvo no banco.")
-st.divider()
+# ----------------------------
+# Ação: Minerar
+# ----------------------------
+if st.button("🧲 Minerar eBay"):
+    cat_ids = _resolve_category_ids()
+    if not cat_ids:
+        st.error("Nenhuma categoria resolvida. Revise `search_tasks.yaml`.")
+        st.stop()
 
-if st.button("🧲 Minerar eBay (por categoria)"):
+    pmin_v = _num(pmin)
+    pmax_v = _num(pmax)
+    qmin_v = _num(qty_min, to_int=True)
+
     try:
-        st.info("Consultando eBay Browse API…")
-        results = search_by_category(
-            category_id=int(st.session_state.filters["category_id"]),
-            source_price_min=float(st.session_state.filters["source_price_min"]),
-            condition=str(st.session_state.filters["condition"]),
-            limit_per_page=50,
-            max_pages=2,
-        )
-        df = pd.DataFrame(results)
-        st.write(f"Itens retornados: **{len(df)}**")
+        # 1) Coleta (com fieldgroups=EXTENDED para tentar brand/mpn/gtin sem enriquecer)
+        all_rows = []
+        progress = st.progress(0, text="Consultando eBay Browse API…")
+        total = len(cat_ids)
+        for i, cat_id in enumerate(cat_ids, start=1):
+            results = search_category_safe(
+                category_id=cat_id,
+                source_price_min=pmin_v,
+                condition=cond,
+                limit_per_page=API_ITEMS_PER_PAGE,
+                max_pages=API_MAX_PAGES,
+                fieldgroups="EXTENDED",   # <--- tenta campos extras no summary
+            ) or []
+            for r in results:
+                if not r.get("category_id"):
+                    r["category_id"] = cat_id
+            all_rows.extend(results)
+            progress.progress(i/total)
 
-        if not df.empty:
-            df["available_qty_int"] = pd.to_numeric(df["available_qty"], errors="coerce").fillna(-1).astype(int)
-            st.write(f"Itens com qty **informada**: **{(df['available_qty'].notna()).sum()}**")
+        df = pd.DataFrame(all_rows)
+        if df.empty:
+            st.warning("Sem resultados para os filtros.")
+            st.stop()
 
-            df_qty_ok = df[df["available_qty_int"] >= int(st.session_state.filters["min_qty"])]
-            st.write(f"Qtd ≥ {int(st.session_state.filters['min_qty'])}: **{len(df_qty_ok)}**")
+        df = _dedup(df)
 
-            engine = make_engine()
-            inserted_all = upsert_ebay_listings(engine, df.drop(columns=["available_qty_int"]))
-            st.success(f"Gravados/atualizados (TODOS): **{inserted_all}** em `ebay_listing`.")
+        # 2) Enriquecimento CONDICIONAL (só se qty mínima informada)
+        if qmin_v is not None and "available_qty" in df.columns:
+            missing_ids = df.loc[df["available_qty"].isna(), "item_id"].dropna().astype(str).tolist()
+            to_enrich = missing_ids[:MAX_ENRICH]
+            if to_enrich:
+                enr = []
+                prog = st.progress(0, text="Enriquecendo itens (detalhe)…")
+                for j, iid in enumerate(to_enrich, start=1):
+                    try:
+                        d = get_item_detail(iid)
+                        if d.get("item_id") and (not d.get("category_id")):
+                            base_cat = df.loc[df["item_id"] == d["item_id"], "category_id"]
+                            if not base_cat.empty:
+                                d["category_id"] = int(base_cat.iloc[0])
+                        enr.append(d)
+                    finally:
+                        prog.progress(j/len(to_enrich))
+                if enr:
+                    df_enr = _dedup(pd.DataFrame(enr))
+                    if not df_enr.empty and "item_id" in df_enr.columns:
+                        df = df.merge(
+                            df_enr[["item_id","available_qty","qty_flag","brand","mpn","gtin","category_id"]],
+                            on="item_id", how="left", suffixes=("", "_enr")
+                        )
+                        for col in ["available_qty","qty_flag","brand","mpn","gtin","category_id"]:
+                            alt = f"{col}_enr"
+                            if alt in df.columns:
+                                df[col] = df[col].where(df[col].notna(), df[alt])
+                        drop_cols = [c for c in df.columns if c.endswith("_enr")]
+                        df = df.drop(columns=drop_cols)
 
-            if not df_qty_ok.empty:
-                cols_map = {"title":"Título","price":"Preço","currency":"Moeda","available_qty":"Qtd (estim.)",
-                            "brand":"Marca","mpn":"MPN","gtin":"UPC/EAN/ISBN","item_url":"Link"}
-                view = df_qty_ok[list(cols_map.keys())].rename(columns=cols_map)
-                st.dataframe(view.head(50), use_container_width=True, hide_index=True)
-            else:
-                st.warning("Nenhum item atingiu a quantidade mínima — ou a API não retornou quantidade.")
-        else:
-            st.warning("Sem resultados para esses filtros.")
-    except Exception as e:
-        st.error(f"Falha na mineração: {e}")
+        # 3) Filtros finais (preço/qty) + gerar search_url
+        view = _apply_filters_local(df, pmin_v, pmax_v, qmin_v)
+        if "search_url" not in view.columns:
+            view["search_url"] = view.apply(_make_search_url, axis=1)
 
-st.divider()
-st.subheader("Resultados salvos no banco")
-colf1, colf2, colf3, colf4 = st.columns([1,1,2,1])
-with colf1:
-    qty_filter = st.selectbox("Quantidade", ["Todos","Com qty","Sem qty"], index=0)
-    has_qty = {"Todos": None, "Com qty": True, "Sem qty": False}[qty_filter]
-with colf2:
-    min_price_filter = st.number_input("Preço mínimo (US$)", min_value=0.0, step=1.0, value=0.0, format="%.2f")
-    min_price_val = min_price_filter if min_price_filter > 0 else None
-with colf3:
-    q_title = st.text_input("Buscar no título", value="")
-with colf4:
-    limit_rows = st.number_input("Limite", min_value=10, max_value=2000, value=200, step=10)
-
-if st.button("Atualizar tabela"):
-    try:
+        # Sanitiza e persiste
         engine = make_engine()
-        df_view = fetch_recent_items(engine, has_qty, min_price_val, q_title.strip() or None, limit=int(limit_rows))
-        st.write(f"Registros exibidos: **{len(df_view)}**")
-        if not df_view.empty:
-            cols_map = {"title":"Título","price":"Preço","currency":"Moeda","available_qty":"Qtd (estim.)",
-                        "brand":"Marca","mpn":"MPN","gtin":"UPC/EAN/ISBN","item_url":"Link","fetched_at":"Atualizado em"}
-            view = df_view[list(cols_map.keys())].rename(columns=cols_map)
-            st.dataframe(view, use_container_width=True, hide_index=True)
-        else:
-            st.info("Nada a exibir com os filtros atuais.")
+        safe_df = sql_safe_frame(view)  # evita NaN no MySQL
+        n = upsert_ebay_listings(engine, safe_df)
+        st.success(f"Gravados/atualizados: **{n}**")
+
+        # 4) Guarda na sessão para paginação e renderiza página 1
+        st.session_state["_results_df"] = view.reset_index(drop=True)
+        st.session_state["_page_num"] = 1
+
     except Exception as e:
-        st.error(f"Falha ao carregar dados: {e}")
+        st.error(f"Falha na mineração/enriquecimento: {e}")
+
+# ----------------------------
+# Tabela + paginação (setas)
+# ----------------------------
+if "_results_df" in st.session_state and not st.session_state["_results_df"].empty:
+    df = st.session_state["_results_df"]
+
+    PAGE_SIZE = 50
+    total_pages = max(1, math.ceil(len(df) / PAGE_SIZE))
+    page = st.session_state.get("_page_num", 1)
+
+    prev_col, info_col, next_col = st.columns([0.1, 0.8, 0.1])
+    with prev_col:
+        if st.button("◀", use_container_width=True, disabled=(page <= 1), key="prev_page"):
+            st.session_state["_page_num"] = max(1, page - 1)
+            st.rerun()
+    with info_col:
+        st.write(f"**Total após filtros/dedup:** {len(df)}  |  Página {page}/{total_pages}")
+    with next_col:
+        if st.button("▶", use_container_width=True, disabled=(page >= total_pages), key="next_page"):
+            st.session_state["_page_num"] = min(total_pages, page + 1)
+            st.rerun()
+
+    start = (page - 1) * PAGE_SIZE
+    end = start + PAGE_SIZE
+    page_df = df.iloc[start:end].copy()
+
+    # Render com links clicáveis
+    _render_table(page_df)
+
+    st.caption(f"Página {page}/{total_pages} — exibindo {len(page_df)} itens.")

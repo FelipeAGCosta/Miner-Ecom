@@ -5,14 +5,8 @@ from pathlib import Path
 from lib.config import make_engine, DB_HOST, DB_PORT, DB_USER, DB_NAME
 from lib.tasks import load_tasks
 
-st.header("⚙️ Avançado (debug, presets)")
-tasks_df = load_tasks()
-if tasks_df.empty:
-    st.info("Nenhuma tarefa encontrada. Edite `search_tasks.yaml`.")
-else:
-    st.dataframe(tasks_df, use_container_width=True)
+st.header("⚙️ Avançado (diagnóstico)")
 
-st.divider()
 st.subheader("Diagnóstico rápido do ambiente")
 colA, colB = st.columns(2)
 with colA:

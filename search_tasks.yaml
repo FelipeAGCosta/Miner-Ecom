@@ -1,7 +1,37 @@
+categories:
+  - name: "Eletrônicos"
+    category_id: 293
+    children: 
+      - { name: "Áudio Portátil", category_id: 15052 }
+      - { name: "Acessórios de Celular", category_id: 9394 }
+      - { name: "Componentes de PC", category_id: 175673 }
+  - name: "Casa & Cozinha"
+    category_id: 20625
+    children:
+      - { name: "Utensílios de Cozinha", category_id: 20635 }
+      - { name: "Armazenamento e Organização", category_id: 20652 }
+      - { name: "Panelas e Frigideiras", category_id: 25462 }
+  - name: "Esporte & Lazer"
+    category_id: 888
+  - name: "Brinquedos"
+    category_id: 220
+  - name: "Roupas & Acessórios"
+    category_id: 11450
+  - name: "Beleza & Saúde"
+    category_id: 26395
+  - name: "Automotivo"
+    category_id: 6000
+  - name: "Pet Shop"
+    category_id: 1281
+  - name: "Ferramentas"
+    category_id: 631
+  - name: "Jardinagem"
+    category_id: 159912
+
+# (Opcional) tarefas pré-configuradas que você já tinha
 tasks:
-  - name: home_and_garden_min_15
+  - name: "Pads eletrônicos"
     category_id: 11700
-    keywords: []
-    source_price_min: 15.0
+    source_price_min: 15
     min_qty: 10
     condition: "NEW"
