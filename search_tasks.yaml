@@ -1,0 +1,7 @@
+tasks:
+  - name: home_and_garden_min_15
+    category_id: 11700
+    keywords: []
+    source_price_min: 15.0
+    min_qty: 10
+    condition: "NEW"
