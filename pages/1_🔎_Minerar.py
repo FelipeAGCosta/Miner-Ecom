@@ -42,11 +42,26 @@ with col2:
 
 col3, col4, col5 = st.columns([1, 1, 1])
 with col3:
-    pmin_input = st.number_input("Preço mínimo (US$)", min_value=0.0, value=0.0, step=1.0, format="%.2f")
+    pmin = st.number_input(
+        "Preço mínimo (US$)",
+        min_value=0.0,
+        value=0.0,
+        step=1.0,
+        format="%.2f",
+        key="pmin_input",
+    )
 with col4:
-    pmax_input = st.number_input("Preço máximo (US$)", min_value=0.0, value=0.0, step=1.0, format="%.2f")
+    pmax = st.number_input(
+        "Preço máximo (US$)",
+        min_value=0.0,
+        value=0.0,
+        step=1.0,
+        format="%.2f",
+        key="pmax_input",
+    )
 with col5:
     cond_pt = st.selectbox("Condição", ["Novo", "Usado", "Recondicionado", "Novo & Usado"], index=0)
+
 
 qty_min_input = st.number_input("Quantidade mínima (só enriquece se informar)", min_value=0, value=0, step=1)
 
@@ -151,16 +166,22 @@ def _make_search_url(row) -> str | None:
         q = str(row["title"]).strip()
     return f"https://www.ebay.com/sch/i.html?_nkw={_url.quote_plus(q)}" if q else None
 
-def _render_table(df: pd.DataFrame) -> None:
-    show_cols = ["title", "price", "available_qty", "brand", "mpn", "gtin", "condition", "item_url", "search_url"]
+def _render_table(df: pd.DataFrame):
+    show_cols = ["title","price_disp","available_qty","brand","mpn","gtin","condition","item_url","search_url"]
     exist = [c for c in show_cols if c in df.columns]
+
+    # altura aproximada: 38px por linha + cabeçalho
+    nrows = max(1, len(df))
+    height = 38 * (nrows + 1)
+
     st.dataframe(
         df[exist],
         use_container_width=True,
         hide_index=True,
+        height=height,
         column_config={
             "title": "Título",
-            "price": st.column_config.NumberColumn("Preço", format="$%.2f"),
+            "price_disp": "Preço",
             "available_qty": "Qtd (estim.)",
             "brand": "Marca",
             "mpn": "MPN",
@@ -180,8 +201,8 @@ def _ensure_currency(df: pd.DataFrame) -> pd.DataFrame:
 
 # ── ação ────────────────────────────────────────────────────────────────────────
 if st.button("🧲 Minerar eBay"):
-    pmin_v = pmin_input if pmin_input > 0 else None
-    pmax_v = pmax_input if pmax_input > 0 else None
+    pmin_v = pmin if pmin > 0 else None
+    pmax_v = pmax if pmax > 0 else None
     qmin_v = int(qty_min_input) if qty_min_input > 0 else None
 
     if pmin_v is not None and pmax_v is not None and pmax_v < pmin_v:
@@ -226,7 +247,7 @@ if st.button("🧲 Minerar eBay"):
 
         if cached:
             df = _dedup(pd.DataFrame(cached))
-            st.info(f"🧠 Cache usado: {len(df)} itens brutos antes de filtros.")
+            
         else:
             all_rows: list[dict] = []
             total_steps = len(cat_ids) * len(cond_list)
@@ -244,8 +265,9 @@ if st.button("🧲 Minerar eBay"):
                             price_max=pmax_v,
                             condition=cond,
                             limit_per_page=API_ITEMS_PER_PAGE,
-                            max_pages=API_MAX_PAGES,
+                            max_pages=API_MAX_PAGES, 
                         )
+                        time.sleep(0.2)
                         all_rows.extend(items)
                     except Exception as e:
                         failures += 1
@@ -263,7 +285,7 @@ if st.button("🧲 Minerar eBay"):
                     )
 
             df = _dedup(pd.DataFrame(all_rows))
-            st.info(f"🔎 API retornou {len(df)} itens brutos antes de filtros.")
+            
             if failures:
                 st.info(f"{failures} categoria(s) falharam por timeout/erro de rede. As demais foram processadas.")
             cache_set(ns, payload, df.to_dict(orient="records"), ttl_sec=1800)
@@ -274,17 +296,33 @@ if st.button("🧲 Minerar eBay"):
 
         # ── filtro local de preço ───────────────────────────────────────────────
         df = _apply_price_filter(df, pmin_v, pmax_v)
-        st.info(f"💰 Após filtro de preço local: {len(df)} itens.")
+        
         if df.empty:
             st.warning("Nenhum item dentro da faixa de preço informada.")
             st.stop()
 
         # ── filtro local de condição (reforço) ─────────────────────────────────
-        df = _apply_condition_filter(df, cond_pt)
-        st.info(f"🎯 Após filtro de condição local: {len(df)} itens.")
-        if df.empty:
-            st.warning("Nenhum item dentro da condição escolhida.")
-            st.stop()
+        df["price_num"] = pd.to_numeric(df["price"], errors="coerce")
+        view = df.copy()
+        if pmin_v is not None:
+            view = view[view["price_num"] >= pmin_v]
+        if pmax_v is not None:
+            view = view[view["price_num"] <= pmax_v]
+
+# condição em inglês vinda da API
+        if cond_pt == "Novo":
+            conds = ["NEW"]
+        elif cond_pt == "Usado":
+            conds = ["USED"]
+        elif cond_pt == "Recondicionado":
+            conds = ["REFURBISHED"]
+        else:
+            conds = ["NEW", "USED"]
+        
+        if conds:
+            view = view[view["condition"].isin(conds)]
+        
+        st.info(f"🎯 Após filtro de condição local: {len(view)} itens.")
 
         # ── enriquecimento (estoque / brand / mpn / gtin) ──────────────────────
         if qmin_v is not None:
