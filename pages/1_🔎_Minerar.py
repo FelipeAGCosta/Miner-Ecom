@@ -50,6 +50,15 @@ with col5:
 
 qty_min_input = st.number_input("Quantidade mínima (só enriquece se informar)", min_value=0, value=0, step=1)
 
+# controle explícito de ordenação (substitui o “clique no cabeçalho”)
+sort_dir = st.radio(
+    "Ordenar por preço",
+    ["Crescente", "Decrescente"],
+    index=0,
+    horizontal=True,
+)
+sort_asc = (sort_dir == "Crescente")
+
 st.caption("Quanto mais ampla a busca e mais filtros aplicar, maior o tempo. Mostramos tempo decorrido e uma ETA.")
 st.divider()
 
@@ -77,16 +86,43 @@ def _apply_price_filter(df: pd.DataFrame, pmin_v: float | None, pmax_v: float | 
     if "price" not in df.columns:
         if pmin_v is not None or pmax_v is not None:
             return df.iloc[0:0].copy()
+    else:
+        df = df.copy()
+        df["price_num"] = pd.to_numeric(df["price"], errors="coerce")
+
+        mask = pd.Series(True, index=df.index)
+        if pmin_v is not None:
+            mask &= df["price_num"].fillna(float("inf")) >= (float(pmin_v) - 1e-9)
+        if pmax_v is not None:
+            mask &= df["price_num"].fillna(float("-inf")) <= (float(pmax_v) + 1e-9)
+
+        df = df[mask].copy()
+
+    return df
+
+def _apply_condition_filter(df: pd.DataFrame, cond_pt: str) -> pd.DataFrame:
+    """
+    Reforça o filtro de condição no lado do app.
+    A Browse API já recebe conditions:{...}, mas aqui garantimos:
+      - Novo:   apenas conditions que contenham 'new'
+      - Usado:  apenas que contenham 'used'
+      - Recond.: que contenham 'refurb'
+      - Novo & Usado: 'new' ou 'used'
+    """
+    if "condition" not in df.columns:
         return df
 
     df = df.copy()
-    df["price_num"] = pd.to_numeric(df["price"], errors="coerce")
+    cond = df["condition"].astype(str).str.lower()
 
-    mask = pd.Series(True, index=df.index)
-    if pmin_v is not None:
-        mask &= df["price_num"].fillna(float("inf")) >= (float(pmin_v) - 1e-9)
-    if pmax_v is not None:
-        mask &= df["price_num"].fillna(float("-inf")) <= (float(pmax_v) + 1e-9)
+    if cond_pt == "Novo":
+        mask = cond.str.contains("new")
+    elif cond_pt == "Usado":
+        mask = cond.str.contains("used")
+    elif cond_pt == "Recondicionado":
+        mask = cond.str.contains("refurb")
+    else:  # Novo & Usado
+        mask = cond.str.contains("new") | cond.str.contains("used")
 
     return df[mask].copy()
 
@@ -255,7 +291,7 @@ if st.button("🧲 Minerar eBay"):
             cache_set(ns, payload, df.to_dict(orient="records"), ttl_sec=1800)
 
         if df.empty:
-            st.warning("Sem resultados para os filtros (antes do filtro local).")
+            st.warning("Sem resultados para os filtros (antes dos filtros locais).")
             st.stop()
 
         # ── filtro local de preço ───────────────────────────────────────────────
@@ -263,6 +299,13 @@ if st.button("🧲 Minerar eBay"):
         st.info(f"💰 Após filtro de preço local: {len(df)} itens.")
         if df.empty:
             st.warning("Nenhum item dentro da faixa de preço informada.")
+            st.stop()
+
+        # ── filtro local de condição (reforço) ─────────────────────────────────
+        df = _apply_condition_filter(df, cond_pt)
+        st.info(f"🎯 Após filtro de condição local: {len(df)} itens.")
+        if df.empty:
+            st.warning("Nenhum item dentro da condição escolhida.")
             st.stop()
 
         # ── enriquecimento (estoque / brand / mpn / gtin) ──────────────────────
@@ -309,21 +352,15 @@ if st.button("🧲 Minerar eBay"):
 
         # ── filtro de quantidade ────────────────────────────────────────────────
         view = _apply_qty_filter(df, qmin_v)
-        st.info(f"🧪 Depois dos filtros locais (preço + quantidade): {len(view)} itens.")
+        st.info(f"🧪 Depois dos filtros locais (preço + condição + quantidade): {len(view)} itens.")
 
         # ordenação / formato
         view["price_num"] = pd.to_numeric(view["price"], errors="coerce")
         view = (
-            view.sort_values(by=["price_num", "title"], ascending=[True, True], kind="mergesort")
+            view.sort_values(by=["price_num", "title"], ascending=[sort_asc, True], kind="mergesort")
             .reset_index(drop=True)
         )
         view["price_disp"] = view["price_num"].apply(_fmt_price)
-
-        # reforço final por segurança (idempotente)
-        if pmin_v is not None:
-            view = view[view["price_num"] >= pmin_v]
-        if pmax_v is not None:
-            view = view[view["price_num"] <= pmax_v]
 
         # persistir (mantém currency) e exibir (sem currency)
         view_for_db = _ensure_currency(view.copy())
