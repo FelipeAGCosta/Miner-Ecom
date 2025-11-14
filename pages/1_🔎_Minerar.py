@@ -50,16 +50,7 @@ with col5:
 
 qty_min_input = st.number_input("Quantidade mínima (só enriquece se informar)", min_value=0, value=0, step=1)
 
-# controle explícito de ordenação (substitui o “clique no cabeçalho”)
-sort_dir = st.radio(
-    "Ordenar por preço",
-    ["Crescente", "Decrescente"],
-    index=0,
-    horizontal=True,
-)
-sort_asc = (sort_dir == "Crescente")
-
-st.caption("Quanto mais ampla a busca e mais filtros aplicar, maior o tempo. Mostramos tempo decorrido e uma ETA.")
+st.caption("Quanto mais ampla a busca, maior o tempo de pesquisa. Recomendamos adicionar mais filtros para que a busca seja mais rápida.")
 st.divider()
 
 # ── helpers ─────────────────────────────────────────────────────────────────────
@@ -81,33 +72,27 @@ def _apply_qty_filter(df: pd.DataFrame, qmin: int | None) -> pd.DataFrame:
 
 def _apply_price_filter(df: pd.DataFrame, pmin_v: float | None, pmax_v: float | None) -> pd.DataFrame:
     """
-    Filtro local de preço. Tudo que vai pra tela/banco passa por aqui.
+    Filtro local de preço. Usa a coluna 'price' numérica.
     """
     if "price" not in df.columns:
         if pmin_v is not None or pmax_v is not None:
             return df.iloc[0:0].copy()
-    else:
-        df = df.copy()
-        df["price_num"] = pd.to_numeric(df["price"], errors="coerce")
+        return df
 
-        mask = pd.Series(True, index=df.index)
-        if pmin_v is not None:
-            mask &= df["price_num"].fillna(float("inf")) >= (float(pmin_v) - 1e-9)
-        if pmax_v is not None:
-            mask &= df["price_num"].fillna(float("-inf")) <= (float(pmax_v) + 1e-9)
+    df = df.copy()
+    df["price"] = pd.to_numeric(df["price"], errors="coerce")
 
-        df = df[mask].copy()
+    mask = pd.Series(True, index=df.index)
+    if pmin_v is not None:
+        mask &= df["price"].fillna(float("inf")) >= (float(pmin_v) - 1e-9)
+    if pmax_v is not None:
+        mask &= df["price"].fillna(float("-inf")) <= (float(pmax_v) + 1e-9)
 
-    return df
+    return df[mask].copy()
 
 def _apply_condition_filter(df: pd.DataFrame, cond_pt: str) -> pd.DataFrame:
     """
     Reforça o filtro de condição no lado do app.
-    A Browse API já recebe conditions:{...}, mas aqui garantimos:
-      - Novo:   apenas conditions que contenham 'new'
-      - Usado:  apenas que contenham 'used'
-      - Recond.: que contenham 'refurb'
-      - Novo & Usado: 'new' ou 'used'
     """
     if "condition" not in df.columns:
         return df
@@ -166,15 +151,8 @@ def _make_search_url(row) -> str | None:
         q = str(row["title"]).strip()
     return f"https://www.ebay.com/sch/i.html?_nkw={_url.quote_plus(q)}" if q else None
 
-def _fmt_price(x):
-    try:
-        f = float(x)
-        return f"${f:.2f}"
-    except Exception:
-        return ""
-
 def _render_table(df: pd.DataFrame) -> None:
-    show_cols = ["title", "price_disp", "available_qty", "brand", "mpn", "gtin", "condition", "item_url", "search_url"]
+    show_cols = ["title", "price", "available_qty", "brand", "mpn", "gtin", "condition", "item_url", "search_url"]
     exist = [c for c in show_cols if c in df.columns]
     st.dataframe(
         df[exist],
@@ -182,7 +160,7 @@ def _render_table(df: pd.DataFrame) -> None:
         hide_index=True,
         column_config={
             "title": "Título",
-            "price_disp": "Preço",
+            "price": st.column_config.NumberColumn("Preço", format="$%.2f"),
             "available_qty": "Qtd (estim.)",
             "brand": "Marca",
             "mpn": "MPN",
@@ -354,15 +332,14 @@ if st.button("🧲 Minerar eBay"):
         view = _apply_qty_filter(df, qmin_v)
         st.info(f"🧪 Depois dos filtros locais (preço + condição + quantidade): {len(view)} itens.")
 
-        # ordenação / formato
-        view["price_num"] = pd.to_numeric(view["price"], errors="coerce")
+        # ordenação inicial (padrão) — depois o usuário pode clicar no cabeçalho
+        view["price"] = pd.to_numeric(view["price"], errors="coerce")
         view = (
-            view.sort_values(by=["price_num", "title"], ascending=[sort_asc, True], kind="mergesort")
+            view.sort_values(by=["price", "title"], ascending=[True, True], kind="mergesort")
             .reset_index(drop=True)
         )
-        view["price_disp"] = view["price_num"].apply(_fmt_price)
 
-        # persistir (mantém currency) e exibir (sem currency)
+        # persistir (mantém currency) e exibir (sem currency extra)
         view_for_db = _ensure_currency(view.copy())
         n = upsert_ebay_listings(make_engine(), sql_safe_frame(view_for_db))
         st.success(f"✅ Gravados/atualizados: **{n}** registros.")
@@ -379,24 +356,42 @@ if st.button("🧲 Minerar eBay"):
         st.error(f"Falha na mineração/enriquecimento: {e}")
 
 # ── tabela + paginação ─────────────────────────────────────────────────────────
+
 if "_results_df" in st.session_state and not st.session_state["_results_df"].empty:
     df = st.session_state["_results_df"]
     PAGE_SIZE = 50
     total_pages = max(1, math.ceil(len(df) / PAGE_SIZE))
     page = st.session_state.get("_page_num", 1)
 
-    prev_col, info_col, next_col = st.columns([0.1, 0.8, 0.1])
-    with prev_col:
+    # navegação: ⏮ -10  |  ◀ -1  | info | +1 ▶  |  +10 ⏭
+    col_jump_back, col_prev, col_info, col_next, col_jump_forward = st.columns(
+        [0.08, 0.08, 0.68, 0.08, 0.08]
+    )
+
+    with col_jump_back:
+        if st.button("⏮", use_container_width=True, disabled=(page <= 1), key="jump_back_10"):
+            st.session_state["_page_num"] = max(1, page - 10)
+            st.rerun()
+
+    with col_prev:
         if st.button("◀", use_container_width=True, disabled=(page <= 1), key="prev_page"):
             st.session_state["_page_num"] = max(1, page - 1)
             st.rerun()
-    with info_col:
+
+    with col_info:
         st.write(f"**Total: {len(df)} itens | Página {page}/{total_pages}**")
-    with next_col:
+
+    with col_next:
         if st.button("▶", use_container_width=True, disabled=(page >= total_pages), key="next_page"):
             st.session_state["_page_num"] = min(total_pages, page + 1)
+            st.rerun()
+
+    with col_jump_forward:
+        if st.button("⏭", use_container_width=True, disabled=(page >= total_pages), key="jump_forward_10"):
+            st.session_state["_page_num"] = min(total_pages, page + 10)
             st.rerun()
 
     start, end = (page - 1) * PAGE_SIZE, (page - 1) * PAGE_SIZE + PAGE_SIZE
     _render_table(df.iloc[start:end].copy())
     st.caption(f"Página {page}/{total_pages} — exibindo {len(df.iloc[start:end])} itens.")
+
