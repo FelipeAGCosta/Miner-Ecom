@@ -1,4 +1,7 @@
-import os, math, time, urllib.parse as _url
+import os
+import math
+import time
+import urllib.parse as _url
 from datetime import timedelta
 
 import pandas as pd
@@ -7,9 +10,24 @@ import streamlit as st
 from lib.config import make_engine
 from lib.tasks import load_categories_tree, flatten_categories
 from lib.db import upsert_ebay_listings, sql_safe_frame
-from lib.ebay_search import search_items          # cliente de busca oficial
+from lib.ebay_search import search_items          # novo cliente de busca
 from lib.ebay_api import get_item_detail          # detalhes para enriquecimento
 from lib.redis_cache import cache_get, cache_set
+
+# ── CSS para links "visitados" ficarem roxos ───────────────────────────────────
+st.markdown(
+    """
+    <style>
+    a:link {
+        color: #1f6feb;
+    }
+    a:visited {
+        color: #a371f7;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 st.header("🔎 Minerar")
 
@@ -62,8 +80,12 @@ with col4:
 with col5:
     cond_pt = st.selectbox("Condição", ["Novo", "Usado", "Recondicionado", "Novo & Usado"], index=0)
 
-
-qty_min_input = st.number_input("Quantidade mínima (só enriquece se informar)", min_value=0, value=0, step=1)
+qty_min_input = st.number_input(
+    "Quantidade mínima (só enriquece se informar)",
+    min_value=0,
+    value=0,
+    step=1,
+)
 
 st.caption("Quanto mais ampla a busca, maior o tempo de pesquisa. Recomendamos adicionar mais filtros para que a busca seja mais rápida.")
 st.divider()
@@ -86,9 +108,6 @@ def _apply_qty_filter(df: pd.DataFrame, qmin: int | None) -> pd.DataFrame:
     return df[qty.notna() & (qty >= qmin)].copy()
 
 def _apply_price_filter(df: pd.DataFrame, pmin_v: float | None, pmax_v: float | None) -> pd.DataFrame:
-    """
-    Filtro local de preço. Usa a coluna 'price' numérica.
-    """
     if "price" not in df.columns:
         if pmin_v is not None or pmax_v is not None:
             return df.iloc[0:0].copy()
@@ -107,7 +126,8 @@ def _apply_price_filter(df: pd.DataFrame, pmin_v: float | None, pmax_v: float | 
 
 def _apply_condition_filter(df: pd.DataFrame, cond_pt: str) -> pd.DataFrame:
     """
-    Reforça o filtro de condição no lado do app.
+    Reforça o filtro de condição no lado do app,
+    usando 'New', 'Used', 'Refurbished' e variações.
     """
     if "condition" not in df.columns:
         return df
@@ -166,19 +186,23 @@ def _make_search_url(row) -> str | None:
         q = str(row["title"]).strip()
     return f"https://www.ebay.com/sch/i.html?_nkw={_url.quote_plus(q)}" if q else None
 
+def _fmt_price(x):
+    try:
+        f = float(x)
+        return f"${f:.2f}"
+    except Exception:
+        return ""
+
 def _render_table(df: pd.DataFrame):
     show_cols = ["title","price_disp","available_qty","brand","mpn","gtin","condition","item_url","search_url"]
     exist = [c for c in show_cols if c in df.columns]
 
-    # altura aproximada: 38px por linha + cabeçalho
-    nrows = max(1, len(df))
-    height = 38 * (nrows + 1)
-
+    # volta a ter rolagem interna (altura fixa)
     st.dataframe(
         df[exist],
         use_container_width=True,
         hide_index=True,
-        height=height,
+        height=500,
         column_config={
             "title": "Título",
             "price_disp": "Preço",
@@ -247,7 +271,6 @@ if st.button("🧲 Minerar eBay"):
 
         if cached:
             df = _dedup(pd.DataFrame(cached))
-            
         else:
             all_rows: list[dict] = []
             total_steps = len(cat_ids) * len(cond_list)
@@ -265,13 +288,14 @@ if st.button("🧲 Minerar eBay"):
                             price_max=pmax_v,
                             condition=cond,
                             limit_per_page=API_ITEMS_PER_PAGE,
-                            max_pages=API_MAX_PAGES, 
+                            max_pages=API_MAX_PAGES,
                         )
-                        time.sleep(0.2)
                         all_rows.extend(items)
                     except Exception as e:
                         failures += 1
-                        st.warning(f"⚠️ Falha na categoria {cat_id} ({type(e).__name__}): {e}. Continuando…")
+                        st.warning(
+                            f"⚠️ Falha na categoria {cat_id} ({type(e).__name__}): {e}. Continuando…"
+                        )
 
                     elapsed = time.time() - t0
                     per_step = elapsed / max(1, step)
@@ -285,7 +309,7 @@ if st.button("🧲 Minerar eBay"):
                     )
 
             df = _dedup(pd.DataFrame(all_rows))
-            
+
             if failures:
                 st.info(f"{failures} categoria(s) falharam por timeout/erro de rede. As demais foram processadas.")
             cache_set(ns, payload, df.to_dict(orient="records"), ttl_sec=1800)
@@ -296,46 +320,61 @@ if st.button("🧲 Minerar eBay"):
 
         # ── filtro local de preço ───────────────────────────────────────────────
         df = _apply_price_filter(df, pmin_v, pmax_v)
-        
         if df.empty:
             st.warning("Nenhum item dentro da faixa de preço informada.")
             st.stop()
 
-        # ── filtro local de condição (reforço) ─────────────────────────────────
-        df["price_num"] = pd.to_numeric(df["price"], errors="coerce")
-        view = df.copy()
-        if pmin_v is not None:
-            view = view[view["price_num"] >= pmin_v]
-        if pmax_v is not None:
-            view = view[view["price_num"] <= pmax_v]
-
-# condição em inglês vinda da API
-        if cond_pt == "Novo":
-            conds = ["NEW"]
-        elif cond_pt == "Usado":
-            conds = ["USED"]
-        elif cond_pt == "Recondicionado":
-            conds = ["REFURBISHED"]
-        else:
-            conds = ["NEW", "USED"]
-        
-        if conds:
-            view = view[view["condition"].isin(conds)]
-        
+        # ── filtro local de condição ───────────────────────────────────────────
+        view = _apply_condition_filter(df, cond_pt)
         st.info(f"🎯 Após filtro de condição local: {len(view)} itens.")
+        if view.empty:
+            st.warning("Nenhum item após aplicar a condição selecionada.")
+            st.stop()
 
-        # ── enriquecimento (estoque / brand / mpn / gtin) ──────────────────────
+        # ── enriquecimento com base na view filtrada ───────────────────────────
+                # ── enriquecimento (estoque / brand / mpn / gtin) ──────────────────────
         if qmin_v is not None:
-            ids = df["item_id"].dropna().astype(str).unique().tolist()
+            # Só enriquece itens que ainda NÃO têm available_qty
+            if "available_qty" in df.columns:
+                no_qty_mask = pd.isna(df["available_qty"])
+            else:
+                no_qty_mask = pd.Series(True, index=df.index)
+
+            ids = (
+                df.loc[no_qty_mask, "item_id"]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            )
+
+            # Respeita MAX_ENRICH
             to_enrich = ids[:MAX_ENRICH]
-            if to_enrich:
+
+            if not to_enrich:
+                st.info("Nenhum item candidato para enriquecimento.")
+            else:
                 msg = st.empty()
                 progress = st.progress(0.0, text="Enriquecendo…")
                 t1 = time.time()
                 enr: list[dict] = []
+
                 for j, iid in enumerate(to_enrich, start=1):
-                    d = get_item_detail(iid)
+                    try:
+                        d = get_item_detail(iid)
+                    except Exception as e:
+                        # Se der algum erro inesperado, marca e segue
+                        d = {
+                            "item_id": iid,
+                            "available_qty": None,
+                            "qty_flag": f"ERROR:{type(e).__name__}",
+                            "brand": None,
+                            "mpn": None,
+                            "gtin": None,
+                            "category_id": None,
+                        }
                     enr.append(d)
+
                     elapsed_e = time.time() - t1
                     rem_e = (len(to_enrich) - j) * (elapsed_e / max(1, j))
                     progress.progress(
@@ -345,6 +384,7 @@ if st.button("🧲 Minerar eBay"):
                     msg.markdown(
                         f"🔎 Enriquecendo… ({j}/{len(to_enrich)}) — decorrido **{elapsed_e:.1f}s** · estimado restante **{_fmt_eta(rem_e)}**"
                     )
+
                 if enr:
                     df_enr = _dedup(pd.DataFrame(enr))
                     if not df_enr.empty and "item_id" in df_enr.columns:
@@ -366,16 +406,22 @@ if st.button("🧲 Minerar eBay"):
                         drop_cols = [c for c in df.columns if c.endswith("_enr")]
                         df = df.drop(columns=drop_cols)
 
+
         # ── filtro de quantidade ────────────────────────────────────────────────
-        view = _apply_qty_filter(df, qmin_v)
+        view = _apply_qty_filter(view, qmin_v)
         st.info(f"🧪 Depois dos filtros locais (preço + condição + quantidade): {len(view)} itens.")
 
-        # ordenação inicial (padrão) — depois o usuário pode clicar no cabeçalho
-        view["price"] = pd.to_numeric(view["price"], errors="coerce")
+        if view.empty:
+            st.warning("Nenhum item após aplicar todos os filtros locais.")
+            st.stop()
+
+        # ordenação inicial por preço
+        view["price_num"] = pd.to_numeric(view["price"], errors="coerce")
         view = (
-            view.sort_values(by=["price", "title"], ascending=[True, True], kind="mergesort")
+            view.sort_values(by=["price_num", "title"], ascending=[True, True], kind="mergesort")
             .reset_index(drop=True)
         )
+        view["price_disp"] = view["price_num"].apply(_fmt_price)
 
         # persistir (mantém currency) e exibir (sem currency extra)
         view_for_db = _ensure_currency(view.copy())
@@ -394,14 +440,12 @@ if st.button("🧲 Minerar eBay"):
         st.error(f"Falha na mineração/enriquecimento: {e}")
 
 # ── tabela + paginação ─────────────────────────────────────────────────────────
-
 if "_results_df" in st.session_state and not st.session_state["_results_df"].empty:
     df = st.session_state["_results_df"]
     PAGE_SIZE = 50
     total_pages = max(1, math.ceil(len(df) / PAGE_SIZE))
     page = st.session_state.get("_page_num", 1)
 
-    # navegação: ⏮ -10  |  ◀ -1  | info | +1 ▶  |  +10 ⏭
     col_jump_back, col_prev, col_info, col_next, col_jump_forward = st.columns(
         [0.08, 0.08, 0.68, 0.08, 0.08]
     )
@@ -432,4 +476,3 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
     start, end = (page - 1) * PAGE_SIZE, (page - 1) * PAGE_SIZE + PAGE_SIZE
     _render_table(df.iloc[start:end].copy())
     st.caption(f"Página {page}/{total_pages} — exibindo {len(df.iloc[start:end])} itens.")
-
