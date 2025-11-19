@@ -405,17 +405,18 @@ if st.button("🧲 Minerar eBay"):
             st.warning("Nenhum item após aplicar a condição selecionada.")
             st.stop()
 
-        # ── enriquecimento com base na view filtrada ──────────────────────────
         # ── enriquecimento (estoque / brand / mpn / gtin) ─────────────────────
         if qmin_v is not None:
-            # Só enriquece itens que ainda NÃO têm available_qty
-            if "available_qty" in df.columns:
-                no_qty_mask = pd.isna(df["available_qty"])
+            # trabalha em cima da VIEW (itens já com preço + condição aplicada)
+            base = view.copy()
+
+            if "available_qty" in base.columns:
+                no_qty_mask = pd.isna(base["available_qty"])
             else:
-                no_qty_mask = pd.Series(True, index=df.index)
+                no_qty_mask = pd.Series(True, index=base.index)
 
             ids = (
-                df.loc[no_qty_mask, "item_id"]
+                base.loc[no_qty_mask, "item_id"]
                 .dropna()
                 .astype(str)
                 .unique()
@@ -465,6 +466,7 @@ if st.button("🧲 Minerar eBay"):
                         cols = ["item_id", "available_qty", "qty_flag", "brand", "mpn", "gtin", "category_id"]
                         cols = [c for c in cols if c in df_enr.columns]
 
+                        # mescla no DF principal (que será gravado no banco)
                         df = df.merge(
                             df_enr[cols],
                             on="item_id",
@@ -479,6 +481,10 @@ if st.button("🧲 Minerar eBay"):
 
                         drop_cols = [c for c in df.columns if c.endswith("_enr")]
                         df = df.drop(columns=drop_cols)
+
+                        # reconstroi a VIEW a partir do DF enriquecido
+                        view = _apply_condition_filter(df, cond_pt)
+                        st.info(f"🔁 Após enriquecimento, itens com condição aplicada: {len(view)} itens.")
 
         # ── filtro de quantidade ───────────────────────────────────────────────
         view = _apply_qty_filter(view, qmin_v)
