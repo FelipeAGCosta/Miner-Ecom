@@ -13,6 +13,7 @@ from lib.db import upsert_ebay_listings, sql_safe_frame
 from lib.ebay_search import search_items          # novo cliente de busca
 from lib.ebay_api import get_item_detail          # detalhes para enriquecimento
 from lib.redis_cache import cache_get, cache_set
+from integrations.amazon_matching import match_ebay_to_amazon  # integração Amazon
 
 # ── CSS para links "visitados" ficarem roxos ───────────────────────────────────
 st.markdown(
@@ -38,7 +39,7 @@ MAX_ENRICH         = int(st.secrets.get("MAX_ENRICH", os.getenv("MAX_ENRICH", 50
 tree = load_categories_tree()
 flat = flatten_categories(tree)
 
-# ── filtros ─────────────────────────────────────────────────────────────────────
+# ── filtros eBay ───────────────────────────────────────────────────────────────
 col_kw, _ = st.columns([2, 1])
 with col_kw:
     kw = st.text_input("Palavra-chave (opcional)", value="").strip()
@@ -87,10 +88,40 @@ qty_min_input = st.number_input(
     step=1,
 )
 
+# ── filtros Amazon (opcionais) ────────────────────────────────────────────────
+st.subheader("Filtros Amazon (opcional)")
+col_am1, col_am2, col_am3 = st.columns([1, 1, 1])
+with col_am1:
+    amazon_price_min = st.number_input(
+        "Preço mínimo Amazon (US$)",
+        min_value=0.0,
+        value=0.0,
+        step=1.0,
+        format="%.2f",
+        key="amazon_pmin_input",
+    )
+with col_am2:
+    amazon_price_max = st.number_input(
+        "Preço máximo Amazon (US$)",
+        min_value=0.0,
+        value=0.0,
+        step=1.0,
+        format="%.2f",
+        key="amazon_pmax_input",
+    )
+with col_am3:
+    amazon_offer_label = st.selectbox(
+        "Tipo de oferta Amazon",
+        ["Qualquer", "Prime / FBA", "Terceiros / FBM"],
+        index=0,
+    )
+
+amazon_search_enabled = st.checkbox("Buscar também na Amazon (SP-API)", value=False)
+
 st.caption("Quanto mais ampla a busca, maior o tempo de pesquisa. Recomendamos adicionar mais filtros para que a busca seja mais rápida.")
 st.divider()
 
-# ── helpers ─────────────────────────────────────────────────────────────────────
+# ── helpers ────────────────────────────────────────────────────────────────────
 def _fmt_eta(seconds: float) -> str:
     return str(timedelta(seconds=int(max(0, seconds))))
 
@@ -194,7 +225,26 @@ def _fmt_price(x):
         return ""
 
 def _render_table(df: pd.DataFrame):
-    show_cols = ["title","price_disp","available_qty","brand","mpn","gtin","condition","item_url","search_url"]
+    # cria coluna formatada de preço Amazon, se existir
+    if "amazon_price" in df.columns and "amazon_price_disp" not in df.columns:
+        df["amazon_price_disp"] = df["amazon_price"].apply(_fmt_price)
+
+    show_cols = [
+        "title",
+        "price_disp",
+        "amazon_price_disp",
+        "available_qty",
+        "brand",
+        "mpn",
+        "gtin",
+        "condition",
+        "item_url",
+        "amazon_product_url",
+        "search_url",
+        "amazon_asin",
+        "amazon_is_prime",
+        "amazon_fulfillment_channel",
+    ]
     exist = [c for c in show_cols if c in df.columns]
 
     # volta a ter rolagem interna (altura fixa)
@@ -205,14 +255,19 @@ def _render_table(df: pd.DataFrame):
         height=500,
         column_config={
             "title": "Título",
-            "price_disp": "Preço",
+            "price_disp": "Preço (eBay)",
+            "amazon_price_disp": "Preço (Amazon)",
             "available_qty": "Qtd (estim.)",
             "brand": "Marca",
             "mpn": "MPN",
             "gtin": "UPC/EAN/ISBN",
             "condition": "Condição",
             "item_url": st.column_config.LinkColumn("Produto (eBay)", display_text="Abrir"),
+            "amazon_product_url": st.column_config.LinkColumn("Produto (Amazon)", display_text="Abrir"),
             "search_url": st.column_config.LinkColumn("Ver outros vendedores", display_text="Buscar"),
+            "amazon_asin": "ASIN",
+            "amazon_is_prime": "Prime?",
+            "amazon_fulfillment_channel": "Fulfillment",
         },
     )
 
@@ -223,14 +278,26 @@ def _ensure_currency(df: pd.DataFrame) -> pd.DataFrame:
         df["currency"] = df["currency"].fillna("USD").replace("", "USD")
     return df
 
-# ── ação ────────────────────────────────────────────────────────────────────────
+# ── ação ───────────────────────────────────────────────────────────────────────
 if st.button("🧲 Minerar eBay"):
     pmin_v = pmin if pmin > 0 else None
     pmax_v = pmax if pmax > 0 else None
     qmin_v = int(qty_min_input) if qty_min_input > 0 else None
 
+    amazon_pmin_v = amazon_price_min if amazon_price_min > 0 else None
+    amazon_pmax_v = amazon_price_max if amazon_price_max > 0 else None
+
     if pmin_v is not None and pmax_v is not None and pmax_v < pmin_v:
         st.error("Preço máximo não pode ser menor que o preço mínimo.")
+        st.stop()
+
+    if (
+        amazon_search_enabled
+        and amazon_pmin_v is not None
+        and amazon_pmax_v is not None
+        and amazon_pmax_v < amazon_pmin_v
+    ):
+        st.error("Na Amazon, o preço máximo não pode ser menor que o preço mínimo.")
         st.stop()
 
     if sel_root == "Todas as categorias" and st.session_state.get("_kw", "") == "":
@@ -250,6 +317,13 @@ if st.button("🧲 Minerar eBay"):
         cond_list = ["REFURBISHED"]
     else:
         cond_list = ["NEW", "USED"]
+
+    if amazon_offer_label.startswith("Prime"):
+        amazon_offer_type = "prime"
+    elif amazon_offer_label.startswith("Terceiros"):
+        amazon_offer_type = "fbm"
+    else:
+        amazon_offer_type = "any"
 
     try:
         ns, payload = (
@@ -318,21 +392,21 @@ if st.button("🧲 Minerar eBay"):
             st.warning("Sem resultados para os filtros (antes dos filtros locais).")
             st.stop()
 
-        # ── filtro local de preço ───────────────────────────────────────────────
+        # ── filtro local de preço ──────────────────────────────────────────────
         df = _apply_price_filter(df, pmin_v, pmax_v)
         if df.empty:
             st.warning("Nenhum item dentro da faixa de preço informada.")
             st.stop()
 
-        # ── filtro local de condição ───────────────────────────────────────────
+        # ── filtro local de condição ──────────────────────────────────────────
         view = _apply_condition_filter(df, cond_pt)
         st.info(f"🎯 Após filtro de condição local: {len(view)} itens.")
         if view.empty:
             st.warning("Nenhum item após aplicar a condição selecionada.")
             st.stop()
 
-        # ── enriquecimento com base na view filtrada ───────────────────────────
-                # ── enriquecimento (estoque / brand / mpn / gtin) ──────────────────────
+        # ── enriquecimento com base na view filtrada ──────────────────────────
+        # ── enriquecimento (estoque / brand / mpn / gtin) ─────────────────────
         if qmin_v is not None:
             # Só enriquece itens que ainda NÃO têm available_qty
             if "available_qty" in df.columns:
@@ -406,8 +480,7 @@ if st.button("🧲 Minerar eBay"):
                         drop_cols = [c for c in df.columns if c.endswith("_enr")]
                         df = df.drop(columns=drop_cols)
 
-
-        # ── filtro de quantidade ────────────────────────────────────────────────
+        # ── filtro de quantidade ───────────────────────────────────────────────
         view = _apply_qty_filter(view, qmin_v)
         st.info(f"🧪 Depois dos filtros locais (preço + condição + quantidade): {len(view)} itens.")
 
@@ -428,6 +501,37 @@ if st.button("🧲 Minerar eBay"):
         n = upsert_ebay_listings(make_engine(), sql_safe_frame(view_for_db))
         st.success(f"✅ Gravados/atualizados: **{n}** registros.")
 
+        # ── integração opcional com Amazon ─────────────────────────────────────
+        final_view = view.copy()
+        if amazon_search_enabled:
+            try:
+                st.info(
+                    f"🔁 Buscando correspondências na Amazon para {len(final_view)} itens do eBay (via GTIN)…"
+                )
+                final_view = match_ebay_to_amazon(
+                    df_ebay=final_view,
+                    amazon_price_min=amazon_pmin_v,
+                    amazon_price_max=amazon_pmax_v,
+                    amazon_offer_type=amazon_offer_type,
+                )
+
+                if final_view.empty:
+                    st.warning(
+                        "Nenhum item encontrou match na Amazon com os filtros selecionados "
+                        "(GTIN, faixa de preço e tipo de oferta)."
+                    )
+                    st.stop()
+                else:
+                    st.success(
+                        f"✅ Itens após filtros Amazon/SP-API: {len(final_view)} "
+                        f"(de {len(view)} itens do eBay pós-filtros locais)."
+                    )
+            except Exception as e:
+                st.error(f"Falha ao consultar Amazon SP-API: {e}")
+                final_view = view.copy()
+
+        view = final_view
+
         if "search_url" not in view.columns:
             view["search_url"] = view.apply(_make_search_url, axis=1)
         if "currency" in view.columns:
@@ -439,7 +543,7 @@ if st.button("🧲 Minerar eBay"):
     except Exception as e:
         st.error(f"Falha na mineração/enriquecimento: {e}")
 
-# ── tabela + paginação ─────────────────────────────────────────────────────────
+# ── tabela + paginação ────────────────────────────────────────────────────────
 if "_results_df" in st.session_state and not st.session_state["_results_df"].empty:
     df = st.session_state["_results_df"]
     PAGE_SIZE = 50
