@@ -116,7 +116,6 @@ with col_am3:
         index=0,
     )
 
-amazon_search_enabled = st.checkbox("Buscar também na Amazon (SP-API)", value=False)
 
 st.caption("Quanto mais ampla a busca, maior o tempo de pesquisa. Recomendamos adicionar mais filtros para que a busca seja mais rápida.")
 st.divider()
@@ -205,7 +204,9 @@ def _resolve_category_ids() -> list[int]:
                     break
             if not ids and root_id:
                 ids = [root_id]
-    return ids
+    ids = [int(i) for i in ids if i is not None]
+    ids = [i for i in ids if i > 0]
+    return list(dict.fromkeys(ids))
 
 def _make_search_url(row) -> str | None:
     q = None
@@ -284,20 +285,13 @@ if st.button("🧲 Minerar eBay"):
     pmax_v = pmax if pmax > 0 else None
     qmin_v = int(qty_min_input) if qty_min_input > 0 else None
 
-    amazon_pmin_v = amazon_price_min if amazon_price_min > 0 else None
-    amazon_pmax_v = amazon_price_max if amazon_price_max > 0 else None
 
     if pmin_v is not None and pmax_v is not None and pmax_v < pmin_v:
         st.error("Preço máximo não pode ser menor que o preço mínimo.")
         st.stop()
 
     if (
-        amazon_search_enabled
-        and amazon_pmin_v is not None
-        and amazon_pmax_v is not None
-        and amazon_pmax_v < amazon_pmin_v
     ):
-        st.error("Na Amazon, o preço máximo não pode ser menor que o preço mínimo.")
         st.stop()
 
     if sel_root == "Todas as categorias" and st.session_state.get("_kw", "") == "":
@@ -318,12 +312,7 @@ if st.button("🧲 Minerar eBay"):
     else:
         cond_list = ["NEW", "USED"]
 
-    if amazon_offer_label.startswith("Prime"):
-        amazon_offer_type = "prime"
-    elif amazon_offer_label.startswith("Terceiros"):
-        amazon_offer_type = "fbm"
     else:
-        amazon_offer_type = "any"
 
     try:
         ns, payload = (
@@ -508,50 +497,84 @@ if st.button("🧲 Minerar eBay"):
         st.success(f"✅ Gravados/atualizados: **{n}** registros.")
 
         # ── integração opcional com Amazon ─────────────────────────────────────
-        final_view = view.copy()
-        if amazon_search_enabled:
-            try:
-                st.info(
-                    f"🔁 Buscando correspondências na Amazon para {len(final_view)} itens do eBay (via GTIN)…"
-                )
-                final_view = match_ebay_to_amazon(
-                    df_ebay=final_view,
-                    amazon_price_min=amazon_pmin_v,
-                    amazon_price_max=amazon_pmax_v,
-                    amazon_offer_type=amazon_offer_type,
-                )
-
-                if final_view.empty:
-                    st.warning(
-                        "Nenhum item encontrou match na Amazon com os filtros selecionados "
-                        "(GTIN, faixa de preço e tipo de oferta)."
-                    )
-                    st.stop()
-                else:
-                    st.success(
-                        f"✅ Itens após filtros Amazon/SP-API: {len(final_view)} "
-                        f"(de {len(view)} itens do eBay pós-filtros locais)."
-                    )
-            except Exception as e:
-                st.error(f"Falha ao consultar Amazon SP-API: {e}")
-                final_view = view.copy()
-
-        view = final_view
-
+        
+        # guarda resultado eBay (sem Amazon ainda)
         if "search_url" not in view.columns:
             view["search_url"] = view.apply(_make_search_url, axis=1)
         if "currency" in view.columns:
             view = view.drop(columns=["currency"])
 
-        st.session_state["_results_df"] = view.reset_index(drop=True)
+        view = view.reset_index(drop=True)
+        st.session_state["_ebay_df"] = view.copy()
+        st.session_state["_results_df"] = view.copy()
+        st.session_state["_results_source"] = "ebay"
         st.session_state["_page_num"] = 1
-
     except Exception as e:
         st.error(f"Falha na mineração/enriquecimento: {e}")
 
 # ── tabela + paginação ────────────────────────────────────────────────────────
 if "_results_df" in st.session_state and not st.session_state["_results_df"].empty:
     df = st.session_state["_results_df"]
+    base_df = st.session_state.get("_ebay_df")
+    source = st.session_state.get("_results_source", "ebay")
+
+    amazon_pmin_v = amazon_price_min if amazon_price_min > 0 else None
+    amazon_pmax_v = amazon_price_max if amazon_price_max > 0 else None
+    if amazon_offer_label.startswith("Prime"):
+        amazon_offer_type = "prime"
+    elif amazon_offer_label.startswith("Terceiros"):
+        amazon_offer_type = "fbm"
+    else:
+        amazon_offer_type = "any"
+
+    if amazon_pmin_v is not None and amazon_pmax_v is not None and amazon_pmax_v < amazon_pmin_v:
+        st.error("Na Amazon, o preco maximo nao pode ser menor que o preco minimo.")
+
+    st.subheader("Integracao Amazon (opcional)")
+    info_msg = "Exibindo resultados do eBay" if source == "ebay" else "Exibindo somente itens com match na Amazon"
+    st.caption(info_msg)
+
+    col_am_btn, col_reset = st.columns([1.2, 1])
+    with col_am_btn:
+        if st.button(
+            "Buscar na Amazon (SP-API)",
+            use_container_width=True,
+            disabled=(base_df is None or base_df.empty),
+        ):
+            df_match = base_df if base_df is not None else df
+            try:
+                st.info(f"Buscando correspondencias na Amazon para {len(df_match)} itens do eBay (via GTIN/titulo)...")
+                matched = match_ebay_to_amazon(
+                    df_ebay=df_match,
+                    amazon_price_min=amazon_pmin_v,
+                    amazon_price_max=amazon_pmax_v,
+                    amazon_offer_type=amazon_offer_type,
+                    max_title_lookups=200,
+                    max_gtin_lookups=400,
+                    max_price_lookups=400,
+                )
+                if matched.empty:
+                    st.warning(
+                        "Nenhum item encontrou match na Amazon com os filtros selecionados "
+                        "(GTIN ou titulo, faixa de preco e tipo de oferta)."
+                    )
+                else:
+                    st.success(f"Itens apos filtros Amazon/SP-API: {len(matched)} (de {len(df_match)} itens do eBay).")
+                    st.session_state["_results_df"] = matched.reset_index(drop=True)
+                    st.session_state["_results_source"] = "amazon"
+                    st.session_state["_page_num"] = 1
+            except Exception as e:
+                st.error(f"Falha ao consultar Amazon SP-API: {e}")
+    with col_reset:
+        if st.button(
+            "Voltar aos resultados do eBay",
+            use_container_width=True,
+            disabled=(base_df is None or base_df.empty or source == "ebay"),
+        ):
+            st.session_state["_results_df"] = base_df.copy()
+            st.session_state["_results_source"] = "ebay"
+            st.session_state["_page_num"] = 1
+
     PAGE_SIZE = 50
     total_pages = max(1, math.ceil(len(df) / PAGE_SIZE))
     page = st.session_state.get("_page_num", 1)
