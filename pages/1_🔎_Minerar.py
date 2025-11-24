@@ -121,15 +121,18 @@ def _dedup(df: pd.DataFrame) -> pd.DataFrame:
         return df
     return df.dropna(subset=["item_id"]).drop_duplicates(subset=["item_id"], keep="first").copy()
 
-def _apply_qty_filter(df: pd.DataFrame, qmin: int | None) -> pd.DataFrame:
+def _apply_qty_filter(df: pd.DataFrame, qmin: int | None, include_unknown: bool = False) -> pd.DataFrame:
     if qmin is None:
         return df
     if "available_qty" not in df.columns:
         return df.iloc[0:0].copy()
     qty = pd.to_numeric(df["available_qty"], errors="coerce")
-    return df[qty.notna() & (qty >= qmin)].copy()
+    mask = qty.notna() & (qty >= qmin)
+    if include_unknown:
+        mask = mask | qty.isna()
+    return df[mask].copy()
 
-def _enrich_and_filter_qty(df: pd.DataFrame, qmin: int, cond_pt: str) -> tuple[pd.DataFrame, int, int]:
+def _enrich_and_filter_qty(df: pd.DataFrame, qmin: int, cond_pt: str) -> tuple[pd.DataFrame, int, int, int]:
     """
     Enriquecimento tardio: busca detalhes no eBay para preencher estoque e filtra por quantidade mínima.
     Retorna (df_filtrado, enriquecidos_feitos, candidatos_processados).
@@ -188,8 +191,9 @@ def _enrich_and_filter_qty(df: pd.DataFrame, qmin: int, cond_pt: str) -> tuple[p
             df = df.drop(columns=drop_cols)
 
     view = _apply_condition_filter(df, cond_pt)
-    view = _apply_qty_filter(view, qmin)
-    return view, len(enr), len(to_enrich)
+    view = _apply_qty_filter(view, qmin, include_unknown=True)
+    qty_non_null = pd.to_numeric(df.get("available_qty"), errors="coerce").notna().sum()
+    return view, len(enr), len(to_enrich), qty_non_null
 
 def _apply_price_filter(df: pd.DataFrame, pmin_v: float | None, pmax_v: float | None) -> pd.DataFrame:
     if "price" not in df.columns:
@@ -533,36 +537,40 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
             st.session_state["_page_num"] = 1
             st.rerun()
 
-    st.subheader("Quantidade m��nima (enriquecer e filtrar em cima do resultado atual)")
-    col_qty1, col_qty2 = st.columns([1, 2])
-    with col_qty1:
-        qty_after = st.number_input(
-            "Qtd m��nima (eBay)",
-            min_value=0,
-            value=0,
-            step=1,
-            help="Busca detalhe no eBay para preencher estoque e filtra pela quantidade desejada.",
-        )
-    with col_qty2:
-        if st.button(
-            "Aplicar filtro de quantidade",
-            use_container_width=True,
-            disabled=df.empty,
-        ):
-            if qty_after <= 0:
-                st.info("Informe uma quantidade m��nima maior que zero para aplicar o filtro.")
-            else:
-                with st.spinner("Enriquecendo e filtrando por quantidade..."):
-                    filtered, enr_cnt, proc_cnt = _enrich_and_filter_qty(df, int(qty_after), cond_pt)
-                st.info(f"Detalhes consultados para {proc_cnt} itens (enriquecidos: {enr_cnt}).")
-                if filtered.empty:
-                    st.warning("Nenhum item com a quantidade m��nima informada.")
+    if source == "amazon":
+        st.subheader("Quantidade mínima (enriquecer e filtrar no resultado atual)")
+        col_qty1, col_qty2 = st.columns([1, 2])
+        with col_qty1:
+            qty_after = st.number_input(
+                "Qtd mínima (eBay)",
+                min_value=0,
+                value=0,
+                step=1,
+                help="Busca detalhe no eBay para preencher estoque e filtra pela quantidade desejada.",
+            )
+        with col_qty2:
+            if st.button(
+                "Aplicar filtro de quantidade",
+                use_container_width=True,
+                disabled=df.empty,
+            ):
+                if qty_after <= 0:
+                    st.info("Informe uma quantidade mínima maior que zero para aplicar o filtro.")
                 else:
-                    st.success(f"Itens ap��s filtro de quantidade: {len(filtered)}.")
-                    st.session_state["_results_df"] = filtered.reset_index(drop=True)
-                    st.session_state["_results_source"] = source
-                    st.session_state["_page_num"] = 1
-                    st.rerun()
+                    with st.spinner("Enriquecendo e filtrando por quantidade..."):
+                        filtered, enr_cnt, proc_cnt, qty_non_null = _enrich_and_filter_qty(df, int(qty_after), cond_pt)
+                    st.info(
+                        f"Detalhes consultados para {proc_cnt} itens (enriquecidos: {enr_cnt}). "
+                        f"Itens com quantidade conhecida: {qty_non_null}."
+                    )
+                    if filtered.empty:
+                        st.warning("Nenhum item com a quantidade mínima informada.")
+                    else:
+                        st.success(f"Itens após filtro de quantidade: {len(filtered)}.")
+                        st.session_state["_results_df"] = filtered.reset_index(drop=True)
+                        st.session_state["_results_source"] = source
+                        st.session_state["_page_num"] = 1
+                        st.rerun()
 
     PAGE_SIZE = 50
     total_pages = max(1, math.ceil(len(df) / PAGE_SIZE))
