@@ -116,7 +116,6 @@ with col_am3:
         index=0,
     )
 
-
 st.caption("Quanto mais ampla a busca, maior o tempo de pesquisa. Recomendamos adicionar mais filtros para que a busca seja mais rápida.")
 st.divider()
 
@@ -280,19 +279,15 @@ def _ensure_currency(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 # ── ação ───────────────────────────────────────────────────────────────────────
-if st.button("🧲 Minerar eBay"):
+if st.button("Minerar eBay"):
     pmin_v = pmin if pmin > 0 else None
     pmax_v = pmax if pmax > 0 else None
     qmin_v = int(qty_min_input) if qty_min_input > 0 else None
-
 
     if pmin_v is not None and pmax_v is not None and pmax_v < pmin_v:
         st.error("Preço máximo não pode ser menor que o preço mínimo.")
         st.stop()
 
-    if (
-    ):
-        st.stop()
 
     if sel_root == "Todas as categorias" and st.session_state.get("_kw", "") == "":
         st.error("Escolha **uma categoria** ou informe uma **palavra-chave** para buscar.")
@@ -312,7 +307,6 @@ if st.button("🧲 Minerar eBay"):
     else:
         cond_list = ["NEW", "USED"]
 
-    else:
 
     try:
         ns, payload = (
