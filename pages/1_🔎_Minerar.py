@@ -557,6 +557,7 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
                     st.session_state["_results_df"] = matched.reset_index(drop=True)
                     st.session_state["_results_source"] = "amazon"
                     st.session_state["_page_num"] = 1
+                    st.rerun()
             except Exception as e:
                 st.error(f"Falha ao consultar Amazon SP-API: {e}")
     with col_reset:
@@ -568,6 +569,7 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
             st.session_state["_results_df"] = base_df.copy()
             st.session_state["_results_source"] = "ebay"
             st.session_state["_page_num"] = 1
+            st.rerun()
 
     PAGE_SIZE = 50
     total_pages = max(1, math.ceil(len(df) / PAGE_SIZE))
