@@ -302,7 +302,7 @@ def _render_table(df: pd.DataFrame):
             lambda x: int(x) if pd.notna(x) else "+10"
         )
 
-show_cols = [
+    show_cols = [
         "title",
         "price_num",
         "amazon_price_num",
@@ -317,6 +317,7 @@ show_cols = [
     ]
     if show_qty and "available_qty_disp" in df.columns:
         show_cols.insert(3, "available_qty_disp")
+
     exist = [c for c in show_cols if c in df.columns]
 
     st.dataframe(
@@ -325,9 +326,9 @@ show_cols = [
         hide_index=True,
         height=500,
         column_config={
-            "title": "Titulo",
-            "price_num": st.column_config.NumberColumn("Preco (eBay)", format="$%.2f"),
-            "amazon_price_num": st.column_config.NumberColumn("Preco (Amazon)", format="$%.2f"),
+            "title": "Título",
+            "price_num": st.column_config.NumberColumn("Preço (eBay)", format="$%.2f"),
+            "amazon_price_num": st.column_config.NumberColumn("Preço (Amazon)", format="$%.2f"),
             "amazon_est_monthly_sales": st.column_config.NumberColumn("Vendas/mês (est.)", format="%d"),
             "brand": "Marca",
             "mpn": "MPN",
