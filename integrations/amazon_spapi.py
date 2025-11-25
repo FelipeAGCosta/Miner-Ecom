@@ -5,12 +5,13 @@ import json
 import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Tuple
 from urllib.parse import quote
 from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
+from rapidfuzz import fuzz
 
 
 # ---------------------------------------------------------------------------
@@ -423,10 +424,10 @@ def search_by_gtin(gtin: str) -> Optional[Dict[str, Any]]:
     return _extract_catalog_item(item, cfg.marketplace_id, fallback_gtin=gtin_clean)
 
 
-def search_by_title(title: str) -> Optional[Dict[str, Any]]:
+def search_by_title(title: str, original_title: Optional[str] = None, page_size: int = 3) -> Optional[Dict[str, Any]]:
     """
-    Fallback: busca item de catalogo por titulo/keywords (pageSize=1).
-    Retorna o primeiro item com ASIN, titulo/brand e dados basicos.
+    Fallback: busca item de catalogo por titulo/keywords.
+    Retorna o item com melhor similaridade de titulo (se original_title fornecido).
     """
     cfg = _load_config_from_env()
     title_clean = (title or "").strip()
@@ -437,7 +438,7 @@ def search_by_title(title: str) -> Optional[Dict[str, Any]]:
         "marketplaceIds": cfg.marketplace_id,
         "keywords": title_clean[:200],
         "includedData": "summaries,identifiers,salesRanks",
-        "pageSize": 1,
+        "pageSize": max(1, min(page_size, 10)),
     }
 
     data = _request_sp_api(
@@ -450,6 +451,17 @@ def search_by_title(title: str) -> Optional[Dict[str, Any]]:
     items = data.get("items") or []
     if not items:
         return None
+
+    if original_title:
+        # escolhe o item com maior similaridade de titulo
+        scores: List[Tuple[int, Dict[str, Any]]] = []
+        for it in items:
+            summary = (it.get("summaries") or [{}])[0]
+            cand_title = summary.get("itemName") or ""
+            score = fuzz.token_sort_ratio(original_title.lower(), str(cand_title).lower())
+            scores.append((score, it))
+        best = max(scores, key=lambda x: x[0])[1] if scores else items[0]
+        return _extract_catalog_item(best, cfg.marketplace_id)
 
     return _extract_catalog_item(items[0], cfg.marketplace_id)
 

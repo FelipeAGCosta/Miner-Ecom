@@ -289,12 +289,16 @@ def _render_table(df: pd.DataFrame):
         df["price_num"] = pd.to_numeric(df["price"], errors="coerce")
     if "amazon_price" in df.columns:
         df["amazon_price_num"] = pd.to_numeric(df["amazon_price"], errors="coerce")
+    if "available_qty" in df.columns:
+        df["available_qty_disp"] = df["available_qty"].apply(
+            lambda x: int(x) if pd.notna(x) else "+10"
+        )
 
     show_cols = [
         "title",
         "price_num",
         "amazon_price_num",
-        "available_qty",
+        "available_qty_disp",
         "brand",
         "mpn",
         "condition",
@@ -314,7 +318,7 @@ def _render_table(df: pd.DataFrame):
             "title": "Titulo",
             "price_num": st.column_config.NumberColumn("Preco (eBay)", format="$%.2f"),
             "amazon_price_num": st.column_config.NumberColumn("Preco (Amazon)", format="$%.2f"),
-            "available_qty": "Qtd (estim.) Ebay",
+            "available_qty_disp": "Qtd (estim.) eBay",
             "brand": "Marca",
             "mpn": "MPN",
             "condition": "Condicao",
@@ -503,7 +507,17 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
         ):
             df_match = base_df if base_df is not None else df
             try:
-                st.info(f"Buscando correspondencias na Amazon para {len(df_match)} itens do eBay (via GTIN/titulo)...")
+                prog = st.progress(0.0, text="Iniciando busca na Amazon...")
+                t0 = time.time()
+
+                def _update_progress(done: int, total: int):
+                    elapsed = time.time() - t0
+                    frac = done / max(1, total)
+                    prog.progress(
+                        frac,
+                        text=f"Buscando na Amazon... {done}/{total} · decorrido {elapsed:.1f}s",
+                    )
+
                 matched = match_ebay_to_amazon(
                     df_ebay=df_match,
                     amazon_price_min=amazon_pmin_v,
@@ -512,7 +526,9 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
                     max_title_lookups=200,
                     max_gtin_lookups=400,
                     max_price_lookups=400,
+                    progress_cb=_update_progress,
                 )
+                prog.empty()
                 if matched.empty:
                     st.warning(
                         "Nenhum item encontrou match na Amazon com os filtros selecionados "

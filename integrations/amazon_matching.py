@@ -49,6 +49,7 @@ def match_ebay_to_amazon(
     max_gtin_lookups: Optional[int] = 500,
     max_title_lookups: Optional[int] = 200,
     max_price_lookups: Optional[int] = 500,
+    progress_cb: Optional[callable] = None,
 ) -> pd.DataFrame:
     """
     Recebe o DataFrame de resultados do eBay (ja filtrado/enriquecido) e
@@ -78,7 +79,9 @@ def match_ebay_to_amazon(
     title_lookups = 0
     price_lookups = 0
 
-    for _, row in df_ebay.iterrows():
+    total = len(df_ebay)
+
+    for idx, row in df_ebay.iterrows():
         gtin = _normalize_gtin_value(row.get(gtin_col)) if gtin_col else None
         title_val = (row.get("title") or "").strip()
 
@@ -115,7 +118,7 @@ def match_ebay_to_amazon(
                 else:
                     title_lookups += 1
                     try:
-                        am_item = search_by_title(title_val)
+                        am_item = search_by_title(title_val, original_title=title_val)
                     except Exception:
                         am_item = None
                 _title_cache[title_val] = am_item
@@ -180,6 +183,9 @@ def match_ebay_to_amazon(
             }
         )
         results.append(combined)
+
+        if progress_cb is not None:
+            progress_cb(idx + 1, total)
 
     if not results:
         return df_ebay.iloc[0:0].copy()
