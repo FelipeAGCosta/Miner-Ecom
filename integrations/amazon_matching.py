@@ -1,4 +1,5 @@
-from typing import Optional, Dict, Any, List
+import math
+from typing import Optional, Dict, Any, List, Tuple
 
 import pandas as pd
 
@@ -9,6 +10,217 @@ from integrations.amazon_spapi import search_by_gtin, search_by_title, get_buybo
 _gtin_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 _asin_price_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 _title_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+
+# Pontos de ancoragem BSR -> vendas/mês (conservador) por cluster de categoria
+CATEGORY_BSR_ANCHORS: Dict[str, List[Tuple[int, int]]] = {
+    "home_kitchen": [
+        (100, 1200),
+        (500, 650),
+        (1_000, 350),
+        (5_000, 120),
+        (20_000, 35),
+        (100_000, 10),
+        (300_000, 3),
+    ],
+    "beauty_personal_care": [
+        (100, 1400),
+        (500, 700),
+        (1_000, 400),
+        (5_000, 150),
+        (20_000, 45),
+        (100_000, 12),
+        (300_000, 4),
+    ],
+    "health_household": [
+        (100, 1200),
+        (500, 600),
+        (1_000, 320),
+        (5_000, 110),
+        (20_000, 32),
+        (100_000, 9),
+        (300_000, 3),
+    ],
+    "baby": [
+        (100, 900),
+        (500, 350),
+        (1_000, 220),
+        (5_000, 80),
+        (20_000, 25),
+        (100_000, 7),
+        (300_000, 2),
+    ],
+    "toys_games": [
+        (100, 500),
+        (500, 120),
+        (1_000, 70),
+        (5_000, 25),
+        (20_000, 8),
+        (100_000, 2),
+        (300_000, 1),
+    ],
+    "sports_outdoors": [
+        (100, 700),
+        (500, 250),
+        (1_000, 150),
+        (5_000, 50),
+        (20_000, 16),
+        (100_000, 4),
+        (300_000, 1),
+    ],
+    "pet_supplies": [
+        (100, 700),
+        (500, 260),
+        (1_000, 160),
+        (5_000, 55),
+        (20_000, 18),
+        (100_000, 5),
+        (300_000, 1),
+    ],
+    "grocery": [
+        (100, 800),
+        (500, 280),
+        (1_000, 180),
+        (5_000, 60),
+        (20_000, 18),
+        (100_000, 5),
+        (300_000, 1),
+    ],
+    "electronics": [
+        (100, 2000),
+        (500, 800),
+        (1_000, 320),
+        (5_000, 90),
+        (20_000, 25),
+        (100_000, 6),
+        (300_000, 1),
+    ],
+    "office_products": [
+        (100, 600),
+        (500, 220),
+        (1_000, 140),
+        (5_000, 45),
+        (20_000, 14),
+        (100_000, 3),
+        (300_000, 1),
+    ],
+    "tools_home_improvement": [
+        (100, 700),
+        (500, 250),
+        (1_000, 160),
+        (5_000, 55),
+        (20_000, 17),
+        (100_000, 4),
+        (300_000, 1),
+    ],
+    "automotive": [
+        (100, 500),
+        (500, 180),
+        (1_000, 110),
+        (5_000, 35),
+        (20_000, 11),
+        (100_000, 3),
+        (300_000, 1),
+    ],
+    "garden_outdoors": [
+        (100, 700),
+        (500, 260),
+        (1_000, 160),
+        (5_000, 55),
+        (20_000, 17),
+        (100_000, 4),
+        (300_000, 1),
+    ],
+    "arts_crafts": [
+        (100, 900),
+        (500, 320),
+        (1_000, 190),
+        (5_000, 65),
+        (20_000, 20),
+        (100_000, 5),
+        (300_000, 1),
+    ],
+    "musical_instruments": [
+        (100, 400),
+        (500, 150),
+        (1_000, 90),
+        (5_000, 30),
+        (20_000, 9),
+        (100_000, 2),
+        (300_000, 1),
+    ],
+    "industrial_scientific": [
+        (100, 300),
+        (500, 110),
+        (1_000, 70),
+        (5_000, 25),
+        (20_000, 8),
+        (100_000, 2),
+        (300_000, 1),
+    ],
+    "video_games": [
+        (100, 1500),
+        (500, 500),
+        (1_000, 250),
+        (5_000, 70),
+        (20_000, 18),
+        (100_000, 4),
+        (300_000, 1),
+    ],
+    "books": [
+        (100, 7000),
+        (500, 3000),
+        (1_000, 1500),
+        (5_000, 300),
+        (10_000, 40),
+        (100_000, 8),
+        (300_000, 2),
+    ],
+    "clothing": [
+        (100, 1500),
+        (500, 600),
+        (1_000, 350),
+        (5_000, 100),
+        (20_000, 30),
+        (100_000, 7),
+        (300_000, 2),
+    ],
+    "shoes": [
+        (100, 800),
+        (500, 300),
+        (1_000, 180),
+        (5_000, 60),
+        (20_000, 18),
+        (100_000, 5),
+        (300_000, 1),
+    ],
+    "jewelry": [
+        (100, 400),
+        (500, 150),
+        (1_000, 90),
+        (5_000, 30),
+        (20_000, 10),
+        (100_000, 3),
+        (300_000, 1),
+    ],
+    "luggage_travel": [
+        (100, 600),
+        (500, 220),
+        (1_000, 140),
+        (5_000, 45),
+        (20_000, 14),
+        (100_000, 3),
+        (300_000, 1),
+    ],
+    "default": [
+        (100, 800),
+        (500, 280),
+        (1_000, 170),
+        (5_000, 55),
+        (20_000, 17),
+        (100_000, 4),
+        (300_000, 1),
+    ],
+}
 
 
 def _normalize_gtin_value(value: Any) -> Optional[str]:
@@ -41,32 +253,104 @@ def _find_gtin_column(df: pd.DataFrame) -> Optional[str]:
     return None
 
 
-def _estimate_monthly_sales(rank: int | None) -> int | None:
-    if rank is None or rank <= 0:
-        return None
-    if rank <= 100:
-        return 2000
-    if rank <= 1_000:
-        return 500
-    if rank <= 5_000:
-        return 100
-    if rank <= 20_000:
-        return 30
-    if rank <= 100_000:
-        return 5
-    return 1
+def _normalize_category_key(display_group: Optional[str]) -> str:
+    if not display_group:
+        return "default"
+    g = display_group.lower()
+    if "kitchen" in g or "home" in g:
+        return "home_kitchen"
+    if "beauty" in g or "personal care" in g:
+        return "beauty_personal_care"
+    if "health" in g or "household" in g:
+        return "health_household"
+    if "baby" in g:
+        return "baby"
+    if "toy" in g or "game" in g:
+        return "toys_games"
+    if "sport" in g or "outdoor" in g:
+        return "sports_outdoors"
+    if "pet" in g:
+        return "pet_supplies"
+    if "grocery" in g or "gourmet" in g:
+        return "grocery"
+    if "electronic" in g:
+        return "electronics"
+    if "office" in g:
+        return "office_products"
+    if "tool" in g or "home improvement" in g:
+        return "tools_home_improvement"
+    if "automotive" in g:
+        return "automotive"
+    if "garden" in g or "outdoor" in g or "patio" in g or "lawn" in g:
+        return "garden_outdoors"
+    if "arts" in g or "craft" in g or "sewing" in g:
+        return "arts_crafts"
+    if "musical" in g or "instrument" in g:
+        return "musical_instruments"
+    if "industrial" in g or "scientific" in g:
+        return "industrial_scientific"
+    if "video game" in g:
+        return "video_games"
+    if "book" in g:
+        return "books"
+    if "clothing" in g or "apparel" in g:
+        return "clothing"
+    if "shoe" in g:
+        return "shoes"
+    if "jewel" in g:
+        return "jewelry"
+    if "luggage" in g or "travel" in g:
+        return "luggage_travel"
+    return "default"
 
 
-def _demand_bucket(rank: int | None) -> str | None:
+def _estimate_monthly_sales_from_bsr(rank: Optional[int], display_group: Optional[str]) -> Optional[int]:
+    """
+    Converte BSR em vendas/mês estimadas (conservador) via interpolação log-log em pontos de ancoragem.
+    """
     if rank is None or rank <= 0:
         return None
-    if rank <= 1_000:
+    if rank > 300_000:
+        return 0
+
+    key = _normalize_category_key(display_group)
+    anchors = CATEGORY_BSR_ANCHORS.get(key, CATEGORY_BSR_ANCHORS["default"])
+    anchors = sorted(anchors, key=lambda x: x[0])
+
+    if rank <= anchors[0][0]:
+        return anchors[0][1]
+    if rank >= anchors[-1][0]:
+        return max(anchors[-1][1], 0)
+
+    for i in range(len(anchors) - 1):
+        r1, s1 = anchors[i]
+        r2, s2 = anchors[i + 1]
+        if r1 <= rank <= r2:
+            lr1, lr2 = math.log10(r1), math.log10(r2)
+            ls1, ls2 = math.log10(s1), math.log10(s2)
+            lr = math.log10(rank)
+            t = (lr - lr1) / (lr2 - lr1)
+            ls = ls1 + t * (ls2 - ls1)
+            est = int(max(10 ** ls, 0))
+            return max(est, 1)
+
+    return None
+
+
+def _demand_bucket_from_sales(est_monthly: Optional[int]) -> Optional[str]:
+    if est_monthly is None or est_monthly <= 0:
+        return None
+    if est_monthly >= 300:
+        return "🔥 Altíssima"
+    if est_monthly >= 100:
         return "Alta"
-    if rank <= 5_000:
-        return "Media"
-    if rank <= 20_000:
+    if est_monthly >= 30:
+        return "Média"
+    if est_monthly >= 10:
         return "Moderada"
-    return "Baixa"
+    if est_monthly >= 3:
+        return "Baixa"
+    return "Muito baixa"
 
 
 def match_ebay_to_amazon(
@@ -83,18 +367,6 @@ def match_ebay_to_amazon(
     """
     Recebe o DataFrame de resultados do eBay (ja filtrado/enriquecido) e
     tenta fazer match com a Amazon. Prioriza GTIN e usa fallback por titulo.
-
-    Regras:
-    - GTIN: para cada GTIN valido, chama search_by_gtin(gtin) (com cache).
-    - Fallback: se nao houver GTIN ou nao encontrar, tenta search_by_title(titulo) (com cache).
-    - Para cada ASIN encontrado, chama get_buybox_price(asin) (com cache).
-    - Aplica filtros de preco Amazon (min/max) e tipo de oferta (Prime/FBA/FBM).
-    - Retorna apenas as linhas que passaram nos filtros do eBay e da Amazon.
-
-    Colunas adicionadas (prefixo amazon_):
-    - amazon_asin, amazon_title, amazon_brand, amazon_browse_node_id, amazon_browse_node_name,
-      amazon_sales_rank, amazon_sales_rank_category, amazon_price, amazon_currency,
-      amazon_is_prime, amazon_fulfillment_channel, amazon_product_url, amazon_match_basis
     """
     if df_ebay.empty:
         return df_ebay.iloc[0:0].copy()
@@ -193,9 +465,18 @@ def match_ebay_to_amazon(
             if fulfillment_channel == "AMAZON":
                 continue
 
+        est_monthly = _estimate_monthly_sales_from_bsr(
+            am_item.get("sales_rank"),
+            am_item.get("sales_rank_category"),
+        )
+
+        if min_monthly_sales_est is not None:
+            if est_monthly is None or est_monthly < min_monthly_sales_est:
+                continue
+
+        demand_bucket = _demand_bucket_from_sales(est_monthly)
+
         combined = row.to_dict()
-        est_monthly = _estimate_monthly_sales(am_item.get("sales_rank"))
-        demand_bucket = _demand_bucket(am_item.get("sales_rank"))
         combined.update(
             {
                 "amazon_asin": asin,
@@ -215,10 +496,6 @@ def match_ebay_to_amazon(
                 "amazon_match_basis": match_basis,
             }
         )
-
-        if min_monthly_sales_est is not None:
-            if est_monthly is None or est_monthly < min_monthly_sales_est:
-                continue
 
         results.append(combined)
 

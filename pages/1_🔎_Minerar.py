@@ -307,6 +307,7 @@ def _render_table(df: pd.DataFrame):
         "price_num",
         "amazon_price_num",
         "amazon_est_monthly_sales",
+        "amazon_demand_bucket",
         "brand",
         "mpn",
         "condition",
@@ -329,7 +330,8 @@ def _render_table(df: pd.DataFrame):
             "title": "Título",
             "price_num": st.column_config.NumberColumn("Preço (eBay)", format="$%.2f"),
             "amazon_price_num": st.column_config.NumberColumn("Preço (Amazon)", format="$%.2f"),
-            "amazon_est_monthly_sales": st.column_config.NumberColumn("Vendas/mês (est.)", format="%d"),
+            "amazon_est_monthly_sales": st.column_config.NumberColumn("Vendas aproximadas (último mês)", format="%d"),
+            "amazon_demand_bucket": "Demanda (BSR)",
             "brand": "Marca",
             "mpn": "MPN",
             "condition": "Condição",
@@ -526,9 +528,10 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
                 def _update_progress(done: int, total: int):
                     elapsed = time.time() - t0
                     frac = done / max(1, total)
+                    remaining = (elapsed / max(1, done)) * (total - done)
                     prog.progress(
                         frac,
-                        text=f"Buscando na Amazon... {done}/{total} · decorrido {elapsed:.1f}s",
+                        text=f"Buscando na Amazon... {done}/{total} · decorrido {elapsed:.1f}s · restante ~{_fmt_eta(remaining)}",
                     )
 
                 matched = match_ebay_to_amazon(
