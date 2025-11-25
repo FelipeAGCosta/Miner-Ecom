@@ -41,6 +41,34 @@ def _find_gtin_column(df: pd.DataFrame) -> Optional[str]:
     return None
 
 
+def _estimate_monthly_sales(rank: int | None) -> int | None:
+    if rank is None or rank <= 0:
+        return None
+    if rank <= 100:
+        return 2000
+    if rank <= 1_000:
+        return 500
+    if rank <= 5_000:
+        return 100
+    if rank <= 20_000:
+        return 30
+    if rank <= 100_000:
+        return 5
+    return 1
+
+
+def _demand_bucket(rank: int | None) -> str | None:
+    if rank is None or rank <= 0:
+        return None
+    if rank <= 1_000:
+        return "Alta"
+    if rank <= 5_000:
+        return "Media"
+    if rank <= 20_000:
+        return "Moderada"
+    return "Baixa"
+
+
 def match_ebay_to_amazon(
     df_ebay: pd.DataFrame,
     amazon_price_min: Optional[float] = None,
@@ -49,6 +77,7 @@ def match_ebay_to_amazon(
     max_gtin_lookups: Optional[int] = 500,
     max_title_lookups: Optional[int] = 200,
     max_price_lookups: Optional[int] = 500,
+    min_monthly_sales_est: Optional[int] = None,
     progress_cb: Optional[callable] = None,
 ) -> pd.DataFrame:
     """
@@ -165,6 +194,8 @@ def match_ebay_to_amazon(
                 continue
 
         combined = row.to_dict()
+        est_monthly = _estimate_monthly_sales(am_item.get("sales_rank"))
+        demand_bucket = _demand_bucket(am_item.get("sales_rank"))
         combined.update(
             {
                 "amazon_asin": asin,
@@ -174,6 +205,8 @@ def match_ebay_to_amazon(
                 "amazon_browse_node_name": am_item.get("browse_node_name"),
                 "amazon_sales_rank": am_item.get("sales_rank"),
                 "amazon_sales_rank_category": am_item.get("sales_rank_category"),
+                "amazon_est_monthly_sales": est_monthly,
+                "amazon_demand_bucket": demand_bucket,
                 "amazon_price": price,
                 "amazon_currency": currency,
                 "amazon_is_prime": is_prime,
@@ -182,6 +215,11 @@ def match_ebay_to_amazon(
                 "amazon_match_basis": match_basis,
             }
         )
+
+        if min_monthly_sales_est is not None:
+            if est_monthly is None or est_monthly < min_monthly_sales_est:
+                continue
+
         results.append(combined)
 
         if progress_cb is not None:

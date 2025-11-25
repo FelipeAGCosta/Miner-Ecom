@@ -108,6 +108,12 @@ with col_am3:
         ["Qualquer", "Prime / FBA", "Terceiros / FBM"],
         index=0,
     )
+min_monthly_sales = st.number_input(
+    "Vendas/mês mínimas na Amazon (estimadas via BSR)",
+    min_value=0,
+    value=0,
+    step=10,
+)
 
 st.caption("Quanto mais ampla a busca, maior o tempo de pesquisa. Recomendamos adicionar mais filtros para que a busca seja mais rápida.")
 st.divider()
@@ -296,10 +302,11 @@ def _render_table(df: pd.DataFrame):
             lambda x: int(x) if pd.notna(x) else "+10"
         )
 
-    show_cols = [
+show_cols = [
         "title",
         "price_num",
         "amazon_price_num",
+        "amazon_est_monthly_sales",
         "brand",
         "mpn",
         "condition",
@@ -321,9 +328,10 @@ def _render_table(df: pd.DataFrame):
             "title": "Titulo",
             "price_num": st.column_config.NumberColumn("Preco (eBay)", format="$%.2f"),
             "amazon_price_num": st.column_config.NumberColumn("Preco (Amazon)", format="$%.2f"),
+            "amazon_est_monthly_sales": st.column_config.NumberColumn("Vendas/mês (est.)", format="%d"),
             "brand": "Marca",
             "mpn": "MPN",
-            "condition": "Condicao",
+            "condition": "Condição",
             "item_url": st.column_config.LinkColumn("Produto (eBay)", display_text="Abrir"),
             "amazon_product_url": st.column_config.LinkColumn("Produto (Amazon)", display_text="Abrir"),
             "search_url": st.column_config.LinkColumn("Ver outros vendedores", display_text="Buscar"),
@@ -498,7 +506,7 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
     if amazon_pmin_v is not None and amazon_pmax_v is not None and amazon_pmax_v < amazon_pmin_v:
         st.error("Na Amazon, o preco maximo nao pode ser menor que o preco minimo.")
 
-    st.subheader("Integracao Amazon (opcional)")
+    st.subheader("Integração Amazon (opcional)")
     info_msg = "Exibindo resultados do eBay" if source == "ebay" else "Exibindo somente itens com match na Amazon"
     st.caption(info_msg)
 
@@ -530,6 +538,7 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
                     max_title_lookups=200,
                     max_gtin_lookups=400,
                     max_price_lookups=400,
+                    min_monthly_sales_est=min_monthly_sales if min_monthly_sales > 0 else None,
                     progress_cb=_update_progress,
                 )
                 prog.empty()

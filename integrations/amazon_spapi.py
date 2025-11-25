@@ -349,7 +349,7 @@ def _extract_catalog_item(item: Dict[str, Any], marketplace_id: str, fallback_gt
         classification_ranks = sr.get("classificationRanks") or []
         for cr in classification_ranks:
             rank_val = cr.get("rank")
-            title_val = cr.get("title")
+            title_val = cr.get("title") or sr.get("displayGroup")
             if isinstance(rank_val, int):
                 if best_rank is None or rank_val < best_rank:
                     best_rank = rank_val
