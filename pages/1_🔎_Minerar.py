@@ -291,7 +291,7 @@ def _render_table(df: pd.DataFrame):
         df["amazon_price_num"] = pd.to_numeric(df["amazon_price"], errors="coerce")
     if "available_qty" in df.columns:
         df["available_qty_disp"] = df["available_qty"].apply(
-            lambda x: int(x) if pd.notna(x) else "+10"
+            lambda x: int(x) if pd.notna(x) else "Provavelmente +10"
         )
 
     show_cols = [
