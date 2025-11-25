@@ -289,16 +289,17 @@ def _render_table(df: pd.DataFrame):
         df["price_num"] = pd.to_numeric(df["price"], errors="coerce")
     if "amazon_price" in df.columns:
         df["amazon_price_num"] = pd.to_numeric(df["amazon_price"], errors="coerce")
-    if "available_qty" in df.columns:
+
+    show_qty = bool(st.session_state.get("_show_qty", False))
+    if show_qty and "available_qty" in df.columns:
         df["available_qty_disp"] = df["available_qty"].apply(
-            lambda x: int(x) if pd.notna(x) else "Provavelmente +10"
+            lambda x: int(x) if pd.notna(x) else "+10"
         )
 
     show_cols = [
         "title",
         "price_num",
         "amazon_price_num",
-        "available_qty_disp",
         "brand",
         "mpn",
         "condition",
@@ -307,6 +308,8 @@ def _render_table(df: pd.DataFrame):
         "search_url",
         "amazon_asin",
     ]
+    if show_qty and "available_qty_disp" in df.columns:
+        show_cols.insert(3, "available_qty_disp")
     exist = [c for c in show_cols if c in df.columns]
 
     st.dataframe(
@@ -318,7 +321,6 @@ def _render_table(df: pd.DataFrame):
             "title": "Titulo",
             "price_num": st.column_config.NumberColumn("Preco (eBay)", format="$%.2f"),
             "amazon_price_num": st.column_config.NumberColumn("Preco (Amazon)", format="$%.2f"),
-            "available_qty_disp": "Qtd (estim.) eBay",
             "brand": "Marca",
             "mpn": "MPN",
             "condition": "Condicao",
@@ -326,6 +328,7 @@ def _render_table(df: pd.DataFrame):
             "amazon_product_url": st.column_config.LinkColumn("Produto (Amazon)", display_text="Abrir"),
             "search_url": st.column_config.LinkColumn("Ver outros vendedores", display_text="Buscar"),
             "amazon_asin": "ASIN",
+            **({"available_qty_disp": "Qtd (estim.) eBay"} if show_qty and "available_qty_disp" in df.columns else {}),
         },
     )
 
@@ -472,6 +475,7 @@ if st.button("Minerar eBay"):
         st.session_state["_ebay_df"] = view.copy()
         st.session_state["_results_df"] = view.copy()
         st.session_state["_results_source"] = "ebay"
+        st.session_state["_show_qty"] = False
         st.session_state["_page_num"] = 1
     except Exception as e:
         st.error(f"Falha na mineração/enriquecimento: {e}")
@@ -538,6 +542,7 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
                     st.success(f"Itens apos filtros Amazon/SP-API: {len(matched)} (de {len(df_match)} itens do eBay).")
                     st.session_state["_results_df"] = matched.reset_index(drop=True)
                     st.session_state["_results_source"] = "amazon"
+                    st.session_state["_show_qty"] = False
                     st.session_state["_page_num"] = 1
                     st.rerun()
             except Exception as e:
@@ -550,6 +555,7 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
         ):
             st.session_state["_results_df"] = base_df.copy()
             st.session_state["_results_source"] = "ebay"
+            st.session_state["_show_qty"] = False
             st.session_state["_page_num"] = 1
             st.rerun()
 
@@ -585,6 +591,7 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
                         st.success(f"Itens após filtro de quantidade: {len(filtered)}.")
                         st.session_state["_results_df"] = filtered.reset_index(drop=True)
                         st.session_state["_results_source"] = source
+                        st.session_state["_show_qty"] = True
                         st.session_state["_page_num"] = 1
                         st.rerun()
 
