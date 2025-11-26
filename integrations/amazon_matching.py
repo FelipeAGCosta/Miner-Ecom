@@ -6,251 +6,229 @@ import pandas as pd
 from integrations.amazon_spapi import search_by_gtin, search_by_title, get_buybox_price
 
 
-# Caches em memoria para evitar chamadas repetidas
+# Caches em memória para evitar chamadas repetidas
 _gtin_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 _asin_price_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 _title_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 
-# Pontos de ancoragem BSR -> vendas/mês (conservador) por cluster de categoria
+# Cada tupla: (BSR, vendas_mensais_estimadas) - ancoras conservadoras por cluster
 CATEGORY_BSR_ANCHORS: Dict[str, List[Tuple[int, int]]] = {
+    # Home & Kitchen (principal)
     "home_kitchen": [
-        (100, 1200),
-        (500, 650),
-        (1_000, 350),
-        (5_000, 120),
-        (20_000, 35),
-        (100_000, 10),
-        (300_000, 3),
+        (5_000,    2_500),
+        (20_000,     900),
+        (50_000,     400),
+        (100_000,    180),
+        (300_000,     70),
+        (800_000,     20),
+        (2_000_000,   5),
     ],
+    # Categorias mais "quentes" (escala 1.2)
     "beauty_personal_care": [
-        (100, 1400),
-        (500, 700),
-        (1_000, 400),
-        (5_000, 150),
-        (20_000, 45),
-        (100_000, 12),
-        (300_000, 4),
-    ],
-    "health_household": [
-        (100, 1200),
-        (500, 600),
-        (1_000, 320),
-        (5_000, 110),
-        (20_000, 32),
-        (100_000, 9),
-        (300_000, 3),
-    ],
-    "baby": [
-        (100, 900),
-        (500, 350),
-        (1_000, 220),
-        (5_000, 80),
-        (20_000, 25),
-        (100_000, 7),
-        (300_000, 2),
-    ],
-    "toys_games": [
-        (100, 500),
-        (500, 120),
-        (1_000, 70),
-        (5_000, 25),
-        (20_000, 8),
-        (100_000, 2),
-        (300_000, 1),
-    ],
-    "sports_outdoors": [
-        (100, 700),
-        (500, 250),
-        (1_000, 150),
-        (5_000, 50),
-        (20_000, 16),
-        (100_000, 4),
-        (300_000, 1),
-    ],
-    "pet_supplies": [
-        (100, 700),
-        (500, 260),
-        (1_000, 160),
-        (5_000, 55),
-        (20_000, 18),
-        (100_000, 5),
-        (300_000, 1),
+        (5_000,    3_000),
+        (20_000,   1_080),
+        (50_000,     480),
+        (100_000,    216),
+        (300_000,     84),
+        (800_000,     24),
+        (2_000_000,    6),
     ],
     "grocery": [
-        (100, 800),
-        (500, 280),
-        (1_000, 180),
-        (5_000, 60),
-        (20_000, 18),
-        (100_000, 5),
-        (300_000, 1),
-    ],
-    "electronics": [
-        (100, 2000),
-        (500, 800),
-        (1_000, 320),
-        (5_000, 90),
-        (20_000, 25),
-        (100_000, 6),
-        (300_000, 1),
-    ],
-    "office_products": [
-        (100, 600),
-        (500, 220),
-        (1_000, 140),
-        (5_000, 45),
-        (20_000, 14),
-        (100_000, 3),
-        (300_000, 1),
-    ],
-    "tools_home_improvement": [
-        (100, 700),
-        (500, 250),
-        (1_000, 160),
-        (5_000, 55),
-        (20_000, 17),
-        (100_000, 4),
-        (300_000, 1),
-    ],
-    "automotive": [
-        (100, 500),
-        (500, 180),
-        (1_000, 110),
-        (5_000, 35),
-        (20_000, 11),
-        (100_000, 3),
-        (300_000, 1),
-    ],
-    "garden_outdoors": [
-        (100, 700),
-        (500, 260),
-        (1_000, 160),
-        (5_000, 55),
-        (20_000, 17),
-        (100_000, 4),
-        (300_000, 1),
-    ],
-    "arts_crafts": [
-        (100, 900),
-        (500, 320),
-        (1_000, 190),
-        (5_000, 65),
-        (20_000, 20),
-        (100_000, 5),
-        (300_000, 1),
-    ],
-    "musical_instruments": [
-        (100, 400),
-        (500, 150),
-        (1_000, 90),
-        (5_000, 30),
-        (20_000, 9),
-        (100_000, 2),
-        (300_000, 1),
-    ],
-    "industrial_scientific": [
-        (100, 300),
-        (500, 110),
-        (1_000, 70),
-        (5_000, 25),
-        (20_000, 8),
-        (100_000, 2),
-        (300_000, 1),
-    ],
-    "video_games": [
-        (100, 1500),
-        (500, 500),
-        (1_000, 250),
-        (5_000, 70),
-        (20_000, 18),
-        (100_000, 4),
-        (300_000, 1),
-    ],
-    "books": [
-        (100, 7000),
-        (500, 3000),
-        (1_000, 1500),
-        (5_000, 300),
-        (10_000, 40),
-        (100_000, 8),
-        (300_000, 2),
+        (5_000,    3_000),
+        (20_000,   1_080),
+        (50_000,     480),
+        (100_000,    216),
+        (300_000,     84),
+        (800_000,     24),
+        (2_000_000,    6),
     ],
     "clothing": [
-        (100, 1500),
-        (500, 600),
-        (1_000, 350),
-        (5_000, 100),
-        (20_000, 30),
-        (100_000, 7),
-        (300_000, 2),
+        (5_000,    3_000),
+        (20_000,   1_080),
+        (50_000,     480),
+        (100_000,    216),
+        (300_000,     84),
+        (800_000,     24),
+        (2_000_000,    6),
+    ],
+    # Categorias "quentes" padrão (escala 1.0)
+    "health_household": [
+        (5_000,    2_500),
+        (20_000,     900),
+        (50_000,     400),
+        (100_000,    180),
+        (300_000,     70),
+        (800_000,     20),
+        (2_000_000,    5),
+    ],
+    "baby": [
+        (5_000,    2_500),
+        (20_000,     900),
+        (50_000,     400),
+        (100_000,    180),
+        (300_000,     70),
+        (800_000,     20),
+        (2_000_000,    5),
     ],
     "shoes": [
-        (100, 800),
-        (500, 300),
-        (1_000, 180),
-        (5_000, 60),
-        (20_000, 18),
-        (100_000, 5),
-        (300_000, 1),
+        (5_000,    2_500),
+        (20_000,     900),
+        (50_000,     400),
+        (100_000,    180),
+        (300_000,     70),
+        (800_000,     20),
+        (2_000_000,    5),
     ],
-    "jewelry": [
-        (100, 400),
-        (500, 150),
-        (1_000, 90),
-        (5_000, 30),
-        (20_000, 10),
-        (100_000, 3),
-        (300_000, 1),
+    "video_games": [
+        (5_000,    2_500),
+        (20_000,     900),
+        (50_000,     400),
+        (100_000,    180),
+        (300_000,     70),
+        (800_000,     20),
+        (2_000_000,    5),
+    ],
+    # Categorias "médias" (escala 0.7)
+    "toys_games": [
+        (5_000,    1_750),
+        (20_000,     630),
+        (50_000,     280),
+        (100_000,    126),
+        (300_000,     49),
+        (800_000,     14),
+        (2_000_000,    4),
+    ],
+    "sports_outdoors": [
+        (5_000,    1_750),
+        (20_000,     630),
+        (50_000,     280),
+        (100_000,    126),
+        (300_000,     49),
+        (800_000,     14),
+        (2_000_000,    4),
+    ],
+    "pet_supplies": [
+        (5_000,    1_750),
+        (20_000,     630),
+        (50_000,     280),
+        (100_000,    126),
+        (300_000,     49),
+        (800_000,     14),
+        (2_000_000,    4),
+    ],
+    "arts_crafts": [
+        (5_000,    1_750),
+        (20_000,     630),
+        (50_000,     280),
+        (100_000,    126),
+        (300_000,     49),
+        (800_000,     14),
+        (2_000_000,    4),
+    ],
+    "garden_outdoors": [
+        (5_000,    1_750),
+        (20_000,     630),
+        (50_000,     280),
+        (100_000,    126),
+        (300_000,     49),
+        (800_000,     14),
+        (2_000_000,    4),
+    ],
+    "office_products": [
+        (5_000,    1_750),
+        (20_000,     630),
+        (50_000,     280),
+        (100_000,    126),
+        (300_000,     49),
+        (800_000,     14),
+        (2_000_000,    4),
+    ],
+    "tools_home_improvement": [
+        (5_000,    1_750),
+        (20_000,     630),
+        (50_000,     280),
+        (100_000,    126),
+        (300_000,     49),
+        (800_000,     14),
+        (2_000_000,    4),
+    ],
+    "electronics": [
+        (5_000,    1_750),
+        (20_000,     630),
+        (50_000,     280),
+        (100_000,    126),
+        (300_000,     49),
+        (800_000,     14),
+        (2_000_000,    4),
+    ],
+    # Categorias mais "frias" (escala 0.5)
+    "automotive": [
+        (5_000,    1_250),
+        (20_000,     450),
+        (50_000,     200),
+        (100_000,     90),
+        (300_000,     35),
+        (800_000,     10),
+        (2_000_000,    2),
+    ],
+    "industrial_scientific": [
+        (5_000,    1_250),
+        (20_000,     450),
+        (50_000,     200),
+        (100_000,     90),
+        (300_000,     35),
+        (800_000,     10),
+        (2_000_000,    2),
+    ],
+    "musical_instruments": [
+        (5_000,    1_250),
+        (20_000,     450),
+        (50_000,     200),
+        (100_000,     90),
+        (300_000,     35),
+        (800_000,     10),
+        (2_000_000,    2),
     ],
     "luggage_travel": [
-        (100, 600),
-        (500, 220),
-        (1_000, 140),
-        (5_000, 45),
-        (20_000, 14),
-        (100_000, 3),
-        (300_000, 1),
+        (5_000,    1_250),
+        (20_000,     450),
+        (50_000,     200),
+        (100_000,     90),
+        (300_000,     35),
+        (800_000,     10),
+        (2_000_000,    2),
     ],
+    "jewelry": [
+        (5_000,    1_250),
+        (20_000,     450),
+        (50_000,     200),
+        (100_000,     90),
+        (300_000,     35),
+        (800_000,     10),
+        (2_000_000,    2),
+    ],
+    # Books separado
+    "books": [
+        (1_000,    8_000),
+        (5_000,    3_000),
+        (10_000,   1_000),
+        (50_000,     200),
+        (100_000,     80),
+        (300_000,     20),
+        (1_000_000,   5),
+        (2_000_000,   2),
+    ],
+    # Fallback genérico
     "default": [
-        (100, 800),
-        (500, 280),
-        (1_000, 170),
-        (5_000, 55),
-        (20_000, 17),
-        (100_000, 4),
-        (300_000, 1),
+        (5_000,    1_750),
+        (20_000,     630),
+        (50_000,     280),
+        (100_000,    126),
+        (300_000,     49),
+        (800_000,     14),
+        (2_000_000,    4),
     ],
 }
-
-
-def _normalize_gtin_value(value: Any) -> Optional[str]:
-    """Converte o valor de GTIN para string limpa ou None."""
-    if value is None:
-        return None
-    s = str(value).strip()
-    if not s or s.lower() in ("nan", "none"):
-        return None
-    return s
-
-
-def _find_gtin_column(df: pd.DataFrame) -> Optional[str]:
-    """Tenta descobrir qual coluna do DF e o GTIN/UPC/EAN."""
-    candidate_cols = [
-        "gtin",
-        "GTIN",
-        "upc_ean_isbn",
-        "UPC_EAN_ISBN",
-        "upc",
-        "UPC",
-        "ean",
-        "EAN",
-        "isbn",
-        "ISBN",
-    ]
-    for col in candidate_cols:
-        if col in df.columns:
-            return col
-    return None
 
 
 def _normalize_category_key(display_group: Optional[str]) -> str:
@@ -307,11 +285,10 @@ def _normalize_category_key(display_group: Optional[str]) -> str:
 def _estimate_monthly_sales_from_bsr(rank: Optional[int], display_group: Optional[str]) -> Optional[int]:
     """
     Converte BSR em vendas/mês estimadas (conservador) via interpolação log-log em pontos de ancoragem.
+    Sempre faz clamp no menor/maior anchor; não zera acima de 300k.
     """
     if rank is None or rank <= 0:
         return None
-    if rank > 300_000:
-        return 0
 
     key = _normalize_category_key(display_group)
     anchors = CATEGORY_BSR_ANCHORS.get(key, CATEGORY_BSR_ANCHORS["default"])
@@ -332,7 +309,7 @@ def _estimate_monthly_sales_from_bsr(rank: Optional[int], display_group: Optiona
             t = (lr - lr1) / (lr2 - lr1)
             ls = ls1 + t * (ls2 - ls1)
             est = int(max(10 ** ls, 0))
-            return max(est, 1)
+            return max(est, 0)
 
     return None
 
@@ -353,6 +330,34 @@ def _demand_bucket_from_sales(est_monthly: Optional[int]) -> Optional[str]:
     return "Muito baixa"
 
 
+def _normalize_gtin_value(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s or s.lower() in ("nan", "none"):
+        return None
+    return s
+
+
+def _find_gtin_column(df: pd.DataFrame) -> Optional[str]:
+    candidate_cols = [
+        "gtin",
+        "GTIN",
+        "upc_ean_isbn",
+        "UPC_EAN_ISBN",
+        "upc",
+        "UPC",
+        "ean",
+        "EAN",
+        "isbn",
+        "ISBN",
+    ]
+    for col in candidate_cols:
+        if col in df.columns:
+            return col
+    return None
+
+
 def match_ebay_to_amazon(
     df_ebay: pd.DataFrame,
     amazon_price_min: Optional[float] = None,
@@ -364,10 +369,6 @@ def match_ebay_to_amazon(
     min_monthly_sales_est: Optional[int] = None,
     progress_cb: Optional[callable] = None,
 ) -> pd.DataFrame:
-    """
-    Recebe o DataFrame de resultados do eBay (ja filtrado/enriquecido) e
-    tenta fazer match com a Amazon. Prioriza GTIN e usa fallback por titulo.
-    """
     if df_ebay.empty:
         return df_ebay.iloc[0:0].copy()
 
@@ -390,7 +391,6 @@ def match_ebay_to_amazon(
         asin = None
         match_basis = None
 
-        # --- Amazon catalog via GTIN ---
         if gtin:
             if gtin in _gtin_cache:
                 am_item = _gtin_cache[gtin]
@@ -409,7 +409,6 @@ def match_ebay_to_amazon(
                 asin = am_item["asin"]
                 match_basis = "gtin"
 
-        # --- Fallback por titulo se GTIN falhou ou nao existe ---
         if (not asin) and title_val:
             if title_val in _title_cache:
                 am_item = _title_cache[title_val]
@@ -431,7 +430,6 @@ def match_ebay_to_amazon(
         if not asin or not am_item:
             continue
 
-        # --- Amazon pricing: ASIN -> BuyBox price (com cache) ---
         if asin in _asin_price_cache:
             price_info = _asin_price_cache[asin]
         else:
@@ -465,16 +463,14 @@ def match_ebay_to_amazon(
             if fulfillment_channel == "AMAZON":
                 continue
 
-        est_monthly = _estimate_monthly_sales_from_bsr(
-            am_item.get("sales_rank"),
-            am_item.get("sales_rank_category"),
-        )
-
+        rank = am_item.get("sales_rank")
+        cat_display = am_item.get("sales_rank_category")
+        est_monthly = _estimate_monthly_sales_from_bsr(rank, cat_display)
         if min_monthly_sales_est is not None:
             if est_monthly is None or est_monthly < min_monthly_sales_est:
                 continue
-
         demand_bucket = _demand_bucket_from_sales(est_monthly)
+        cat_key = _normalize_category_key(cat_display)
 
         combined = row.to_dict()
         combined.update(
@@ -484,8 +480,10 @@ def match_ebay_to_amazon(
                 "amazon_brand": am_item.get("brand"),
                 "amazon_browse_node_id": am_item.get("browse_node_id"),
                 "amazon_browse_node_name": am_item.get("browse_node_name"),
-                "amazon_sales_rank": am_item.get("sales_rank"),
-                "amazon_sales_rank_category": am_item.get("sales_rank_category"),
+                "amazon_sales_rank_raw": rank,
+                "amazon_sales_rank": rank,
+                "amazon_sales_rank_category": cat_display,
+                "amazon_demand_category_key": cat_key,
                 "amazon_est_monthly_sales": est_monthly,
                 "amazon_demand_bucket": demand_bucket,
                 "amazon_price": price,

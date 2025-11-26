@@ -307,6 +307,9 @@ def _render_table(df: pd.DataFrame):
         "price_num",
         "amazon_price_num",
         "amazon_est_monthly_sales",
+        "amazon_sales_rank",
+        "amazon_sales_rank_category",
+        "amazon_demand_category_key",
         "amazon_demand_bucket",
         "brand",
         "mpn",
@@ -331,6 +334,9 @@ def _render_table(df: pd.DataFrame):
             "price_num": st.column_config.NumberColumn("Preço (eBay)", format="$%.2f"),
             "amazon_price_num": st.column_config.NumberColumn("Preço (Amazon)", format="$%.2f"),
             "amazon_est_monthly_sales": st.column_config.NumberColumn("Vendas aproximadas (último mês)", format="%d"),
+            "amazon_sales_rank": "BSR Amazon",
+            "amazon_sales_rank_category": "Categoria BSR (Amazon)",
+            "amazon_demand_category_key": "Categoria (cluster)",
             "amazon_demand_bucket": "Demanda (BSR)",
             "brand": "Marca",
             "mpn": "MPN",
@@ -510,6 +516,9 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
         st.error("Na Amazon, o preco maximo nao pode ser menor que o preco minimo.")
 
     st.subheader("Integração Amazon (opcional)")
+    st.caption(
+        "Estimativas de vendas baseadas no BSR atual por categoria (heurística conservadora, não vendas reais do último mês)."
+    )
     info_msg = "Exibindo resultados do eBay" if source == "ebay" else "Exibindo somente itens com match na Amazon"
     st.caption(info_msg)
 
