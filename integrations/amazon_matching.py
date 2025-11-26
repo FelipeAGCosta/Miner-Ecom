@@ -282,6 +282,9 @@ def _normalize_category_key(display_group: Optional[str]) -> str:
     return "default"
 
 
+SALES_SCALE = 0.3  # fator conservador global (mais rígido)
+
+
 def _estimate_monthly_sales_from_bsr(rank: Optional[int], display_group: Optional[str]) -> Optional[int]:
     """
     Converte BSR em vendas/mês estimadas (conservador) via interpolação log-log em pontos de ancoragem.
@@ -309,6 +312,7 @@ def _estimate_monthly_sales_from_bsr(rank: Optional[int], display_group: Optiona
             t = (lr - lr1) / (lr2 - lr1)
             ls = ls1 + t * (ls2 - ls1)
             est = int(max(10 ** ls, 0))
+            est = int(est * SALES_SCALE)
             return max(est, 0)
 
     return None
