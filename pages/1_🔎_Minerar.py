@@ -280,7 +280,7 @@ def _make_search_url(row) -> str | None:
             break
     if not q and "title" in row:
         q = str(row["title"]).strip()
-    return f"https://www.ebay.com/sch/i.html?_nkw={_url.quote_plus(q)}" if q else None
+    return f"https://www.ebay.com/sch/i.html_nkw={_url.quote_plus(q)}" if q else None
 
 def _fmt_price(x):
     try:
@@ -384,6 +384,16 @@ if st.button("Minerar eBay"):
         cond_list = ["REFURBISHED"]
     else:
         cond_list = ["NEW", "USED"]
+
+    # filtros Amazon avaliados antes do match automático
+    amazon_pmin_v = amazon_price_min if amazon_price_min > 0 else None
+    amazon_pmax_v = amazon_price_max if amazon_price_max > 0 else None
+    if amazon_offer_label.startswith("Prime"):
+        amazon_offer_type = "prime"
+    elif amazon_offer_label.startswith("Terceiros"):
+        amazon_offer_type = "fbm"
+    else:
+        amazon_offer_type = "any"
 
 
     try:
@@ -544,20 +554,11 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
     base_df = st.session_state.get("_ebay_df")
     source = st.session_state.get("_results_source", "ebay")
 
-    amazon_pmin_v = amazon_price_min if amazon_price_min > 0 else None
-    amazon_pmax_v = amazon_price_max if amazon_price_max > 0 else None
-    if amazon_offer_label.startswith("Prime"):
-        amazon_offer_type = "prime"
-    elif amazon_offer_label.startswith("Terceiros"):
-        amazon_offer_type = "fbm"
-    else:
-        amazon_offer_type = "any"
-
     if amazon_pmin_v is not None and amazon_pmax_v is not None and amazon_pmax_v < amazon_pmin_v:
-        st.error("Na Amazon, o preco maximo nao pode ser menor que o preco minimo.")
+        st.error("Na Amazon, o preço máximo não pode ser menor que o preço mínimo.")
 
     st.caption(
-        "Estimativas de vendas baseadas no BSR atual por categoria (heur?stica conservadora; n?o s?o vendas reais do ?ltimo m?s)."
+        "Estimativas de vendas baseadas no BSR atual por categoria (heurística conservadora; não são vendas reais do último mês)."
     )
     info_msg = "Resultados do eBay (sem match Amazon)" if source == "ebay" else "Resultados com match Amazon"
     st.caption(info_msg)
@@ -595,13 +596,13 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
 
     start, end = (page - 1) * PAGE_SIZE, (page - 1) * PAGE_SIZE + PAGE_SIZE
     _render_table(df.iloc[start:end].copy())
-    st.caption(f"P?gina {page}/{total_pages} ? exibindo {len(df.iloc[start:end])} itens.")
+    st.caption(f"Página {page}/{total_pages} — exibindo {len(df.iloc[start:end])} itens.")
 
-    st.subheader("Quantidade m?nima (ap?s resultados)")
-    col_qty1, col_qty2 = st.columns([1, 2])
+    st.subheader("Quantidade mínima (após resultados)")
+    col_qty1, col_qty2 = st.columns([1, 1])
     with col_qty1:
         qty_after = st.number_input(
-            "Qtd m?nima (eBay)",
+            "Qtd mínima (eBay)",
             min_value=0,
             value=0,
             step=1,
@@ -614,7 +615,7 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
             disabled=df.empty,
         ):
             if qty_after <= 0:
-                st.info("Informe uma quantidade m?nima maior que zero para aplicar o filtro.")
+                st.info("Informe uma quantidade mínima maior que zero para aplicar o filtro.")
             else:
                 with st.spinner("Enriquecendo e filtrando por quantidade..."):
                     filtered, enr_cnt, proc_cnt, qty_non_null = _enrich_and_filter_qty(df, int(qty_after), cond_pt)
@@ -623,9 +624,9 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
                     f"Itens com quantidade conhecida: {qty_non_null}."
                 )
                 if filtered.empty:
-                    st.warning("Nenhum item com a quantidade m?nima informada.")
+                    st.warning("Nenhum item com a quantidade mínima informada.")
                 else:
-                    st.success(f"Itens ap?s filtro de quantidade: {len(filtered)}.")
+                    st.success(f"Itens aps filtro de quantidade: {len(filtered)}.")
                     st.session_state["_results_df"] = filtered.reset_index(drop=True)
                     st.session_state["_results_source"] = source
                     st.session_state["_show_qty"] = True
