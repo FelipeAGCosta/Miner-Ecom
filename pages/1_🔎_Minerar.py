@@ -17,7 +17,6 @@ from integrations.amazon_matching import match_ebay_to_amazon  # integracao Amaz
 
 st.header("Minerar produtos")
 
-
 API_ITEMS_PER_PAGE = int(st.secrets.get("EBAY_LIMIT_PER_PAGE", os.getenv("EBAY_LIMIT_PER_PAGE", 200)))
 API_MAX_PAGES = int(st.secrets.get("EBAY_MAX_PAGES", os.getenv("EBAY_MAX_PAGES", 25)))
 MAX_ENRICH = int(st.secrets.get("MAX_ENRICH", os.getenv("MAX_ENRICH", 500)))
@@ -28,7 +27,7 @@ flat = flatten_categories(tree)
 st.markdown("<div class='card'>", unsafe_allow_html=True)
 st.markdown("<div class='card-title'>Filtros eBay</div>", unsafe_allow_html=True)
 st.markdown(
-    "<div class='card-caption'>Defina categoria, faixa de preço, condição e estoque mínimo desejado.</div>",
+    "<div class='card-caption'>Defina categoria, faixa de preco, condicao e estoque minimo desejado.</div>",
     unsafe_allow_html=True,
 )
 
@@ -54,7 +53,7 @@ with col2:
 col3, col4, col5 = st.columns([1, 1, 1])
 with col3:
     pmin = st.number_input(
-        "Preço mínimo (US$)",
+        "Preco minimo (US$)",
         min_value=0.0,
         value=0.0,
         step=1.0,
@@ -63,7 +62,7 @@ with col3:
     )
 with col4:
     pmax = st.number_input(
-        "Preço maximo (US$)",
+        "Preco maximo (US$)",
         min_value=0.0,
         value=0.0,
         step=1.0,
@@ -71,14 +70,7 @@ with col4:
         key="pmax_input",
     )
 with col5:
-    cond_pt = st.selectbox("Condição", ["Novo", "Usado", "Recondicionado", "Novo & Usado"], index=0)
-
-qty_min_input = st.number_input(
-    "Quantidade mínima (opcional; usa enriquecimento)",
-    min_value=0,
-    value=0,
-    step=1,
-)
+    cond_pt = st.selectbox("Condicao", ["Novo", "Usado", "Recondicionado", "Novo & Usado"], index=0)
 
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -89,7 +81,7 @@ st.markdown("<div class='card-title'>Filtros Amazon</div>", unsafe_allow_html=Tr
 col_am1, col_am2, col_am3 = st.columns([1, 1, 1])
 with col_am1:
     amazon_price_min = st.number_input(
-        "Preço mínimo Amazon (US$)",
+        "Preco minimo Amazon (US$)",
         min_value=0.0,
         value=0.0,
         step=1.0,
@@ -98,7 +90,7 @@ with col_am1:
     )
 with col_am2:
     amazon_price_max = st.number_input(
-        "Preço máximo Amazon (US$)",
+        "Preco maximo Amazon (US$)",
         min_value=0.0,
         value=0.0,
         step=1.0,
@@ -112,12 +104,11 @@ with col_am3:
         index=0,
     )
 min_monthly_sales = st.number_input(
-    "Vendas/mês mínimas na Amazon (estimadas via BSR)",
+    "Vendas/mes minimas na Amazon (estimadas via BSR)",
     min_value=0,
     value=0,
     step=10,
 )
-amazon_search_enabled = st.checkbox("Buscar tambem na Amazon (SP-API)", value=False)
 
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -557,14 +548,9 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
     base_df = st.session_state.get("_ebay_df")
     source = st.session_state.get("_results_source", "ebay")
 
-    try:
-        amazon_price_min
-        amazon_price_max
-        amazon_offer_label
-    except NameError:
-        amazon_price_min = 0
-        amazon_price_max = 0
-        amazon_offer_label = "Qualquer"
+    amazon_price_min = globals().get("amazon_price_min", 0)
+    amazon_price_max = globals().get("amazon_price_max", 0)
+    amazon_offer_label = globals().get("amazon_offer_label", "Qualquer")
 
     amazon_pmin_v = amazon_price_min if amazon_price_min > 0 else None
     amazon_pmax_v = amazon_price_max if amazon_price_max > 0 else None
@@ -613,39 +599,32 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
 
     start, end = (page - 1) * PAGE_SIZE, (page - 1) * PAGE_SIZE + PAGE_SIZE
     _render_table(df.iloc[start:end].copy())
-    st.caption(f"Página {page}/{total_pages} — exibindo {len(df.iloc[start:end])} itens.")
+    st.caption(f"Pagina {page}/{total_pages} - exibindo {len(df.iloc[start:end])} itens.")
 
-    st.subheader("Quantidade mínima do produto em estoque eBay")
-    col_qty1, col_qty2 = st.columns([2, 1])
-    with col_qty1:
-        qty_after = st.number_input(
-            "Qtd mínima (eBay)",
-            min_value=0,
-            value=0,
-            step=1,
-            help="Enriquece estoque no eBay e filtra pela quantidade desejada.",
-        )
-    with col_qty2:
-        if st.button(
-            "Aplicar filtro de quantidade",
-            use_container_width=True,
-            disabled=df.empty,
-        ):
-            if qty_after <= 0:
-                st.info("Informe uma quantidade mínima maior que zero para aplicar o filtro.")
+    st.subheader("Quantidade minima do produto em estoque eBay")
+    qty_after = st.number_input(
+        "Qtd minima (eBay)",
+        min_value=0,
+        value=0,
+        step=1,
+        help="Enriquece estoque no eBay e filtra pela quantidade desejada.",
+    )
+    if st.button("Ok!", use_container_width=False, disabled=df.empty):
+        if qty_after <= 0:
+            st.info("Informe uma quantidade minima maior que zero para aplicar o filtro.")
+        else:
+            with st.spinner("Enriquecendo e filtrando por quantidade..."):
+                filtered, enr_cnt, proc_cnt, qty_non_null = _enrich_and_filter_qty(df, int(qty_after), cond_pt)
+            st.info(
+                f"Detalhes consultados para {proc_cnt} itens (enriquecidos: {enr_cnt}). "
+                f"Itens com quantidade conhecida: {qty_non_null}."
+            )
+            if filtered.empty:
+                st.warning("Nenhum item com a quantidade minima informada.")
             else:
-                with st.spinner("Enriquecendo e filtrando por quantidade..."):
-                    filtered, enr_cnt, proc_cnt, qty_non_null = _enrich_and_filter_qty(df, int(qty_after), cond_pt)
-                st.info(
-                    f"Detalhes consultados para {proc_cnt} itens (enriquecidos: {enr_cnt}). "
-                    f"Itens com quantidade conhecida: {qty_non_null}."
-                )
-                if filtered.empty:
-                    st.warning("Nenhum item com a quantidade mínima informada.")
-                else:
-                    st.success(f"Itens aps filtro de quantidade: {len(filtered)}.")
-                    st.session_state["_results_df"] = filtered.reset_index(drop=True)
-                    st.session_state["_results_source"] = source
-                    st.session_state["_show_qty"] = True
-                    st.session_state["_page_num"] = 1
-                    st.rerun()
+                st.success(f"Itens apos filtro de quantidade: {len(filtered)}.")
+                st.session_state["_results_df"] = filtered.reset_index(drop=True)
+                st.session_state["_results_source"] = source
+                st.session_state["_show_qty"] = True
+                st.session_state["_page_num"] = 1
+                st.rerun()
