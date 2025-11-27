@@ -3,10 +3,10 @@
 primaryColor = "#6366F1"
 
 # Fundo global do app (dark mais claro)
-backgroundColor = "#0B1224"
+backgroundColor = "#111827"
 
 # Fundo padrão de containers internos (cards/elementos)
-secondaryBackgroundColor = "#111827"
+secondaryBackgroundColor = "#16213a"
 
 # Cor padrão do texto
 textColor = "#E5E7EB"

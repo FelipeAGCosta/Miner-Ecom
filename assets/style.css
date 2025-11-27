@@ -2,7 +2,7 @@
 
 /* Fundo geral da aplicação */
 .stApp {
-    background: radial-gradient(circle at 20% 20%, #11182d 0, #0b1224 45%, #0a0f1d 100%);
+    background: radial-gradient(circle at 20% 20%, #1b243a 0, #111827 45%, #0f1629 100%);
 }
 
 /* Container principal */
@@ -14,8 +14,8 @@
 
 /* Sidebar com destaque lateral */
 section[data-testid="stSidebar"] {
-    background-color: #0b1224;
-    border-right: 1px solid #1f2937;
+    background-color: #16213a;
+    border-right: 1px solid #22304d;
     position: relative;
 }
 
@@ -64,12 +64,13 @@ h1, h2, h3 {
 }
 
 .card-title {
-    font-size: 1rem;
+    font-size: 1.05rem;
     font-weight: 700;
-    color: #c7d2fe;
+    color: #e0e7ff;
     margin-bottom: 0.45rem;
-    letter-spacing: 0.01em;
+    letter-spacing: 0.04em;
     text-transform: uppercase;
+    text-shadow: 0 1px 8px rgba(99, 102, 241, 0.35);
 }
 
 .card-caption {
@@ -105,9 +106,9 @@ div.stButton > button[disabled] {
 /* --- Inputs, selects, number_inputs etc. --- */
 
 input, select, textarea {
-    background-color: #f3f4f6;
+    background-color: #ffffff;
     border-radius: 10px;
-    border: 1px solid #d1d5db;
+    border: 1px solid #cbd5e1;
     color: #0f172a;
 }
 
@@ -119,9 +120,9 @@ textarea::placeholder {
 div[data-baseweb="input"],
 div[data-baseweb="select"],
 div[data-baseweb="textarea"] {
-    background-color: #f3f4f6;
+    background-color: #ffffff;
     border-radius: 10px;
-    border: 1px solid #d1d5db;
+    border: 1px solid #cbd5e1;
 }
 
 div[data-baseweb="input"]:focus-within,

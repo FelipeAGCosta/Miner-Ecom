@@ -45,4 +45,4 @@ if "filters" not in st.session_state:
     }
 
 tasks_df = load_tasks()
-st.success("Use o menu lateral para navegar: Minerar e Avancado.")
+st.success("Use o menu lateral para navegar: Minerar e Avançado.")
