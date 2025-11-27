@@ -36,6 +36,15 @@ API_ITEMS_PER_PAGE = int(st.secrets.get("EBAY_LIMIT_PER_PAGE", os.getenv("EBAY_L
 API_MAX_PAGES      = int(st.secrets.get("EBAY_MAX_PAGES", os.getenv("EBAY_MAX_PAGES", 25)))
 MAX_ENRICH         = int(st.secrets.get("MAX_ENRICH", os.getenv("MAX_ENRICH", 500)))
 
+# filtros Amazon calculados no topo para uso posterior
+amazon_pmin_v = amazon_price_min if amazon_price_min > 0 else None
+amazon_pmax_v = amazon_price_max if amazon_price_max > 0 else None
+if amazon_offer_label.startswith("Prime"):
+    amazon_offer_type = "prime"
+elif amazon_offer_label.startswith("Terceiros"):
+    amazon_offer_type = "fbm"
+else:
+    amazon_offer_type = "any"
 tree = load_categories_tree()
 flat = flatten_categories(tree)
 
@@ -436,11 +445,8 @@ if st.button("Minerar eBay"):
                             max_pages=API_MAX_PAGES,
                         )
                         all_rows.extend(items)
-                    except Exception as e:
+                    except Exception:
                         failures += 1
-                        st.warning(
-                            f"⚠️ Falha na categoria {cat_id} ({type(e).__name__}): {e}. Continuando…"
-                        )
 
                     elapsed = time.time() - t0
                     per_step = elapsed / max(1, step)
@@ -455,8 +461,7 @@ if st.button("Minerar eBay"):
 
             df = _dedup(pd.DataFrame(all_rows))
 
-            if failures:
-                st.info(f"{failures} categoria(s) falharam por timeout/erro de rede. As demais foram processadas.")
+            # falhas silenciosas: mantemos o que veio das demais categorias
             cache_set(ns, payload, df.to_dict(orient="records"), ttl_sec=1800)
 
         if df.empty:
@@ -471,7 +476,7 @@ if st.button("Minerar eBay"):
 
         # ── filtro local de condição ──────────────────────────────────────────
         view = _apply_condition_filter(df, cond_pt)
-        st.info(f"🎯 Após filtro de condição local: {len(view)} itens.")
+        st.info(f"🎯 Filtragem encontrou {len(view)} itens.")
         if view.empty:
             st.warning("Nenhum item após aplicar a condição selecionada.")
             st.stop()
@@ -488,7 +493,6 @@ if st.button("Minerar eBay"):
         # persistir (mantém currency) e exibir (sem currency extra)
         view_for_db = _ensure_currency(view.copy())
         n = upsert_ebay_listings(make_engine(), sql_safe_frame(view_for_db))
-        st.success(f"✅ Gravados/atualizados: **{n}** registros.")
 
         # ── integração opcional com Amazon ─────────────────────────────────────
         
@@ -511,6 +515,7 @@ if st.button("Minerar eBay"):
                 elapsed = time.time() - t0
                 frac = done / max(1, total)
                 remaining = (elapsed / max(1, done)) * (total - done)
+                remaining = min(remaining, 900)  # limita ETA a 15 minutos para não assustar
                 prog.progress(
                     frac,
                     text=f"Buscando na Amazon... {done}/{total} · decorrido {elapsed:.1f}s · restante ~{_fmt_eta(remaining)}",
