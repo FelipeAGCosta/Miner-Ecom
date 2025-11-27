@@ -2,11 +2,11 @@
 # Cor principal (botões, elementos ativos)
 primaryColor = "#6366F1"
 
-# Fundo global do app (bem escuro)
-backgroundColor = "#050816"
+# Fundo global do app (dark mais claro)
+backgroundColor = "#0B1224"
 
 # Fundo padrão de containers internos (cards/elementos)
-secondaryBackgroundColor = "#0B1120"
+secondaryBackgroundColor = "#111827"
 
 # Cor padrão do texto
 textColor = "#E5E7EB"

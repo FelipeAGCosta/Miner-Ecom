@@ -2,7 +2,7 @@
 
 /* Fundo geral da aplicação */
 .stApp {
-    background-color: #050816; /* bem escuro, levemente arroxeado */
+    background: radial-gradient(circle at 20% 20%, #11182d 0, #0b1224 45%, #0a0f1d 100%);
 }
 
 /* Container principal */
@@ -14,11 +14,12 @@
 
 /* Sidebar com destaque lateral */
 section[data-testid="stSidebar"] {
-    background-color: #050816;
-    border-right: 1px solid #111827;
+    background-color: #0b1224;
+    border-right: 1px solid #1f2937;
+    position: relative;
 }
 
-/* Pequena faixa vertical de cor na lateral da sidebar (opcional) */
+/* Faixa vertical de cor na sidebar */
 section[data-testid="stSidebar"]::before {
     content: "";
     position: absolute;
@@ -44,60 +45,57 @@ h1, h2, h3 {
 
 /* --- Cards (blocos de filtros e infos) --- */
 
-/* Card principal, mais “importante” (ex.: filtros eBay) */
 .card {
     border-radius: 16px;
-    padding: 1.2rem 1.5rem;
-    margin-bottom: 1.5rem;
-    background: #0B1120; /* um tom mais claro que o fundo */
-    border: 1px solid rgba(148, 163, 184, 0.35);
-    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.9);
+    padding: 1.25rem 1.55rem;
+    margin-bottom: 1.6rem;
+    background: #111827;
+    border: 1px solid rgba(148, 163, 184, 0.45);
+    box-shadow: 0 18px 40px rgba(12, 18, 32, 0.9);
 }
 
-/* Card neutro (ex.: filtros Amazon opcionais) */
 .card-muted {
     border-radius: 16px;
-    padding: 1.1rem 1.4rem;
-    margin-bottom: 1.2rem;
-    background: #020617; /* ainda escuro, mas com borda clara */
-    border: 1px solid rgba(55, 65, 81, 0.9);
-    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.7);
+    padding: 1.15rem 1.45rem;
+    margin-bottom: 1.3rem;
+    background: #0f172a;
+    border: 1px solid rgba(79, 70, 229, 0.35);
+    box-shadow: 0 14px 32px rgba(12, 18, 32, 0.7);
 }
 
-/* Título interno dos cards */
 .card-title {
-    font-size: 0.95rem;
-    font-weight: 600;
-    color: #E5E7EB;
-    margin-bottom: 0.4rem;
+    font-size: 1rem;
+    font-weight: 700;
+    color: #c7d2fe;
+    margin-bottom: 0.45rem;
+    letter-spacing: 0.01em;
+    text-transform: uppercase;
 }
 
-/* Descrição interna dos cards */
 .card-caption {
-    font-size: 0.8rem;
+    font-size: 0.86rem;
     color: #9CA3AF;
-    margin-bottom: 0.8rem;
+    margin-bottom: 0.85rem;
 }
 
 /* --- Botões --- */
 
 div.stButton > button:first-child {
     border-radius: 999px;
-    padding: 0.6rem 1.8rem;
-    font-weight: 600;
-    border: 1px solid rgba(148, 163, 184, 0.35);
+    padding: 0.65rem 1.9rem;
+    font-weight: 700;
+    border: 1px solid rgba(148, 163, 184, 0.45);
     background: linear-gradient(135deg, #4F46E5, #7C3AED);
     color: #EEF2FF;
     box-shadow: 0 14px 35px rgba(15, 23, 42, 0.9);
+    transition: transform 0.08s ease, box-shadow 0.12s ease;
 }
 
-/* Hover dos botões */
 div.stButton > button:first-child:hover {
     transform: translateY(-1px);
     box-shadow: 0 22px 50px rgba(15, 23, 42, 0.95);
 }
 
-/* Botões desabilitados continuam legíveis */
 div.stButton > button[disabled] {
     background: #1F2937;
     border-color: #374151;
@@ -106,30 +104,26 @@ div.stButton > button[disabled] {
 
 /* --- Inputs, selects, number_inputs etc. --- */
 
-/* Alvos genéricos: input, select, textarea */
 input, select, textarea {
-    background-color: #020617;
+    background-color: #f3f4f6;
     border-radius: 10px;
-    border: 1px solid #1F2937;
-    color: #E5E7EB;
+    border: 1px solid #d1d5db;
+    color: #0f172a;
 }
 
-/* Placeholders mais suaves */
 input::placeholder,
 textarea::placeholder {
-    color: #6B7280;
+    color: #6b7280;
 }
 
-/* Containers dos widgets do Streamlit (baseweb) */
 div[data-baseweb="input"],
 div[data-baseweb="select"],
 div[data-baseweb="textarea"] {
-    background-color: #020617;
+    background-color: #f3f4f6;
     border-radius: 10px;
-    border: 1px solid #1F2937;
+    border: 1px solid #d1d5db;
 }
 
-/* Foco: borda e brilho na cor principal */
 div[data-baseweb="input"]:focus-within,
 div[data-baseweb="select"]:focus-within,
 div[data-baseweb="textarea"]:focus-within,
@@ -138,14 +132,14 @@ select:focus,
 textarea:focus {
     outline: none;
     border-color: #6366F1;
-    box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.6);
+    box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.7);
 }
 
-/* Labels dos campos (streamlit usa p) */
 label, .stTextInput label, .stNumberInput label, .stSelectbox label {
-    font-size: 0.85rem;
-    font-weight: 500;
+    font-size: 0.88rem;
+    font-weight: 600;
     color: #E5E7EB;
+    letter-spacing: 0.01em;
 }
 
 /* --- Tabelas (st.dataframe) --- */
@@ -154,22 +148,21 @@ label, .stTextInput label, .stNumberInput label, .stSelectbox label {
     border-radius: 14px !important;
     overflow: hidden;
     border: 1px solid rgba(31, 41, 55, 0.9);
-    background-color: #020617;
+    background-color: #0f172a;
 }
 
-/* Cabeçalho da tabela */
 .dataframe thead tr th {
-    font-weight: 600;
-    font-size: 0.82rem;
-    background-color: #020617;
+    font-weight: 700;
+    font-size: 0.84rem;
+    background-color: #0f172a;
+    color: #E5E7EB;
 }
 
-/* Hover nas linhas da tabela */
 .dataframe tbody tr:hover {
     background-color: rgba(79, 70, 229, 0.18) !important;
 }
 
-/* --- Links (mantendo visited roxo) --- */
+/* --- Links --- */
 
 a:link {
     color: #4F46E5;
@@ -179,15 +172,15 @@ a:visited {
     color: #A855F7;
 }
 
-/* --- Badges (para BSR, demanda etc., se usados) --- */
+/* --- Badges --- */
 
 .badge {
     display: inline-flex;
     align-items: center;
     border-radius: 999px;
     padding: 0.15rem 0.55rem;
-    font-size: 0.7rem;
-    font-weight: 500;
+    font-size: 0.72rem;
+    font-weight: 600;
     border: 1px solid rgba(148, 163, 184, 0.6);
     background: rgba(15, 23, 42, 0.7);
     color: #E5E7EB;

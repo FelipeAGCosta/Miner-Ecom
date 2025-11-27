@@ -13,21 +13,25 @@ st.set_page_config(
 # --- Carregar CSS global ---
 CSS_PATH = Path(__file__).parent / "assets" / "style.css"
 if CSS_PATH.exists():
-    st.markdown(f"<style>{CSS_PATH.read_text()}</style>", unsafe_allow_html=True)
+    st.markdown(f"<style>{CSS_PATH.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
 
 # --- Sidebar: logo + descricao ---
 logo_path = Path(__file__).parent / "assets" / "logo_miner_ecom.png"
 with st.sidebar:
     if logo_path.exists():
         st.image(str(logo_path), use_column_width=True)
-    st.markdown("### Miner Ecom")
-    st.markdown(
-        "<span class='small-muted'>Ferramenta de mineracao para arbitragem entre eBay e Amazon (SP-API).</span>",
-        unsafe_allow_html=True,
-    )
     st.markdown("---")
 
-st.title("Miner Ecom - eBay & Amazon")
+st.markdown(
+    "<h1 style='text-align:center; margin-top:0;'>Miner Ecom - eBay &amp; Amazon</h1>",
+    unsafe_allow_html=True,
+)
+st.markdown(
+    "<div style='text-align:center; color:#9CA3AF; margin-bottom:1.5rem;'>"
+    "Ferramenta de mineracao para arbitragem entre eBay e Amazon (SP-API)."
+    "</div>",
+    unsafe_allow_html=True,
+)
 
 # Estado default (zerado) - condicao NEW permanece como padrao
 if "filters" not in st.session_state:
