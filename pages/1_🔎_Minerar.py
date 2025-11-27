@@ -35,16 +35,6 @@ st.header("🔎 Minerar")
 API_ITEMS_PER_PAGE = int(st.secrets.get("EBAY_LIMIT_PER_PAGE", os.getenv("EBAY_LIMIT_PER_PAGE", 200)))
 API_MAX_PAGES      = int(st.secrets.get("EBAY_MAX_PAGES", os.getenv("EBAY_MAX_PAGES", 25)))
 MAX_ENRICH         = int(st.secrets.get("MAX_ENRICH", os.getenv("MAX_ENRICH", 500)))
-
-# filtros Amazon calculados no topo para uso posterior
-amazon_pmin_v = amazon_price_min if amazon_price_min > 0 else None
-amazon_pmax_v = amazon_price_max if amazon_price_max > 0 else None
-if amazon_offer_label.startswith("Prime"):
-    amazon_offer_type = "prime"
-elif amazon_offer_label.startswith("Terceiros"):
-    amazon_offer_type = "fbm"
-else:
-    amazon_offer_type = "any"
 tree = load_categories_tree()
 flat = flatten_categories(tree)
 
@@ -558,6 +548,24 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
     df = st.session_state["_results_df"]
     base_df = st.session_state.get("_ebay_df")
     source = st.session_state.get("_results_source", "ebay")
+
+    try:
+        amazon_price_min
+        amazon_price_max
+        amazon_offer_label
+    except NameError:
+        amazon_price_min = 0
+        amazon_price_max = 0
+        amazon_offer_label = "Qualquer"
+
+    amazon_pmin_v = amazon_price_min if amazon_price_min > 0 else None
+    amazon_pmax_v = amazon_price_max if amazon_price_max > 0 else None
+    if amazon_offer_label.startswith("Prime"):
+        amazon_offer_type = "prime"
+    elif amazon_offer_label.startswith("Terceiros"):
+        amazon_offer_type = "fbm"
+    else:
+        amazon_offer_type = "any"
 
     if amazon_pmin_v is not None and amazon_pmax_v is not None and amazon_pmax_v < amazon_pmin_v:
         st.error("Na Amazon, o preço máximo não pode ser menor que o preço mínimo.")
