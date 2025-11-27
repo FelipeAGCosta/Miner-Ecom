@@ -1,29 +1,82 @@
-/* --- Fundo geral e estrutura --- */
+/* --- Estrutura geral / fundo --- */
 
+/* Fundo geral da aplicação */
 .stApp {
-    background: radial-gradient(circle at top, #111827 0, #020617 55%);
+    background-color: #050816; /* bem escuro, levemente arroxeado */
 }
 
+/* Container principal */
 .block-container {
     padding-top: 1.5rem;
     padding-bottom: 3rem;
-    max-width: 1200px;
+    max-width: 1280px;
 }
 
+/* Sidebar com destaque lateral */
 section[data-testid="stSidebar"] {
+    background-color: #050816;
     border-right: 1px solid #111827;
 }
 
-/* --- Tipografia e headings --- */
+/* Pequena faixa vertical de cor na lateral da sidebar (opcional) */
+section[data-testid="stSidebar"]::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 4px;
+    height: 100%;
+    background: linear-gradient(to bottom, #6366F1, #A855F7);
+}
+
+/* --- Tipografia e textos --- */
 
 h1, h2, h3 {
     font-weight: 600;
-    letter-spacing: 0.01em;
+    letter-spacing: 0.02em;
+    color: #F9FAFB;
 }
 
 .small-muted {
     font-size: 0.85rem;
     color: #9CA3AF;
+}
+
+/* --- Cards (blocos de filtros e infos) --- */
+
+/* Card principal, mais “importante” (ex.: filtros eBay) */
+.card {
+    border-radius: 16px;
+    padding: 1.2rem 1.5rem;
+    margin-bottom: 1.5rem;
+    background: #0B1120; /* um tom mais claro que o fundo */
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.9);
+}
+
+/* Card neutro (ex.: filtros Amazon opcionais) */
+.card-muted {
+    border-radius: 16px;
+    padding: 1.1rem 1.4rem;
+    margin-bottom: 1.2rem;
+    background: #020617; /* ainda escuro, mas com borda clara */
+    border: 1px solid rgba(55, 65, 81, 0.9);
+    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.7);
+}
+
+/* Título interno dos cards */
+.card-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #E5E7EB;
+    margin-bottom: 0.4rem;
+}
+
+/* Descrição interna dos cards */
+.card-caption {
+    font-size: 0.8rem;
+    color: #9CA3AF;
+    margin-bottom: 0.8rem;
 }
 
 /* --- Botões --- */
@@ -33,70 +86,90 @@ div.stButton > button:first-child {
     padding: 0.6rem 1.8rem;
     font-weight: 600;
     border: 1px solid rgba(148, 163, 184, 0.35);
-    box-shadow: 0 10px 25px rgba(15, 23, 42, 0.7);
+    background: linear-gradient(135deg, #4F46E5, #7C3AED);
+    color: #EEF2FF;
+    box-shadow: 0 14px 35px rgba(15, 23, 42, 0.9);
 }
 
-div.stButton > button[kind="secondary"] {
-    background-color: transparent;
-}
-
-div.stButton > button:hover {
+/* Hover dos botões */
+div.stButton > button:first-child:hover {
     transform: translateY(-1px);
-    box-shadow: 0 20px 40px rgba(15, 23, 42, 0.9);
+    box-shadow: 0 22px 50px rgba(15, 23, 42, 0.95);
 }
 
-/* --- Cards --- */
-
-.card {
-    border-radius: 14px;
-    padding: 1.2rem 1.4rem;
-    background: radial-gradient(circle at top left, rgba(79, 70, 229, 0.15), #020617);
-    border: 1px solid rgba(148, 163, 184, 0.25);
-    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.9);
-    margin-bottom: 1.5rem;
+/* Botões desabilitados continuam legíveis */
+div.stButton > button[disabled] {
+    background: #1F2937;
+    border-color: #374151;
+    box-shadow: none;
 }
 
-.card-muted {
-    border-radius: 14px;
-    padding: 1.1rem 1.3rem;
-    background: #020617;
-    border: 1px solid rgba(31, 41, 55, 0.9);
-    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.75);
-    margin-bottom: 1.5rem;
-}
+/* --- Inputs, selects, number_inputs etc. --- */
 
-.card-title {
-    font-size: 0.95rem;
-    font-weight: 600;
+/* Alvos genéricos: input, select, textarea */
+input, select, textarea {
+    background-color: #020617;
+    border-radius: 10px;
+    border: 1px solid #1F2937;
     color: #E5E7EB;
-    margin-bottom: 0.6rem;
 }
 
-.card-caption {
-    font-size: 0.8rem;
-    color: #9CA3AF;
-    margin-bottom: 0.8rem;
+/* Placeholders mais suaves */
+input::placeholder,
+textarea::placeholder {
+    color: #6B7280;
 }
 
-/* --- Tabelas --- */
+/* Containers dos widgets do Streamlit (baseweb) */
+div[data-baseweb="input"],
+div[data-baseweb="select"],
+div[data-baseweb="textarea"] {
+    background-color: #020617;
+    border-radius: 10px;
+    border: 1px solid #1F2937;
+}
+
+/* Foco: borda e brilho na cor principal */
+div[data-baseweb="input"]:focus-within,
+div[data-baseweb="select"]:focus-within,
+div[data-baseweb="textarea"]:focus-within,
+input:focus,
+select:focus,
+textarea:focus {
+    outline: none;
+    border-color: #6366F1;
+    box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.6);
+}
+
+/* Labels dos campos (streamlit usa p) */
+label, .stTextInput label, .stNumberInput label, .stSelectbox label {
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: #E5E7EB;
+}
+
+/* --- Tabelas (st.dataframe) --- */
 
 .dataframe {
-    border-radius: 12px !important;
+    border-radius: 14px !important;
     overflow: hidden;
     border: 1px solid rgba(31, 41, 55, 0.9);
     background-color: #020617;
 }
 
-.dataframe tbody tr:hover {
-    background-color: rgba(79, 70, 229, 0.16) !important;
-}
-
+/* Cabeçalho da tabela */
 .dataframe thead tr th {
     font-weight: 600;
-    font-size: 0.85rem;
+    font-size: 0.82rem;
+    background-color: #020617;
 }
 
-/* --- Links --- */
+/* Hover nas linhas da tabela */
+.dataframe tbody tr:hover {
+    background-color: rgba(79, 70, 229, 0.18) !important;
+}
+
+/* --- Links (mantendo visited roxo) --- */
 
 a:link {
     color: #4F46E5;
@@ -106,11 +179,8 @@ a:visited {
     color: #A855F7;
 }
 
-button[data-baseweb="button"] a {
-    text-decoration: none;
-}
+/* --- Badges (para BSR, demanda etc., se usados) --- */
 
-/* --- Badges (opcional) --- */
 .badge {
     display: inline-flex;
     align-items: center;
