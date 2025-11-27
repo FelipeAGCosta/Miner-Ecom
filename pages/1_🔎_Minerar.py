@@ -13,32 +13,28 @@ from lib.db import upsert_ebay_listings, sql_safe_frame
 from lib.ebay_search import search_items          # novo cliente de busca
 from lib.ebay_api import get_item_detail          # detalhes para enriquecimento
 from lib.redis_cache import cache_get, cache_set
-from integrations.amazon_matching import match_ebay_to_amazon  # integração Amazon
+from integrations.amazon_matching import match_ebay_to_amazon  # integracao Amazon
 
-# ── CSS para links "visitados" ficarem roxos ───────────────────────────────────
-st.markdown(
-    """
-    <style>
-    a:link {
-        color: #1f6feb;
-    }
-    a:visited {
-        color: #a371f7;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
+st.header("Minerar produtos")
+st.caption(
+    "Encontre oportunidades de arbitragem entre eBay e Amazon usando filtros avancados "
+    "de preco, estoque e demanda estimada."
 )
 
-st.header("🔎 Minerar")
-
 API_ITEMS_PER_PAGE = int(st.secrets.get("EBAY_LIMIT_PER_PAGE", os.getenv("EBAY_LIMIT_PER_PAGE", 200)))
-API_MAX_PAGES      = int(st.secrets.get("EBAY_MAX_PAGES", os.getenv("EBAY_MAX_PAGES", 25)))
-MAX_ENRICH         = int(st.secrets.get("MAX_ENRICH", os.getenv("MAX_ENRICH", 500)))
+API_MAX_PAGES = int(st.secrets.get("EBAY_MAX_PAGES", os.getenv("EBAY_MAX_PAGES", 25)))
+MAX_ENRICH = int(st.secrets.get("MAX_ENRICH", os.getenv("MAX_ENRICH", 500)))
 tree = load_categories_tree()
 flat = flatten_categories(tree)
 
-# ── filtros eBay ───────────────────────────────────────────────────────────────
+# --- filtros eBay -----------------------------------------------------------
+st.markdown("<div class='card'>", unsafe_allow_html=True)
+st.markdown("<div class='card-title'>Filtros eBay</div>", unsafe_allow_html=True)
+st.markdown(
+    "<div class='card-caption'>Defina categoria, faixa de preco, condicao e estoque minimo desejado.</div>",
+    unsafe_allow_html=True,
+)
+
 col_kw, _ = st.columns([2, 1])
 with col_kw:
     kw = st.text_input("Palavra-chave (opcional)", value="").strip()
@@ -47,7 +43,7 @@ with col_kw:
 col1, col2 = st.columns([1.6, 1.6])
 with col1:
     root_names = ["Todas as categorias"] + [n["name"] for n in tree]
-    sel_root = st.selectbox("Categoria (nível 1)", root_names, index=0)
+    sel_root = st.selectbox("Categoria (nivel 1)", root_names, index=0)
 with col2:
     child_names = ["Todas as subcategorias"]
     if sel_root != "Todas as categorias":
@@ -56,12 +52,12 @@ with col2:
                 for ch in n.get("children", []) or []:
                     child_names.append(ch["name"])
                 break
-    sel_child = st.selectbox("Subcategoria (nível 2)", child_names, index=0)
+    sel_child = st.selectbox("Subcategoria (nivel 2)", child_names, index=0)
 
 col3, col4, col5 = st.columns([1, 1, 1])
 with col3:
     pmin = st.number_input(
-        "Preço mínimo (US$)",
+        "Preco minimo (US$)",
         min_value=0.0,
         value=0.0,
         step=1.0,
@@ -70,7 +66,7 @@ with col3:
     )
 with col4:
     pmax = st.number_input(
-        "Preço máximo (US$)",
+        "Preco maximo (US$)",
         min_value=0.0,
         value=0.0,
         step=1.0,
@@ -78,14 +74,30 @@ with col4:
         key="pmax_input",
     )
 with col5:
-    cond_pt = st.selectbox("Condição", ["Novo", "Usado", "Recondicionado", "Novo & Usado"], index=0)
+    cond_pt = st.selectbox("Condicao", ["Novo", "Usado", "Recondicionado", "Novo & Usado"], index=0)
 
-# ── filtros Amazon (opcionais) ────────────────────────────────────────────────
-st.subheader("Filtros Amazon (opcional)")
+qty_min_input = st.number_input(
+    "Quantidade minima (opcional; usa enriquecimento)",
+    min_value=0,
+    value=0,
+    step=1,
+)
+
+st.markdown("</div>", unsafe_allow_html=True)
+
+# --- filtros Amazon (opcionais) --------------------------------------------
+st.markdown("<div class='card-muted'>", unsafe_allow_html=True)
+st.markdown("<div class='card-title'>Filtros Amazon (opcional)</div>", unsafe_allow_html=True)
+st.markdown(
+    "<div class='card-caption'>Use a SP-API para cruzar os resultados do eBay com a Amazon, "
+    "filtrando por faixa de preco e tipo de oferta (Prime/FBA/FBM).</div>",
+    unsafe_allow_html=True,
+)
+
 col_am1, col_am2, col_am3 = st.columns([1, 1, 1])
 with col_am1:
     amazon_price_min = st.number_input(
-        "Preço mínimo Amazon (US$)",
+        "Preco minimo Amazon (US$)",
         min_value=0.0,
         value=0.0,
         step=1.0,
@@ -94,7 +106,7 @@ with col_am1:
     )
 with col_am2:
     amazon_price_max = st.number_input(
-        "Preço máximo Amazon (US$)",
+        "Preco maximo Amazon (US$)",
         min_value=0.0,
         value=0.0,
         step=1.0,
@@ -108,15 +120,19 @@ with col_am3:
         index=0,
     )
 min_monthly_sales = st.number_input(
-    "Vendas/mês mínimas na Amazon (estimadas via BSR)",
+    "Vendas/mes minimas na Amazon (estimadas via BSR)",
     min_value=0,
     value=0,
     step=10,
 )
+amazon_search_enabled = st.checkbox("Buscar tambem na Amazon (SP-API)", value=False)
 
-st.caption("Quanto mais ampla a busca, maior o tempo de pesquisa. Recomendamos adicionar mais filtros para que a busca seja mais rápida.")
+st.markdown("</div>", unsafe_allow_html=True)
+
+st.caption(
+    "Quanto mais ampla a busca, maior o tempo de pesquisa. Use os filtros para equilibrar velocidade e profundidade."
+)
 st.divider()
-
 # ── helpers ────────────────────────────────────────────────────────────────────
 def _fmt_eta(seconds: float) -> str:
     return str(timedelta(seconds=int(max(0, seconds))))
@@ -581,25 +597,25 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
     )
 
     with col_jump_back:
-        if st.button("⏮", use_container_width=True, disabled=(page <= 1), key="jump_back_10"):
+        if st.button("<<", use_container_width=True, disabled=(page <= 1), key="jump_back_10"):
             st.session_state["_page_num"] = max(1, page - 10)
             st.rerun()
 
     with col_prev:
-        if st.button("◀", use_container_width=True, disabled=(page <= 1), key="prev_page"):
+        if st.button("<", use_container_width=True, disabled=(page <= 1), key="prev_page"):
             st.session_state["_page_num"] = max(1, page - 1)
             st.rerun()
 
     with col_info:
-        st.write(f"**Total: {len(df)} itens | Página {page}/{total_pages}**")
+        st.write(f"**Total: {len(df)} itens | Pagina {page}/{total_pages}**")
 
     with col_next:
-        if st.button("▶", use_container_width=True, disabled=(page >= total_pages), key="next_page"):
+        if st.button(">", use_container_width=True, disabled=(page >= total_pages), key="next_page"):
             st.session_state["_page_num"] = min(total_pages, page + 1)
             st.rerun()
 
     with col_jump_forward:
-        if st.button("⏭", use_container_width=True, disabled=(page >= total_pages), key="jump_forward_10"):
+        if st.button(">>", use_container_width=True, disabled=(page >= total_pages), key="jump_forward_10"):
             st.session_state["_page_num"] = min(total_pages, page + 10)
             st.rerun()
 

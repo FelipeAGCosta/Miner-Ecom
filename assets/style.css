@@ -1,0 +1,124 @@
+/* --- Fundo geral e estrutura --- */
+
+.stApp {
+    background: radial-gradient(circle at top, #111827 0, #020617 55%);
+}
+
+.block-container {
+    padding-top: 1.5rem;
+    padding-bottom: 3rem;
+    max-width: 1200px;
+}
+
+section[data-testid="stSidebar"] {
+    border-right: 1px solid #111827;
+}
+
+/* --- Tipografia e headings --- */
+
+h1, h2, h3 {
+    font-weight: 600;
+    letter-spacing: 0.01em;
+}
+
+.small-muted {
+    font-size: 0.85rem;
+    color: #9CA3AF;
+}
+
+/* --- Botões --- */
+
+div.stButton > button:first-child {
+    border-radius: 999px;
+    padding: 0.6rem 1.8rem;
+    font-weight: 600;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    box-shadow: 0 10px 25px rgba(15, 23, 42, 0.7);
+}
+
+div.stButton > button[kind="secondary"] {
+    background-color: transparent;
+}
+
+div.stButton > button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 20px 40px rgba(15, 23, 42, 0.9);
+}
+
+/* --- Cards --- */
+
+.card {
+    border-radius: 14px;
+    padding: 1.2rem 1.4rem;
+    background: radial-gradient(circle at top left, rgba(79, 70, 229, 0.15), #020617);
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.9);
+    margin-bottom: 1.5rem;
+}
+
+.card-muted {
+    border-radius: 14px;
+    padding: 1.1rem 1.3rem;
+    background: #020617;
+    border: 1px solid rgba(31, 41, 55, 0.9);
+    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.75);
+    margin-bottom: 1.5rem;
+}
+
+.card-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #E5E7EB;
+    margin-bottom: 0.6rem;
+}
+
+.card-caption {
+    font-size: 0.8rem;
+    color: #9CA3AF;
+    margin-bottom: 0.8rem;
+}
+
+/* --- Tabelas --- */
+
+.dataframe {
+    border-radius: 12px !important;
+    overflow: hidden;
+    border: 1px solid rgba(31, 41, 55, 0.9);
+    background-color: #020617;
+}
+
+.dataframe tbody tr:hover {
+    background-color: rgba(79, 70, 229, 0.16) !important;
+}
+
+.dataframe thead tr th {
+    font-weight: 600;
+    font-size: 0.85rem;
+}
+
+/* --- Links --- */
+
+a:link {
+    color: #4F46E5;
+}
+
+a:visited {
+    color: #A855F7;
+}
+
+button[data-baseweb="button"] a {
+    text-decoration: none;
+}
+
+/* --- Badges (opcional) --- */
+.badge {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 0.15rem 0.55rem;
+    font-size: 0.7rem;
+    font-weight: 500;
+    border: 1px solid rgba(148, 163, 184, 0.6);
+    background: rgba(15, 23, 42, 0.7);
+    color: #E5E7EB;
+}
