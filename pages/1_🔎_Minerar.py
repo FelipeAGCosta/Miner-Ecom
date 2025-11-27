@@ -16,10 +16,7 @@ from lib.redis_cache import cache_get, cache_set
 from integrations.amazon_matching import match_ebay_to_amazon  # integracao Amazon
 
 st.header("Minerar produtos")
-st.caption(
-    "Encontre oportunidades de arbitragem entre eBay e Amazon usando filtros avançados "
-    "de preço, estoque e demanda estimada."
-)
+
 
 API_ITEMS_PER_PAGE = int(st.secrets.get("EBAY_LIMIT_PER_PAGE", os.getenv("EBAY_LIMIT_PER_PAGE", 200)))
 API_MAX_PAGES = int(st.secrets.get("EBAY_MAX_PAGES", os.getenv("EBAY_MAX_PAGES", 25)))
@@ -57,7 +54,7 @@ with col2:
 col3, col4, col5 = st.columns([1, 1, 1])
 with col3:
     pmin = st.number_input(
-        "Preço minimo (US$)",
+        "Preço mínimo (US$)",
         min_value=0.0,
         value=0.0,
         step=1.0,
@@ -77,7 +74,7 @@ with col5:
     cond_pt = st.selectbox("Condição", ["Novo", "Usado", "Recondicionado", "Novo & Usado"], index=0)
 
 qty_min_input = st.number_input(
-    "Quantidade minima (opcional; usa enriquecimento)",
+    "Quantidade mínima (opcional; usa enriquecimento)",
     min_value=0,
     value=0,
     step=1,
@@ -115,7 +112,7 @@ with col_am3:
         index=0,
     )
 min_monthly_sales = st.number_input(
-    "Vendas/mes minimas na Amazon (estimadas via BSR)",
+    "Vendas/mês mínimas na Amazon (estimadas via BSR)",
     min_value=0,
     value=0,
     step=10,
