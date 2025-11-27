@@ -531,7 +531,7 @@ if st.button("Minerar eBay"):
                 st.session_state["_results_df"] = view.copy()
                 st.session_state["_results_source"] = "ebay"
             else:
-                st.success(f"Itens após filtros Amazon/SP-API: {len(matched)} (de {len(view)} itens do eBay).")
+                st.success(f"{len(matched)} Itens após filtros Amazon - {len(matched)} (de {len(view)} itens do eBay).")
                 st.session_state["_results_df"] = matched.reset_index(drop=True)
                 st.session_state["_results_source"] = "amazon"
         except Exception as e:
@@ -570,11 +570,7 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
     if amazon_pmin_v is not None and amazon_pmax_v is not None and amazon_pmax_v < amazon_pmin_v:
         st.error("Na Amazon, o preço máximo não pode ser menor que o preço mínimo.")
 
-    st.caption(
-        "Estimativas de vendas baseadas no BSR atual por categoria (heurística conservadora; não são vendas reais do último mês)."
-    )
-    info_msg = "Resultados do eBay (sem match Amazon)" if source == "ebay" else "Resultados com match Amazon"
-    st.caption(info_msg)
+    # mensagens internas removidas da interface para reduzir ruído
 
     PAGE_SIZE = 50
     total_pages = max(1, math.ceil(len(df) / PAGE_SIZE))
@@ -611,8 +607,8 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
     _render_table(df.iloc[start:end].copy())
     st.caption(f"Página {page}/{total_pages} — exibindo {len(df.iloc[start:end])} itens.")
 
-    st.subheader("Quantidade mínima (após resultados)")
-    col_qty1, col_qty2 = st.columns([1, 1])
+    st.subheader("Quantidade mínima do produto em estoque eBay")
+    col_qty1, col_qty2 = st.columns([2, 1])
     with col_qty1:
         qty_after = st.number_input(
             "Qtd mínima (eBay)",
