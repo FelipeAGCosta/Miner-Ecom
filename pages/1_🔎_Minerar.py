@@ -482,7 +482,7 @@ if st.button("Minerar eBay"):
 
         # ── integração opcional com Amazon ─────────────────────────────────────
         
-        # guarda resultado eBay (sem Amazon ainda)
+        # guarda resultado eBay
         if "search_url" not in view.columns:
             view["search_url"] = view.apply(_make_search_url, axis=1)
         if "currency" in view.columns:
@@ -490,9 +490,50 @@ if st.button("Minerar eBay"):
 
         view = view.reset_index(drop=True)
         st.session_state["_ebay_df"] = view.copy()
-        st.session_state["_results_df"] = view.copy()
         st.session_state["_results_source"] = "ebay"
         st.session_state["_show_qty"] = False
+
+        try:
+            prog = st.progress(0.0, text="Buscando correspondências na Amazon...")
+            t0 = time.time()
+
+            def _update_progress(done: int, total: int):
+                elapsed = time.time() - t0
+                frac = done / max(1, total)
+                remaining = (elapsed / max(1, done)) * (total - done)
+                prog.progress(
+                    frac,
+                    text=f"Buscando na Amazon... {done}/{total} · decorrido {elapsed:.1f}s · restante ~{_fmt_eta(remaining)}",
+                )
+
+            matched = match_ebay_to_amazon(
+                df_ebay=view,
+                amazon_price_min=amazon_pmin_v,
+                amazon_price_max=amazon_pmax_v,
+                amazon_offer_type=amazon_offer_type,
+                max_title_lookups=200,
+                max_gtin_lookups=400,
+                max_price_lookups=400,
+                min_monthly_sales_est=min_monthly_sales if min_monthly_sales > 0 else None,
+                progress_cb=_update_progress,
+            )
+            prog.empty()
+            if matched.empty:
+                st.warning(
+                    "Nenhum item encontrou match na Amazon com os filtros selecionados "
+                    "(GTIN/título, faixa de preço, oferta e vendas mínimas)."
+                )
+                st.session_state["_results_df"] = view.copy()
+                st.session_state["_results_source"] = "ebay"
+            else:
+                st.success(f"Itens após filtros Amazon/SP-API: {len(matched)} (de {len(view)} itens do eBay).")
+                st.session_state["_results_df"] = matched.reset_index(drop=True)
+                st.session_state["_results_source"] = "amazon"
+        except Exception as e:
+            st.error(f"Falha ao consultar Amazon SP-API: {e}")
+            st.session_state["_results_df"] = view.copy()
+            st.session_state["_results_source"] = "ebay"
+
         st.session_state["_page_num"] = 1
     except Exception as e:
         st.error(f"Falha na mineração/enriquecimento: {e}")
@@ -515,107 +556,11 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
     if amazon_pmin_v is not None and amazon_pmax_v is not None and amazon_pmax_v < amazon_pmin_v:
         st.error("Na Amazon, o preco maximo nao pode ser menor que o preco minimo.")
 
-    st.subheader("Integração Amazon (opcional)")
     st.caption(
-        "Estimativas de vendas baseadas no BSR atual por categoria (heurística conservadora, não vendas reais do último mês)."
+        "Estimativas de vendas baseadas no BSR atual por categoria (heur?stica conservadora; n?o s?o vendas reais do ?ltimo m?s)."
     )
-    info_msg = "Exibindo resultados do eBay" if source == "ebay" else "Exibindo somente itens com match na Amazon"
+    info_msg = "Resultados do eBay (sem match Amazon)" if source == "ebay" else "Resultados com match Amazon"
     st.caption(info_msg)
-
-    col_am_btn, col_reset = st.columns([1.2, 1])
-    with col_am_btn:
-        if st.button(
-            "Buscar na Amazon (SP-API)",
-            use_container_width=True,
-            disabled=(base_df is None or base_df.empty),
-        ):
-            df_match = base_df if base_df is not None else df
-            try:
-                prog = st.progress(0.0, text="Iniciando busca na Amazon...")
-                t0 = time.time()
-
-                def _update_progress(done: int, total: int):
-                    elapsed = time.time() - t0
-                    frac = done / max(1, total)
-                    remaining = (elapsed / max(1, done)) * (total - done)
-                    prog.progress(
-                        frac,
-                        text=f"Buscando na Amazon... {done}/{total} · decorrido {elapsed:.1f}s · restante ~{_fmt_eta(remaining)}",
-                    )
-
-                matched = match_ebay_to_amazon(
-                    df_ebay=df_match,
-                    amazon_price_min=amazon_pmin_v,
-                    amazon_price_max=amazon_pmax_v,
-                    amazon_offer_type=amazon_offer_type,
-                    max_title_lookups=200,
-                    max_gtin_lookups=400,
-                    max_price_lookups=400,
-                    min_monthly_sales_est=min_monthly_sales if min_monthly_sales > 0 else None,
-                    progress_cb=_update_progress,
-                )
-                prog.empty()
-                if matched.empty:
-                    st.warning(
-                        "Nenhum item encontrou match na Amazon com os filtros selecionados "
-                        "(GTIN ou titulo, faixa de preco e tipo de oferta)."
-                    )
-                else:
-                    st.success(f"Itens apos filtros Amazon/SP-API: {len(matched)} (de {len(df_match)} itens do eBay).")
-                    st.session_state["_results_df"] = matched.reset_index(drop=True)
-                    st.session_state["_results_source"] = "amazon"
-                    st.session_state["_show_qty"] = False
-                    st.session_state["_page_num"] = 1
-                    st.rerun()
-            except Exception as e:
-                st.error(f"Falha ao consultar Amazon SP-API: {e}")
-    with col_reset:
-        if st.button(
-            "Voltar aos resultados do eBay",
-            use_container_width=True,
-            disabled=(base_df is None or base_df.empty or source == "ebay"),
-        ):
-            st.session_state["_results_df"] = base_df.copy()
-            st.session_state["_results_source"] = "ebay"
-            st.session_state["_show_qty"] = False
-            st.session_state["_page_num"] = 1
-            st.rerun()
-
-    if source == "amazon":
-        st.subheader("Quantidade mínima (enriquecer e filtrar no resultado atual)")
-        col_qty1, col_qty2 = st.columns([1, 2])
-        with col_qty1:
-            qty_after = st.number_input(
-                "Qtd mínima (eBay)",
-                min_value=0,
-                value=0,
-                step=1,
-                help="Busca detalhe no eBay para preencher estoque e filtra pela quantidade desejada.",
-            )
-        with col_qty2:
-            if st.button(
-                "Aplicar filtro de quantidade",
-                use_container_width=True,
-                disabled=df.empty,
-            ):
-                if qty_after <= 0:
-                    st.info("Informe uma quantidade mínima maior que zero para aplicar o filtro.")
-                else:
-                    with st.spinner("Enriquecendo e filtrando por quantidade..."):
-                        filtered, enr_cnt, proc_cnt, qty_non_null = _enrich_and_filter_qty(df, int(qty_after), cond_pt)
-                    st.info(
-                        f"Detalhes consultados para {proc_cnt} itens (enriquecidos: {enr_cnt}). "
-                        f"Itens com quantidade conhecida: {qty_non_null}."
-                    )
-                    if filtered.empty:
-                        st.warning("Nenhum item com a quantidade mínima informada.")
-                    else:
-                        st.success(f"Itens após filtro de quantidade: {len(filtered)}.")
-                        st.session_state["_results_df"] = filtered.reset_index(drop=True)
-                        st.session_state["_results_source"] = source
-                        st.session_state["_show_qty"] = True
-                        st.session_state["_page_num"] = 1
-                        st.rerun()
 
     PAGE_SIZE = 50
     total_pages = max(1, math.ceil(len(df) / PAGE_SIZE))
@@ -650,4 +595,39 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
 
     start, end = (page - 1) * PAGE_SIZE, (page - 1) * PAGE_SIZE + PAGE_SIZE
     _render_table(df.iloc[start:end].copy())
-    st.caption(f"Página {page}/{total_pages} — exibindo {len(df.iloc[start:end])} itens.")
+    st.caption(f"P?gina {page}/{total_pages} ? exibindo {len(df.iloc[start:end])} itens.")
+
+    st.subheader("Quantidade m?nima (ap?s resultados)")
+    col_qty1, col_qty2 = st.columns([1, 2])
+    with col_qty1:
+        qty_after = st.number_input(
+            "Qtd m?nima (eBay)",
+            min_value=0,
+            value=0,
+            step=1,
+            help="Enriquece estoque no eBay e filtra pela quantidade desejada.",
+        )
+    with col_qty2:
+        if st.button(
+            "Aplicar filtro de quantidade",
+            use_container_width=True,
+            disabled=df.empty,
+        ):
+            if qty_after <= 0:
+                st.info("Informe uma quantidade m?nima maior que zero para aplicar o filtro.")
+            else:
+                with st.spinner("Enriquecendo e filtrando por quantidade..."):
+                    filtered, enr_cnt, proc_cnt, qty_non_null = _enrich_and_filter_qty(df, int(qty_after), cond_pt)
+                st.info(
+                    f"Detalhes consultados para {proc_cnt} itens (enriquecidos: {enr_cnt}). "
+                    f"Itens com quantidade conhecida: {qty_non_null}."
+                )
+                if filtered.empty:
+                    st.warning("Nenhum item com a quantidade m?nima informada.")
+                else:
+                    st.success(f"Itens ap?s filtro de quantidade: {len(filtered)}.")
+                    st.session_state["_results_df"] = filtered.reset_index(drop=True)
+                    st.session_state["_results_source"] = source
+                    st.session_state["_show_qty"] = True
+                    st.session_state["_page_num"] = 1
+                    st.rerun()
