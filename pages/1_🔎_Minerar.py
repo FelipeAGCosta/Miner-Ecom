@@ -17,8 +17,8 @@ from integrations.amazon_matching import match_ebay_to_amazon  # integracao Amaz
 
 st.header("Minerar produtos")
 st.caption(
-    "Encontre oportunidades de arbitragem entre eBay e Amazon usando filtros avancados "
-    "de preco, estoque e demanda estimada."
+    "Encontre oportunidades de arbitragem entre eBay e Amazon usando filtros avançados "
+    "de preço, estoque e demanda estimada."
 )
 
 API_ITEMS_PER_PAGE = int(st.secrets.get("EBAY_LIMIT_PER_PAGE", os.getenv("EBAY_LIMIT_PER_PAGE", 200)))
@@ -31,7 +31,7 @@ flat = flatten_categories(tree)
 st.markdown("<div class='card'>", unsafe_allow_html=True)
 st.markdown("<div class='card-title'>Filtros eBay</div>", unsafe_allow_html=True)
 st.markdown(
-    "<div class='card-caption'>Defina categoria, faixa de preco, condicao e estoque minimo desejado.</div>",
+    "<div class='card-caption'>Defina categoria, faixa de preço, condição e estoque mínimo desejado.</div>",
     unsafe_allow_html=True,
 )
 
@@ -57,7 +57,7 @@ with col2:
 col3, col4, col5 = st.columns([1, 1, 1])
 with col3:
     pmin = st.number_input(
-        "Preco minimo (US$)",
+        "Preço minimo (US$)",
         min_value=0.0,
         value=0.0,
         step=1.0,
@@ -66,7 +66,7 @@ with col3:
     )
 with col4:
     pmax = st.number_input(
-        "Preco maximo (US$)",
+        "Preço maximo (US$)",
         min_value=0.0,
         value=0.0,
         step=1.0,
@@ -74,7 +74,7 @@ with col4:
         key="pmax_input",
     )
 with col5:
-    cond_pt = st.selectbox("Condicao", ["Novo", "Usado", "Recondicionado", "Novo & Usado"], index=0)
+    cond_pt = st.selectbox("Condição", ["Novo", "Usado", "Recondicionado", "Novo & Usado"], index=0)
 
 qty_min_input = st.number_input(
     "Quantidade minima (opcional; usa enriquecimento)",
@@ -87,17 +87,12 @@ st.markdown("</div>", unsafe_allow_html=True)
 
 # --- filtros Amazon (opcionais) --------------------------------------------
 st.markdown("<div class='card-muted'>", unsafe_allow_html=True)
-st.markdown("<div class='card-title'>Filtros Amazon (opcional)</div>", unsafe_allow_html=True)
-st.markdown(
-    "<div class='card-caption'>Use a SP-API para cruzar os resultados do eBay com a Amazon, "
-    "filtrando por faixa de preco e tipo de oferta (Prime/FBA/FBM).</div>",
-    unsafe_allow_html=True,
-)
+st.markdown("<div class='card-title'>Filtros Amazon</div>", unsafe_allow_html=True)
 
 col_am1, col_am2, col_am3 = st.columns([1, 1, 1])
 with col_am1:
     amazon_price_min = st.number_input(
-        "Preco minimo Amazon (US$)",
+        "Preço mínimo Amazon (US$)",
         min_value=0.0,
         value=0.0,
         step=1.0,
@@ -106,7 +101,7 @@ with col_am1:
     )
 with col_am2:
     amazon_price_max = st.number_input(
-        "Preco maximo Amazon (US$)",
+        "Preço máximo Amazon (US$)",
         min_value=0.0,
         value=0.0,
         step=1.0,
@@ -372,7 +367,7 @@ def _ensure_currency(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 # ── ação ───────────────────────────────────────────────────────────────────────
-if st.button("Minerar eBay"):
+if st.button("Minerar"):
     pmin_v = pmin if pmin > 0 else None
     pmax_v = pmax if pmax > 0 else None
     qmin_v = None
