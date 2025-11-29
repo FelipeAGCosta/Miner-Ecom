@@ -5,6 +5,11 @@ from pathlib import Path
 from lib.config import make_engine, DB_HOST, DB_PORT, DB_USER, DB_NAME
 from lib.tasks import load_tasks
 
+# aplicar CSS global
+CSS_PATH = Path(__file__).resolve().parent.parent / "assets" / "style.css"
+if CSS_PATH.exists():
+    st.markdown(f"<style>{CSS_PATH.read_text(encoding="utf-8")}</style>", unsafe_allow_html=True)
+
 st.header("⚙️ Avançado (diagnóstico)")
 
 st.subheader("Diagnóstico rápido do ambiente")

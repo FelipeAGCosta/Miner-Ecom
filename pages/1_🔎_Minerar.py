@@ -6,6 +6,7 @@ from datetime import timedelta
 
 import pandas as pd
 import streamlit as st
+from pathlib import Path
 
 from lib.config import make_engine
 from lib.tasks import load_categories_tree, flatten_categories
@@ -14,6 +15,11 @@ from lib.ebay_search import search_items          # novo cliente de busca
 from lib.ebay_api import get_item_detail          # detalhes para enriquecimento
 from lib.redis_cache import cache_get, cache_set
 from integrations.amazon_matching import match_ebay_to_amazon  # integracao Amazon
+
+# --- carregar CSS global (tema aplicado também nesta página) ---
+CSS_PATH = Path(__file__).resolve().parent.parent / "assets" / "style.css"
+if CSS_PATH.exists():
+    st.markdown(f"<style>{CSS_PATH.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
 
 st.header("Minerar produtos")
 
