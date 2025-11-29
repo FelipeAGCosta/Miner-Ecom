@@ -39,6 +39,8 @@ st.markdown(
 # estágio visual do stepper
 if "_stage" not in st.session_state and "_results_df" in st.session_state and not st.session_state["_results_df"].empty:
     st.session_state["_stage"] = "results"
+if st.session_state.get("_start_run", False):
+    st.session_state["_stage"] = "running"
 stage = st.session_state.get("_stage", "filters")
 step2_active = stage in ("running", "results")
 step3_active = stage == "results"
@@ -445,25 +447,35 @@ def _ensure_currency(df: pd.DataFrame) -> pd.DataFrame:
         df["currency"] = df["currency"].fillna("USD").replace("", "USD")
     return df
 
+run_requested = st.session_state.pop("_start_run", False)
+
+run_requested = st.session_state.pop("_start_run", False)
+
 # Ação principal de mineração
 if st.button("Minerar"):
     st.session_state["_stage"] = "running"
+    st.session_state["_start_run"] = True
+    st.rerun()
+
+if run_requested:
     pmin_v = pmin if pmin > 0 else None
     pmax_v = pmax if pmax > 0 else None
     qmin_v = None
 
     if pmin_v is not None and pmax_v is not None and pmax_v < pmin_v:
         st.error("Preço máximo não pode ser menor que o preço mínimo.")
+        st.session_state["_stage"] = "filters"
         st.stop()
-
 
     if sel_root == "Todas as categorias" and st.session_state.get("_kw", "") == "":
         st.error("Escolha **uma categoria** ou informe uma **palavra-chave** para buscar.")
+        st.session_state["_stage"] = "filters"
         st.stop()
 
     cat_ids = _resolve_category_ids()
     if not cat_ids:
         st.error("Nenhuma categoria resolvida.")
+        st.session_state["_stage"] = "filters"
         st.stop()
 
     if cond_pt == "Novo":
@@ -484,7 +496,6 @@ if st.button("Minerar"):
         amazon_offer_type = "fbm"
     else:
         amazon_offer_type = "any"
-
 
     try:
         ns, payload = (
@@ -532,10 +543,7 @@ if st.button("Minerar"):
                     elapsed = time.time() - t0
                     per_step = elapsed / max(1, step)
                     rem = (total_steps - step) * per_step
-                    progress.progress(
-                        step / total_steps,
-                        text=f"Consultando eBay… {step}/{total_steps} · decorrido {elapsed:.1f}s · restante ~{_fmt_eta(rem)}",
-                    )
+                    progress.progress(step / total_steps, text="")
                     msg.markdown(
                         f"⏳ Buscando… **{step}/{total_steps}** — decorrido **{elapsed:0.1f}s** · estimado restante **{_fmt_eta(rem)}**"
                     )
@@ -547,12 +555,14 @@ if st.button("Minerar"):
 
         if df.empty:
             st.warning("Sem resultados para os filtros (antes dos filtros locais).")
+            st.session_state["_stage"] = "filters"
             st.stop()
 
         # Filtro local de preço
         df = _apply_price_filter(df, pmin_v, pmax_v)
         if df.empty:
             st.warning("Nenhum item dentro da faixa de preço informada.")
+            st.session_state["_stage"] = "filters"
             st.stop()
 
         # Filtro local de condição
@@ -560,9 +570,8 @@ if st.button("Minerar"):
         st.info(f"🔎 Filtragem encontrou {len(view)} itens.")
         if view.empty:
             st.warning("Nenhum item após aplicar a condição selecionada.")
+            st.session_state["_stage"] = "filters"
             st.stop()
-
-
 
         # Ordenação inicial por preço
         view["price_num"] = pd.to_numeric(view["price"], errors="coerce")
@@ -576,8 +585,6 @@ if st.button("Minerar"):
         view_for_db = _ensure_currency(view.copy())
         n = upsert_ebay_listings(make_engine(), sql_safe_frame(view_for_db))
 
-        # Integração opcional com Amazon
-        
         # guarda resultado eBay
         if "search_url" not in view.columns:
             view["search_url"] = view.apply(_make_search_url, axis=1)
@@ -601,7 +608,6 @@ if st.button("Minerar"):
                     frac,
                     text=f"Buscando na Amazon... {done}/{total} · Restante ~{_fmt_eta(countdown)}",
                 )
-                
 
             matched = match_ebay_to_amazon(
                 df_ebay=view,
@@ -616,10 +622,7 @@ if st.button("Minerar"):
             )
             prog.empty()
             if matched.empty:
-                st.warning(
-                    "Nenhum item encontrou match na Amazon com os filtros selecionados "
-                    "(GTIN/título, faixa de preço, oferta e vendas mínimas)."
-                )
+                st.warning("Nenhum item encontrou match na Amazon com os filtros selecionados (GTIN/título, faixa de preço, oferta e vendas mínimas).")
                 st.session_state["_results_df"] = view.copy()
                 st.session_state["_results_source"] = "ebay"
             else:
@@ -636,6 +639,7 @@ if st.button("Minerar"):
         st.session_state["_page_num"] = 1
     except Exception as e:
         st.error(f"Falha na mineração/enriquecimento: {e}")
+        st.session_state["_stage"] = "filters"
         st.session_state["_stage"] = "filters"
 
 # Tabela + paginação
