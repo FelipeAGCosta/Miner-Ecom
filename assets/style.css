@@ -5,11 +5,17 @@
     background: linear-gradient(135deg, #f3f4f6 0%, #eef2f6 50%, #e9eef2 100%); /* cinza claro com suave degradê */
 }
 
+/* Fundo da área principal (garante efeito também nas páginas internas) */
+div[data-testid="stAppViewContainer"] {
+    background: linear-gradient(135deg, #f3f4f6 0%, #eef7f4 40%, #e8f3ef 100%);
+}
+
 /* Container principal (conteúdo) */
 .block-container {
     padding-top: 1.5rem;
     padding-bottom: 3rem;
     max-width: 1280px;
+    background: transparent;
 }
 
 /* Remover fundo padrão do header do Streamlit e aplicar top bar verde */
@@ -93,7 +99,7 @@ p, label, span {
     padding: 1.2rem 1.5rem;
     margin-bottom: 1.5rem;
     background: #FFFFFF;
-    border: 1px solid #E5E7EB;
+    border: 1px solid #D1FAE5;
     box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
     border-left: 4px solid #10B981;
 }
@@ -103,8 +109,8 @@ p, label, span {
     border-radius: 12px;
     padding: 1rem 1.3rem;
     margin-bottom: 1.2rem;
-    background: #F9FAFB;
-    border: 1px solid #E5E7EB;
+    background: #F4FDF8;
+    border: 1px solid #D1FAE5;
     border-left: 4px solid #34D399;
 }
 
