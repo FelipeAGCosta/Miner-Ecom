@@ -36,6 +36,9 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# estágio visual do stepper
+if "_stage" not in st.session_state and "_results_df" in st.session_state and not st.session_state["_results_df"].empty:
+    st.session_state["_stage"] = "results"
 stage = st.session_state.get("_stage", "filters")
 step2_active = stage in ("running", "results")
 step3_active = stage == "results"
@@ -396,7 +399,15 @@ def _render_table(df: pd.DataFrame):
 
     display_df = df[exist].copy()
     left_cols = [c for c in ["title", "amazon_title"] if c in display_df.columns]
-    styler = display_df.style.set_properties(**{"text-align": "center"})
+    styler = (
+        display_df.style.set_properties(**{"text-align": "center"})
+        .set_table_styles(
+            [
+                {"selector": "th", "props": [("text-align", "center")]},
+                {"selector": "td", "props": [("text-align", "center"), ("vertical-align", "middle")]},
+            ]
+        )
+    )
     if left_cols:
         styler = styler.set_properties(subset=left_cols, **{"text-align": "left"})
 
@@ -660,7 +671,7 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
     )
 
     with col_jump_back:
-        if st.button("⏪", use_container_width=True, disabled=(page <= 1), key="jump_back_10"):
+        if st.button("◀◀", use_container_width=True, disabled=(page <= 1), key="jump_back_10"):
             st.session_state["_page_num"] = max(1, page - 10)
             st.rerun()
 
@@ -681,7 +692,7 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
             st.rerun()
 
     with col_jump_forward:
-        if st.button("⏩", use_container_width=True, disabled=(page >= total_pages), key="jump_forward_10"):
+        if st.button("▶▶", use_container_width=True, disabled=(page >= total_pages), key="jump_forward_10"):
             st.session_state["_page_num"] = min(total_pages, page + 10)
             st.rerun()
 
