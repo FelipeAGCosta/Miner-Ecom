@@ -21,7 +21,7 @@ CSS_PATH = Path(__file__).resolve().parent.parent / "assets" / "style.css"
 if CSS_PATH.exists():
     st.markdown(f"<style>{CSS_PATH.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
 
-st.markdown("<h1 style='text-align:center; margin-top:8px;'>Minerar produtos</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align:center; margin-top:8px;'>Minerar produtos</h1>", unsafe_allow_html=True)
 
 API_ITEMS_PER_PAGE = int(st.secrets.get("EBAY_LIMIT_PER_PAGE", os.getenv("EBAY_LIMIT_PER_PAGE", 200)))
 API_MAX_PAGES = int(st.secrets.get("EBAY_MAX_PAGES", os.getenv("EBAY_MAX_PAGES", 25)))
@@ -312,6 +312,24 @@ def _render_table(df: pd.DataFrame):
         "amazon_est_monthly_sales",
         "amazon_sales_rank",
         "amazon_sales_rank_category",
+        "seller",
+        "amazon_demand_bucket",
+        "brand",
+        "amazon_brand",
+        "amazon_title",
+        "condition",
+        "item_url",
+        "amazon_product_url",
+        "search_url",
+        "amazon_asin",
+        "amazon_is_prime",
+    ]
+        "title",
+        "price_num",
+        "amazon_price_num",
+        "amazon_est_monthly_sales",
+        "amazon_sales_rank",
+        "amazon_sales_rank_category",
         "amazon_demand_category_key",
         "amazon_demand_bucket",
         "brand",
@@ -324,17 +342,34 @@ def _render_table(df: pd.DataFrame):
     ]
     if show_qty and "available_qty_disp" in df.columns:
         show_cols.insert(3, "available_qty_disp")
+        show_cols.insert(3, "available_qty_disp")
 
     exist = [c for c in show_cols if c in df.columns]
-    others = [c for c in df.columns if c not in exist]
-    display_cols = exist + others
 
     st.dataframe(
-        df[display_cols],
         use_container_width=True,
         hide_index=True,
         height=500,
         column_config={
+            "title": "T?tulo",
+            "price_num": st.column_config.NumberColumn("Pre?o (eBay)", format="$%.2f"),
+            "amazon_price_num": st.column_config.NumberColumn("Pre?o (Amazon)", format="$%.2f"),
+            "amazon_est_monthly_sales": st.column_config.NumberColumn("Vendas aproximadas (?ltimo m?s)", format="%d"),
+            "amazon_sales_rank": "BSR Amazon",
+            "amazon_sales_rank_category": "Categoria BSR (Amazon)",
+            "seller": "Vendedor eBay",
+            "amazon_demand_bucket": "Demanda (BSR)",
+            "brand": "Marca (eBay)",
+            "amazon_brand": "Marca (Amazon)",
+            "amazon_title": "T?tulo (Amazon)",
+            "condition": "Condi??o",
+            "item_url": st.column_config.LinkColumn("Produto (eBay)", display_text="Abrir"),
+            "amazon_product_url": st.column_config.LinkColumn("Produto (Amazon)", display_text="Abrir"),
+            "search_url": st.column_config.LinkColumn("Ver outros vendedores", display_text="Buscar"),
+            "amazon_asin": "ASIN",
+            "amazon_is_prime": "Prime Amazon",
+            **({"available_qty_disp": "Qtd (estim.) eBay"} if show_qty and "available_qty_disp" in df.columns else {}),
+        },
             "title": "Título",
             "price_num": st.column_config.NumberColumn("Preço (eBay)", format="$%.2f"),
             "amazon_price_num": st.column_config.NumberColumn("Preço (Amazon)", format="$%.2f"),
@@ -350,7 +385,8 @@ def _render_table(df: pd.DataFrame):
             "amazon_product_url": st.column_config.LinkColumn("Produto (Amazon)", display_text="Abrir"),
             "search_url": st.column_config.LinkColumn("Ver outros vendedores", display_text="Buscar"),
             "amazon_asin": "ASIN",
-            **({"available_qty_disp": "Qtd (estim.) eBay"} if show_qty and "available_qty_disp" in df.columns else {}),
+    if show_qty and "available_qty_disp" in df.columns:
+        show_cols.insert(3, "available_qty_disp")
         },
     )
 
@@ -515,7 +551,7 @@ if st.button("Minerar"):
                     frac,
                     text=f"Buscando na Amazon... {done}/{total} ? Restante ~{_fmt_eta(countdown)}",
                 )
-                )
+                
 
             matched = match_ebay_to_amazon(
                 df_ebay=view,
@@ -578,7 +614,7 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
     page = st.session_state.get("_page_num", 1)
 
     col_jump_back, col_prev, col_info, col_next, col_jump_forward = st.columns(
-        [0.08, 0.08, 0.68, 0.08, 0.08]
+        [0.1, 0.1, 0.6, 0.1, 0.1]
     )
 
     with col_jump_back:
@@ -592,7 +628,10 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
             st.rerun()
 
     with col_info:
-        st.write(f"**Total: {len(df)} itens | Pagina {page}/{total_pages}**")
+        st.markdown(
+            f"<div style='text-align:center; font-weight:700;'>Total: {len(df)} itens | Página {page}/{total_pages}</div>",
+            unsafe_allow_html=True,
+        )
 
     with col_next:
         if st.button("›", use_container_width=True, disabled=(page >= total_pages), key="next_page"):
@@ -608,9 +647,9 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
     _render_table(df.iloc[start:end].copy())
     st.caption(f"Pagina {page}/{total_pages} - exibindo {len(df.iloc[start:end])} itens.")
 
-    st.subheader("Quantidade minima do produto em estoque eBay")
+    st.subheader("Quantidade mínima do produto em estoque eBay")
     qty_after = st.number_input(
-        "Qtd minima (eBay)",
+        "Inserir quantidade mínima desejada (opcional)",
         min_value=0,
         value=0,
         step=1,
