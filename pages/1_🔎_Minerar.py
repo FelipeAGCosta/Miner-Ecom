@@ -363,6 +363,8 @@ def _render_table(df: pd.DataFrame):
         df["price_num"] = pd.to_numeric(df["price"], errors="coerce")
     if "amazon_price" in df.columns:
         df["amazon_price_num"] = pd.to_numeric(df["amazon_price"], errors="coerce")
+    if "amazon_sales_rank" in df.columns:
+        df["amazon_sales_rank"] = pd.to_numeric(df["amazon_sales_rank"], errors="coerce").round(0)
 
     show_qty = bool(st.session_state.get("_show_qty", False))
     if show_qty and "available_qty" in df.columns:
@@ -423,7 +425,7 @@ def _render_table(df: pd.DataFrame):
             "price_num": st.column_config.NumberColumn("Preço (eBay)", format="$%.2f"),
             "amazon_price_num": st.column_config.NumberColumn("Preço (Amazon)", format="$%.2f"),
             "amazon_est_monthly_sales": st.column_config.NumberColumn("Vendas aproximadas (último mês)", format="%d"),
-            "amazon_sales_rank": "BSR Amazon",
+            "amazon_sales_rank": st.column_config.NumberColumn("BSR Amazon", format="%d"),
             "amazon_sales_rank_category": "Categoria BSR (Amazon)",
             "seller": "Vendedor eBay",
             "amazon_demand_bucket": "Demanda (BSR)",
