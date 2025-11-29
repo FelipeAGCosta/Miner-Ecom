@@ -16,7 +16,7 @@ from lib.ebay_api import get_item_detail          # detalhes para enriquecimento
 from lib.redis_cache import cache_get, cache_set
 from integrations.amazon_matching import match_ebay_to_amazon  # integracao Amazon
 
-# --- carregar CSS global (tema aplicado também nesta página) ---
+# --- carregar CSS global (tema aplicado tamb├®m nesta p├ígina) ---
 CSS_PATH = Path(__file__).resolve().parent.parent / "assets" / "style.css"
 if CSS_PATH.exists():
     st.markdown(f"<style>{CSS_PATH.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
@@ -33,7 +33,7 @@ flat = flatten_categories(tree)
 st.markdown("<div class='card'>", unsafe_allow_html=True)
 st.markdown("<div class='card-title'><strong>Filtros eBay</strong></div>", unsafe_allow_html=True)
 st.markdown(
-    "<div class='card-caption' style='font-size:0.98rem;'>Defina categoria, faixa de preço, condição e estoque mínimo desejado.</div>",
+    "<div class='card-caption' style='font-size:0.98rem;'>Defina categoria, faixa de pre├ºo, condi├º├úo e estoque m├¡nimo desejado.</div>",
     unsafe_allow_html=True,
 )
 
@@ -59,7 +59,7 @@ with col2:
 col3, col4, col5 = st.columns([1, 1, 1])
 with col3:
     pmin = st.number_input(
-        "Preço mínimo (US$)",
+        "Pre├ºo m├¡nimo (US$)",
         min_value=0.0,
         value=0.0,
         step=1.0,
@@ -68,7 +68,7 @@ with col3:
     )
 with col4:
     pmax = st.number_input(
-        "Preço máximo (US$)",
+        "Pre├ºo m├íximo (US$)",
         min_value=0.0,
         value=0.0,
         step=1.0,
@@ -76,7 +76,7 @@ with col4:
         key="pmax_input",
     )
 with col5:
-    cond_pt = st.selectbox("Condição", ["Novo", "Usado", "Recondicionado", "Novo & Usado"], index=0)
+    cond_pt = st.selectbox("Condi├º├úo", ["Novo", "Usado", "Recondicionado", "Novo & Usado"], index=0)
 
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -87,7 +87,7 @@ st.markdown("<div class='card-title'><strong>Filtros Amazon</strong></div>", uns
 col_am1, col_am2, col_am3 = st.columns([1, 1, 1])
 with col_am1:
     amazon_price_min = st.number_input(
-        "Preço mínimo Amazon (US$)",
+        "Pre├ºo m├¡nimo Amazon (US$)",
         min_value=0.0,
         value=0.0,
         step=1.0,
@@ -96,7 +96,7 @@ with col_am1:
     )
 with col_am2:
     amazon_price_max = st.number_input(
-        "Preço máximo Amazon (US$)",
+        "Pre├ºo m├íximo Amazon (US$)",
         min_value=0.0,
         value=0.0,
         step=1.0,
@@ -110,7 +110,7 @@ with col_am3:
         index=0,
     )
 min_monthly_sales = st.number_input(
-    "Buscar por vendas aproximadas do último mês",
+    "Buscar por vendas aproximadas do ├║ltimo m├¬s",
     min_value=0,
     value=0,
     step=10,
@@ -121,7 +121,7 @@ st.markdown("</div>", unsafe_allow_html=True)
 st.caption(
     "Quanto mais ampla a busca, maior o tempo de pesquisa. Use os filtros para equilibrar velocidade e profundidade."
 )
-# ── helpers ────────────────────────────────────────────────────────────────────
+# ÔöÇÔöÇ helpers ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 def _fmt_eta(seconds: float) -> str:
     return str(timedelta(seconds=int(max(0, seconds))))
 
@@ -143,7 +143,7 @@ def _apply_qty_filter(df: pd.DataFrame, qmin: int | None, include_unknown: bool 
 
 def _enrich_and_filter_qty(df: pd.DataFrame, qmin: int, cond_pt: str) -> tuple[pd.DataFrame, int, int, int]:
     """
-    Enriquecimento tardio: busca detalhes no eBay para preencher estoque e filtra por quantidade mínima.
+    Enriquecimento tardio: busca detalhes no eBay para preencher estoque e filtra por quantidade m├¡nima.
     Retorna (df_filtrado, enriquecidos_feitos, candidatos_processados).
     """
     if qmin <= 0 or df.empty:
@@ -223,8 +223,8 @@ def _apply_price_filter(df: pd.DataFrame, pmin_v: float | None, pmax_v: float | 
 
 def _apply_condition_filter(df: pd.DataFrame, cond_pt: str) -> pd.DataFrame:
     """
-    Reforça o filtro de condição no lado do app,
-    usando 'New', 'Used', 'Refurbished' e variações.
+    Refor├ºa o filtro de condi├º├úo no lado do app,
+    usando 'New', 'Used', 'Refurbished' e varia├º├Áes.
     """
     if "condition" not in df.columns:
         return df
@@ -301,9 +301,10 @@ def _render_table(df: pd.DataFrame):
 
     show_qty = bool(st.session_state.get("_show_qty", False))
     if show_qty and "available_qty" in df.columns:
-        df["available_qty_disp"] = df["available_qty"].apply(
-            lambda x: int(x) if pd.notna(x) else "+10"
-        )
+        df["available_qty_disp"] = df["available_qty"].apply(lambda x: int(x) if pd.notna(x) else "+10")
+
+    if "amazon_is_prime" in df.columns:
+        df["amazon_is_prime"] = df["amazon_is_prime"].apply(lambda x: "?" if bool(x) else "")
 
     show_cols = [
         "title",
@@ -324,29 +325,15 @@ def _render_table(df: pd.DataFrame):
         "amazon_asin",
         "amazon_is_prime",
     ]
-        "title",
-        "price_num",
-        "amazon_price_num",
-        "amazon_est_monthly_sales",
-        "amazon_sales_rank",
-        "amazon_sales_rank_category",
-        "amazon_demand_category_key",
-        "amazon_demand_bucket",
-        "brand",
-        "mpn",
-        "condition",
-        "item_url",
-        "amazon_product_url",
-        "search_url",
-        "amazon_asin",
-    ]
     if show_qty and "available_qty_disp" in df.columns:
-        show_cols.insert(3, "available_qty_disp")
         show_cols.insert(3, "available_qty_disp")
 
     exist = [c for c in show_cols if c in df.columns]
+    if not exist:
+        return
 
     st.dataframe(
+        df[exist],
         use_container_width=True,
         hide_index=True,
         height=500,
@@ -370,26 +357,7 @@ def _render_table(df: pd.DataFrame):
             "amazon_is_prime": "Prime Amazon",
             **({"available_qty_disp": "Qtd (estim.) eBay"} if show_qty and "available_qty_disp" in df.columns else {}),
         },
-            "title": "Título",
-            "price_num": st.column_config.NumberColumn("Preço (eBay)", format="$%.2f"),
-            "amazon_price_num": st.column_config.NumberColumn("Preço (Amazon)", format="$%.2f"),
-            "amazon_est_monthly_sales": st.column_config.NumberColumn("Vendas aproximadas (último mês)", format="%d"),
-            "amazon_sales_rank": "BSR Amazon",
-            "amazon_sales_rank_category": "Categoria BSR (Amazon)",
-            "amazon_demand_category_key": "Categoria (cluster)",
-            "amazon_demand_bucket": "Demanda (BSR)",
-            "brand": "Marca",
-            "mpn": "MPN",
-            "condition": "Condição",
-            "item_url": st.column_config.LinkColumn("Produto (eBay)", display_text="Abrir"),
-            "amazon_product_url": st.column_config.LinkColumn("Produto (Amazon)", display_text="Abrir"),
-            "search_url": st.column_config.LinkColumn("Ver outros vendedores", display_text="Buscar"),
-            "amazon_asin": "ASIN",
-    if show_qty and "available_qty_disp" in df.columns:
-        show_cols.insert(3, "available_qty_disp")
-        },
     )
-
 def _ensure_currency(df: pd.DataFrame) -> pd.DataFrame:
     if "currency" not in df.columns:
         df["currency"] = "USD"
@@ -397,14 +365,14 @@ def _ensure_currency(df: pd.DataFrame) -> pd.DataFrame:
         df["currency"] = df["currency"].fillna("USD").replace("", "USD")
     return df
 
-# ── ação ───────────────────────────────────────────────────────────────────────
+# ÔöÇÔöÇ a├º├úo ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 if st.button("Minerar"):
     pmin_v = pmin if pmin > 0 else None
     pmax_v = pmax if pmax > 0 else None
     qmin_v = None
 
     if pmin_v is not None and pmax_v is not None and pmax_v < pmin_v:
-        st.error("Preço máximo não pode ser menor que o preço mínimo.")
+        st.error("Pre├ºo m├íximo n├úo pode ser menor que o pre├ºo m├¡nimo.")
         st.stop()
 
 
@@ -426,7 +394,7 @@ if st.button("Minerar"):
     else:
         cond_list = ["NEW", "USED"]
 
-    # filtros Amazon avaliados antes do match automático
+    # filtros Amazon avaliados antes do match autom├ítico
     amazon_pmin_v = amazon_price_min if amazon_price_min > 0 else None
     amazon_pmax_v = amazon_price_max if amazon_price_max > 0 else None
     if amazon_offer_label.startswith("Prime"):
@@ -453,7 +421,7 @@ if st.button("Minerar"):
         cached = cache_get(ns, payload)
         t0 = time.time()
         msg = st.empty()
-        progress = st.progress(0.0, text="Preparando coleta…")
+        progress = st.progress(0.0, text="Preparando coletaÔÇª")
 
         if cached:
             df = _dedup(pd.DataFrame(cached))
@@ -485,10 +453,10 @@ if st.button("Minerar"):
                     rem = (total_steps - step) * per_step
                     progress.progress(
                         step / total_steps,
-                        text=f"Consultando eBay… {step}/{total_steps} · decorrido {elapsed:.1f}s · restante ~{_fmt_eta(rem)}",
+                        text=f"Consultando eBayÔÇª {step}/{total_steps} ┬À decorrido {elapsed:.1f}s ┬À restante ~{_fmt_eta(rem)}",
                     )
                     msg.markdown(
-                        f"⏳ Buscando… **{step}/{total_steps}** — decorrido **{elapsed:0.1f}s** · estimado restante **{_fmt_eta(rem)}**"
+                        f"ÔÅ│ BuscandoÔÇª **{step}/{total_steps}** ÔÇö decorrido **{elapsed:0.1f}s** ┬À estimado restante **{_fmt_eta(rem)}**"
                     )
 
             df = _dedup(pd.DataFrame(all_rows))
@@ -500,21 +468,21 @@ if st.button("Minerar"):
             st.warning("Sem resultados para os filtros (antes dos filtros locais).")
             st.stop()
 
-        # ── filtro local de preço ──────────────────────────────────────────────
+        # ÔöÇÔöÇ filtro local de pre├ºo ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
         df = _apply_price_filter(df, pmin_v, pmax_v)
         if df.empty:
-            st.warning("Nenhum item dentro da faixa de preço informada.")
+            st.warning("Nenhum item dentro da faixa de pre├ºo informada.")
             st.stop()
 
-        # ── filtro local de condição ──────────────────────────────────────────
+        # ÔöÇÔöÇ filtro local de condi├º├úo ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
         view = _apply_condition_filter(df, cond_pt)
-        st.info(f"🎯 Filtragem encontrou {len(view)} itens.")
+        st.info(f"­ƒÄ» Filtragem encontrou {len(view)} itens.")
         if view.empty:
-            st.warning("Nenhum item após aplicar a condição selecionada.")
+            st.warning("Nenhum item ap├│s aplicar a condi├º├úo selecionada.")
             st.stop()
 
 
-        # ordenação inicial por preço
+        # ordena├º├úo inicial por pre├ºo
         view["price_num"] = pd.to_numeric(view["price"], errors="coerce")
         view = (
             view.sort_values(by=["price_num", "title"], ascending=[True, True], kind="mergesort")
@@ -522,11 +490,11 @@ if st.button("Minerar"):
         )
         view["price_disp"] = view["price_num"].apply(_fmt_price)
 
-        # persistir (mantém currency) e exibir (sem currency extra)
+        # persistir (mant├®m currency) e exibir (sem currency extra)
         view_for_db = _ensure_currency(view.copy())
         n = upsert_ebay_listings(make_engine(), sql_safe_frame(view_for_db))
 
-        # ── integração opcional com Amazon ─────────────────────────────────────
+        # ÔöÇÔöÇ integra├º├úo opcional com Amazon ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
         
         # guarda resultado eBay
         if "search_url" not in view.columns:
@@ -540,7 +508,7 @@ if st.button("Minerar"):
         st.session_state["_show_qty"] = False
 
         try:
-            prog = st.progress(0.0, text="Buscando correspondências na Amazon...")
+            prog = st.progress(0.0, text="Buscando correspond├¬ncias na Amazon...")
             t0 = time.time()
 
             def _update_progress(done: int, total: int):
@@ -568,12 +536,12 @@ if st.button("Minerar"):
             if matched.empty:
                 st.warning(
                     "Nenhum item encontrou match na Amazon com os filtros selecionados "
-                    "(GTIN/título, faixa de preço, oferta e vendas mínimas)."
+                    "(GTIN/t├¡tulo, faixa de pre├ºo, oferta e vendas m├¡nimas)."
                 )
                 st.session_state["_results_df"] = view.copy()
                 st.session_state["_results_source"] = "ebay"
             else:
-                st.success(f"{len(matched)} Itens após filtros Amazon - {len(matched)} (de {len(view)} itens do eBay).")
+                st.success(f"{len(matched)} Itens ap├│s filtros Amazon - {len(matched)} (de {len(view)} itens do eBay).")
                 st.session_state["_results_df"] = matched.reset_index(drop=True)
                 st.session_state["_results_source"] = "amazon"
         except Exception as e:
@@ -583,9 +551,9 @@ if st.button("Minerar"):
 
         st.session_state["_page_num"] = 1
     except Exception as e:
-        st.error(f"Falha na mineração/enriquecimento: {e}")
+        st.error(f"Falha na minera├º├úo/enriquecimento: {e}")
 
-# ── tabela + paginação ────────────────────────────────────────────────────────
+# ÔöÇÔöÇ tabela + pagina├º├úo ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
 if "_results_df" in st.session_state and not st.session_state["_results_df"].empty:
     df = st.session_state["_results_df"]
     base_df = st.session_state.get("_ebay_df")
@@ -605,9 +573,9 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
         amazon_offer_type = "any"
 
     if amazon_pmin_v is not None and amazon_pmax_v is not None and amazon_pmax_v < amazon_pmin_v:
-        st.error("Na Amazon, o preço máximo não pode ser menor que o preço mínimo.")
+        st.error("Na Amazon, o pre├ºo m├íximo n├úo pode ser menor que o pre├ºo m├¡nimo.")
 
-    # mensagens internas removidas da interface para reduzir ruído
+    # mensagens internas removidas da interface para reduzir ru├¡do
 
     PAGE_SIZE = 50
     total_pages = max(1, math.ceil(len(df) / PAGE_SIZE))
@@ -618,28 +586,28 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
     )
 
     with col_jump_back:
-        if st.button("≪", use_container_width=True, disabled=(page <= 1), key="jump_back_10"):
+        if st.button("Ôë¬", use_container_width=True, disabled=(page <= 1), key="jump_back_10"):
             st.session_state["_page_num"] = max(1, page - 10)
             st.rerun()
 
     with col_prev:
-        if st.button("‹", use_container_width=True, disabled=(page <= 1), key="prev_page"):
+        if st.button("ÔÇ╣", use_container_width=True, disabled=(page <= 1), key="prev_page"):
             st.session_state["_page_num"] = max(1, page - 1)
             st.rerun()
 
     with col_info:
         st.markdown(
-            f"<div style='text-align:center; font-weight:700;'>Total: {len(df)} itens | Página {page}/{total_pages}</div>",
+            f"<div style='text-align:center; font-weight:700;'>Total: {len(df)} itens | P├ígina {page}/{total_pages}</div>",
             unsafe_allow_html=True,
         )
 
     with col_next:
-        if st.button("›", use_container_width=True, disabled=(page >= total_pages), key="next_page"):
+        if st.button("ÔÇ║", use_container_width=True, disabled=(page >= total_pages), key="next_page"):
             st.session_state["_page_num"] = min(total_pages, page + 1)
             st.rerun()
 
     with col_jump_forward:
-        if st.button("≫", use_container_width=True, disabled=(page >= total_pages), key="jump_forward_10"):
+        if st.button("Ôë½", use_container_width=True, disabled=(page >= total_pages), key="jump_forward_10"):
             st.session_state["_page_num"] = min(total_pages, page + 10)
             st.rerun()
 
@@ -647,9 +615,9 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
     _render_table(df.iloc[start:end].copy())
     st.caption(f"Pagina {page}/{total_pages} - exibindo {len(df.iloc[start:end])} itens.")
 
-    st.subheader("Quantidade mínima do produto em estoque eBay")
+    st.subheader("Quantidade m├¡nima do produto em estoque eBay")
     qty_after = st.number_input(
-        "Inserir quantidade mínima desejada (opcional)",
+        "Inserir quantidade m├¡nima desejada (opcional)",
         min_value=0,
         value=0,
         step=1,
