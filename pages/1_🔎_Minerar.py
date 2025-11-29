@@ -39,7 +39,7 @@ st.markdown(
 # estágio visual do stepper
 if "_stage" not in st.session_state and "_results_df" in st.session_state and not st.session_state["_results_df"].empty:
     st.session_state["_stage"] = "results"
-if st.session_state.get("_start_run", False):
+if st.session_state.get("run_btn", False) or st.session_state.get("_start_run", False):
     st.session_state["_stage"] = "running"
 stage = st.session_state.get("_stage", "filters")
 step2_active = stage in ("running", "results")
@@ -450,7 +450,7 @@ def _ensure_currency(df: pd.DataFrame) -> pd.DataFrame:
 run_requested = False
 
 # Ação principal de mineração
-if st.button("Minerar"):
+if st.button("Minerar", key="run_btn"):
     st.session_state["_stage"] = "running"
     st.session_state["_start_run"] = True
     run_requested = True
