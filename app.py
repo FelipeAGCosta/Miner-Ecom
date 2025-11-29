@@ -2,10 +2,10 @@ from pathlib import Path
 import streamlit as st
 from lib.tasks import load_tasks
 
-# --- Configuracao global da pagina ---
+# --- Configuração global da página ---
 st.set_page_config(
     page_title="Miner Ecom - Arbitragem eBay -> Amazon",
-    page_icon="🧲",
+    page_icon="🏠",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -15,14 +15,14 @@ CSS_PATH = Path(__file__).parent / "assets" / "style.css"
 if CSS_PATH.exists():
     st.markdown(f"<style>{CSS_PATH.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
 
-# --- Sidebar: logo + descricao ---
+# --- Sidebar: logo + descrição ---
 logo_path = Path(__file__).parent / "assets" / "logo_miner_ecom.png"
 with st.sidebar:
     if logo_path.exists():
         st.image(str(logo_path), use_column_width=True)
     st.markdown("---")
 
-# --- Titulo e mensagem central ---
+# --- Título e mensagem central ---
 st.markdown(
     """
     <div style="min-height:80vh; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; gap:12px;">
@@ -36,7 +36,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Estado default (zerado) - condicao NEW permanece como padrao
+# Estado default (zerado) - condição NEW permanece como padrão
 if "filters" not in st.session_state:
     st.session_state.filters = {
         "category_id": None,

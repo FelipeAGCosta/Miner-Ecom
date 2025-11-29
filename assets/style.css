@@ -1,27 +1,26 @@
 /* ==================== LAYOUT GERAL ==================== */
 
-/* Fundo da aplicação */
 .stApp {
-    background: linear-gradient(135deg, #f3f4f6 0%, #eef2f6 50%, #e9eef2 100%);
+    background: radial-gradient(circle at top left, #ECFDF3 0, #F3F4F6 45%, #E5E7EB 100%);
 }
 
-/* Fundo da área principal (páginas internas) */
 div[data-testid="stAppViewContainer"] {
-    background: linear-gradient(135deg, #f3f4f6 0%, #eef7f4 40%, #e8f3ef 100%);
+    background: radial-gradient(circle at top left, #ECFDF3 0, #F3F4F6 45%, #E5E7EB 100%);
 }
 
-/* Container principal */
-.block-container {
-    padding-top: 1rem;
-    padding-bottom: 1.8rem;
+/* Shell para centralizar conteúdo */
+.page-shell {
     max-width: 1200px;
-    background: transparent;
+    margin: 0 auto;
+    padding: 1.5rem 1.5rem 3rem;
 }
 
-/* Header/top bar */
+/* Barra superior com gradiente e sombra */
 header[data-testid="stHeader"] {
-    background: #059669;
+    background: linear-gradient(90deg, #065F46, #10B981);
     color: #ECFDF5;
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.25);
+    border-bottom: 1px solid rgba(15, 23, 42, 0.35);
 }
 
 header[data-testid="stHeader"] + div {
@@ -35,8 +34,8 @@ button[kind="header"] {
 /* ==================== SIDEBAR ==================== */
 
 section[data-testid="stSidebar"] {
-    background-color: #111827;
-    border-right: 1px solid #0F172A;
+    background: linear-gradient(180deg, #0F172A 0%, #020617 100%);
+    border-right: 1px solid #020617;
 }
 
 section[data-testid="stSidebar"] * {
@@ -57,14 +56,9 @@ section[data-testid="stSidebar"] button:hover {
 }
 
 section[data-testid="stSidebar"] [data-testid="stSidebarNav"] a[aria-current="page"] {
-    background-color: #0f172a !important;
-    border: 1px solid #10B981;
+    background: rgba(31, 41, 55, 0.95) !important;
+    box-shadow: inset 2px 0 0 #10B981;
     font-weight: 600;
-}
-
-/* Ícone para o item "app" */
-section[data-testid="stSidebar"] [data-testid="stSidebarNav"] li:nth-child(1) a::before {
-    content: "🏠 ";
 }
 
 section[data-testid="stSidebar"] h1,
@@ -74,8 +68,11 @@ section[data-testid="stSidebar"] h2 {
     color: #F9FAFB !important;
 }
 
-/* ==================== TIPOGRAFIA ==================== */
+section[data-testid="stSidebar"] [data-testid="stSidebarNav"] li:nth-child(1) a::before {
+    content: "🏠 ";
+}
 
+/* ==================== TIPOGRAFIA ==================== */
 h1, h2, h3 {
     font-weight: 600;
     color: #111827;
@@ -90,33 +87,130 @@ p, label, span {
     color: #6B7280;
 }
 
-/* ==================== CARDS ==================== */
-
-.card {
-    border-radius: 12px;
-    padding: 1.2rem 1.5rem;
-    margin-bottom: 1.5rem;
+/* ==================== PAGE HEADER ==================== */
+.page-header {
+    margin: 1.5rem 0 1.25rem 0;
+    padding: 1rem 1.5rem 1.25rem;
     background: #FFFFFF;
-    border: 1px solid #D1FAE5;
-    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
-    border-left: 4px solid #10B981;
+    border-radius: 12px;
+    border: 1px solid #E5E7EB;
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.page-header-tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.15rem 0.6rem;
+    border-radius: 999px;
+    background: #ECFDF3;
+    color: #047857;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.page-header-title {
+    font-size: 1.6rem;
+    font-weight: 600;
+    color: #111827;
+    margin: 0.1rem 0;
+}
+
+.page-header-subtitle {
+    font-size: 0.9rem;
+    color: #6B7280;
+    margin: 0;
+}
+
+/* ==================== FLOW STEPS ==================== */
+.flow-steps {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.flow-step {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.6rem 0.9rem;
+    border-radius: 999px;
+    background: #E5E7EB;
+    opacity: 0.7;
+}
+
+.flow-step--active {
+    background: #ECFDF3;
+    opacity: 1;
+    box-shadow: 0 6px 16px rgba(16, 185, 129, 0.25);
+}
+
+.flow-step-index {
+    width: 26px;
+    height: 26px;
+    border-radius: 999px;
+    background: #10B981;
+    color: #ECFDF5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.flow-step-title {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #111827;
+}
+
+.flow-step-subtitle {
+    font-size: 0.75rem;
+    color: #6B7280;
+}
+
+/* ==================== CARDS ==================== */
+.card {
+    border-radius: 14px;
+    padding: 1.4rem 1.6rem;
+    margin-bottom: 1.5rem;
+    background: linear-gradient(135deg, #FFFFFF 0%, #F9FAFB 100%);
+    border: 1px solid #E5E7EB;
+    box-shadow: 0 20px 40px rgba(15, 23, 42, 0.08);
 }
 
 .card-muted {
     border-radius: 12px;
-    padding: 1rem 1.3rem;
+    padding: 1.1rem 1.4rem;
     margin-bottom: 1.2rem;
-    background: #F4FDF8;
-    border: 1px solid #D1FAE5;
-    border-left: 4px solid #34D399;
+    background: #F9FAFB;
+    border: 1px solid #E5E7EB;
 }
 
 .card-title {
-    font-size: 1.08rem;
-    font-weight: 800;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.95rem;
+    font-weight: 600;
     color: #065F46;
-    margin-bottom: 0.5rem;
-    letter-spacing: 0.03em;
+}
+
+.card-title-icon {
+    width: 26px;
+    height: 26px;
+    border-radius: 999px;
+    background: #ECFDF3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.9rem;
+    color: #047857;
 }
 
 .card-caption {
@@ -125,18 +219,12 @@ p, label, span {
     margin-bottom: 0.8rem;
 }
 
-/* esconder cards vazios */
 .card:empty,
 .card-muted:empty {
     display: none !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    border: 0 !important;
-    box-shadow: none !important;
 }
 
 /* ==================== BOTÕES ==================== */
-
 div.stButton > button:first-child {
     border-radius: 10px;
     padding: 0.55rem 1.6rem;
@@ -145,9 +233,11 @@ div.stButton > button:first-child {
     background: #10B981;
     color: #ECFDF5;
     box-shadow: 0 10px 18px rgba(16, 185, 129, 0.25);
+    transition: all 0.18s ease-out;
 }
 
 div.stButton > button:first-child:hover {
+    transform: translateY(-1px);
     background: #059669;
     border-color: #047857;
     box-shadow: 0 12px 24px rgba(16, 185, 129, 0.35);
@@ -160,19 +250,14 @@ div.stButton > button[disabled] {
     box-shadow: none;
 }
 
-/* ==================== INPUTS / SELECTS ==================== */
-
+/* ==================== INPUTS ==================== */
 input, select, textarea {
     background-color: #FFFFFF;
     border-radius: 8px;
     border: 1px solid #D1D5DB;
     color: #111827;
     font-size: 0.9rem;
-}
-
-input::placeholder,
-textarea::placeholder {
-    color: #9CA3AF;
+    transition: all 0.18s ease-out;
 }
 
 div[data-baseweb="input"],
@@ -183,6 +268,7 @@ div[data-baseweb="datepicker"] {
     background-color: #FFFFFF;
     border-radius: 8px;
     border: 1px solid #D1D5DB;
+    transition: all 0.18s ease-out;
 }
 
 div[data-baseweb="input"]:focus-within,
@@ -194,6 +280,7 @@ textarea:focus {
     outline: none;
     border-color: #10B981 !important;
     box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.5);
+    transform: translateY(-1px);
 }
 
 label, .stTextInput label, .stNumberInput label, .stSelectbox label {
@@ -203,7 +290,6 @@ label, .stTextInput label, .stNumberInput label, .stSelectbox label {
 }
 
 /* ==================== TABELAS ==================== */
-
 .dataframe {
     border-radius: 12px !important;
     overflow: hidden;
@@ -234,18 +320,7 @@ label, .stTextInput label, .stNumberInput label, .stSelectbox label {
     background-color: #EEF2FF !important;
 }
 
-/* ==================== LINKS ==================== */
-
-a:link {
-    color: #2563EB;
-}
-
-a:visited {
-    color: #4C51BF;
-}
-
-/* ==================== BADGES / CHIPS ==================== */
-
+/* ==================== BADGES ==================== */
 .badge {
     display: inline-flex;
     align-items: center;
@@ -259,7 +334,6 @@ a:visited {
 }
 
 /* ==================== CODE BLOCKS ==================== */
-
 .stCode, .stCodeBlock, pre {
     background: #E8F3EF !important;
     border: 1px solid #D1FAE5 !important;
