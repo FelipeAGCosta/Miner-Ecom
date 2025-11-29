@@ -449,7 +449,7 @@ def _ensure_currency(df: pd.DataFrame) -> pd.DataFrame:
 
 run_requested = st.session_state.pop("_start_run", False)
 
-run_requested = st.session_state.pop("_start_run", False)
+run_requested = bool(st.session_state.get("_start_run", False))
 
 # Ação principal de mineração
 if st.button("Minerar"):
@@ -637,9 +637,11 @@ if run_requested:
             st.session_state["_stage"] = "results"
 
         st.session_state["_page_num"] = 1
+        st.session_state["_start_run"] = False
     except Exception as e:
         st.error(f"Falha na mineração/enriquecimento: {e}")
         st.session_state["_stage"] = "filters"
+        st.session_state["_start_run"] = False
         st.session_state["_stage"] = "filters"
 
 # Tabela + paginação
