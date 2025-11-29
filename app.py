@@ -24,21 +24,15 @@ with st.sidebar:
 
 # --- Titulo e mensagem central ---
 st.markdown(
-    "<h1 style='text-align:center; margin-top:0;'>Miner Ecom - eBay &amp; Amazon</h1>",
-    unsafe_allow_html=True,
-)
-st.markdown(
-    "<div style='text-align:center; color:#4B5563; margin-bottom:1.2rem;'>"
-    "Ferramenta de mineracao para arbitragem entre eBay e Amazon (SP-API)."
-    "</div>",
-    unsafe_allow_html=True,
-)
-st.markdown(
-    "<div style='text-align:center; margin: 0 auto 1.2rem auto; width:80%; "
-    "background:#D1FAE5; color:#065F46; padding:0.8rem 1rem; "
-    "border:1px solid #34D399; border-radius:10px;'>"
-    "Use o menu lateral para navegar: Minerar e Avancado."
-    "</div>",
+    """
+    <div style="min-height:80vh; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; gap:12px;">
+      <h1 style="margin:0;">Miner Ecom - eBay &amp; Amazon</h1>
+      <div style="color:#4B5563;">Ferramenta de mineração para arbitragem entre eBay e Amazon (SP-API).</div>
+      <div style="margin:0 auto; width:80%; background:#D1FAE5; color:#065F46; padding:0.8rem 1rem; border:1px solid #34D399; border-radius:10px;">
+        Use o menu lateral para navegar: Minerar e Avançado.
+      </div>
+    </div>
+    """,
     unsafe_allow_html=True,
 )
 

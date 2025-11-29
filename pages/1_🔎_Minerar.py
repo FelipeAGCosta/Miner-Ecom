@@ -326,9 +326,11 @@ def _render_table(df: pd.DataFrame):
         show_cols.insert(3, "available_qty_disp")
 
     exist = [c for c in show_cols if c in df.columns]
+    others = [c for c in df.columns if c not in exist]
+    display_cols = exist + others
 
     st.dataframe(
-        df[exist],
+        df[display_cols],
         use_container_width=True,
         hide_index=True,
         height=500,
@@ -508,11 +510,11 @@ if st.button("Minerar"):
             def _update_progress(done: int, total: int):
                 elapsed = time.time() - t0
                 frac = done / max(1, total)
-                remaining = (elapsed / max(1, done)) * (total - done)
-                remaining = min(remaining, 900)  # limita ETA a 15 minutos para não assustar
+                countdown = max(0, 300 - elapsed)  # contador ilustrativo de 5 min
                 prog.progress(
                     frac,
-                    text=f"Buscando na Amazon... {done}/{total} · decorrido {elapsed:.1f}s · restante ~{_fmt_eta(remaining)}",
+                    text=f"Buscando na Amazon... {done}/{total} ? Restante ~{_fmt_eta(countdown)}",
+                )
                 )
 
             matched = match_ebay_to_amazon(
@@ -580,12 +582,12 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
     )
 
     with col_jump_back:
-        if st.button("<<", use_container_width=True, disabled=(page <= 1), key="jump_back_10"):
+        if st.button("≪", use_container_width=True, disabled=(page <= 1), key="jump_back_10"):
             st.session_state["_page_num"] = max(1, page - 10)
             st.rerun()
 
     with col_prev:
-        if st.button("<", use_container_width=True, disabled=(page <= 1), key="prev_page"):
+        if st.button("‹", use_container_width=True, disabled=(page <= 1), key="prev_page"):
             st.session_state["_page_num"] = max(1, page - 1)
             st.rerun()
 
@@ -593,12 +595,12 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
         st.write(f"**Total: {len(df)} itens | Pagina {page}/{total_pages}**")
 
     with col_next:
-        if st.button(">", use_container_width=True, disabled=(page >= total_pages), key="next_page"):
+        if st.button("›", use_container_width=True, disabled=(page >= total_pages), key="next_page"):
             st.session_state["_page_num"] = min(total_pages, page + 1)
             st.rerun()
 
     with col_jump_forward:
-        if st.button(">>", use_container_width=True, disabled=(page >= total_pages), key="jump_forward_10"):
+        if st.button("≫", use_container_width=True, disabled=(page >= total_pages), key="jump_forward_10"):
             st.session_state["_page_num"] = min(total_pages, page + 10)
             st.rerun()
 
