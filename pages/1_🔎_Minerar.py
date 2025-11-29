@@ -110,7 +110,7 @@ with col_am3:
         index=0,
     )
 min_monthly_sales = st.number_input(
-    "Buscar por vendas aproximadas do ├║ltimo mês",
+    "Buscar por vendas aproximadas do último mês",
     min_value=0,
     value=0,
     step=10,
@@ -121,7 +121,7 @@ st.markdown("</div>", unsafe_allow_html=True)
 st.caption(
     "Quanto mais ampla a busca, maior o tempo de pesquisa. Use os filtros para equilibrar velocidade e profundidade."
 )
-# ÔöÇÔöÇ helpers ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+# helpers 
 def _fmt_eta(seconds: float) -> str:
     return str(timedelta(seconds=int(max(0, seconds))))
 
@@ -424,7 +424,7 @@ if st.button("Minerar"):
         cached = cache_get(ns, payload)
         t0 = time.time()
         msg = st.empty()
-        progress = st.progress(0.0, text="Preparando coletaÔÇª")
+        progress = st.progress(0.0, text="Preparando coleta...")
 
         if cached:
             df = _dedup(pd.DataFrame(cached))
@@ -456,10 +456,10 @@ if st.button("Minerar"):
                     rem = (total_steps - step) * per_step
                     progress.progress(
                         step / total_steps,
-                        text=f"Consultando eBayÔÇª {step}/{total_steps} ┬À decorrido {elapsed:.1f}s ┬À restante ~{_fmt_eta(rem)}",
+                        text=f"Consultando eBay… {step}/{total_steps} · decorrido {elapsed:.1f}s · restante ~{_fmt_eta(rem)}",
                     )
                     msg.markdown(
-                        f"ÔÅ│ BuscandoÔÇª **{step}/{total_steps}** ÔÇö decorrido **{elapsed:0.1f}s** ┬À estimado restante **{_fmt_eta(rem)}**"
+                        f"⏳ Buscando… **{step}/{total_steps}** — decorrido **{elapsed:0.1f}s** · estimado restante **{_fmt_eta(rem)}**"
                     )
 
             df = _dedup(pd.DataFrame(all_rows))
