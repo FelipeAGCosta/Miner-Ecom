@@ -21,7 +21,7 @@ CSS_PATH = Path(__file__).resolve().parent.parent / "assets" / "style.css"
 if CSS_PATH.exists():
     st.markdown(f"<style>{CSS_PATH.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
 
-st.markdown("<h1 style='text-align:center; margin-top:0;'>Minerar produtos</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align:center; margin-top:8px;'>Minerar produtos</h1>", unsafe_allow_html=True)
 
 API_ITEMS_PER_PAGE = int(st.secrets.get("EBAY_LIMIT_PER_PAGE", os.getenv("EBAY_LIMIT_PER_PAGE", 200)))
 API_MAX_PAGES = int(st.secrets.get("EBAY_MAX_PAGES", os.getenv("EBAY_MAX_PAGES", 25)))
@@ -33,7 +33,7 @@ flat = flatten_categories(tree)
 st.markdown("<div class='card'>", unsafe_allow_html=True)
 st.markdown("<div class='card-title'><strong>Filtros eBay</strong></div>", unsafe_allow_html=True)
 st.markdown(
-    "<div class='card-caption'>Defina categoria, faixa de preco, condicao e estoque minimo desejado.</div>",
+    "<div class='card-caption' style='font-size:0.98rem;'>Defina categoria, faixa de preço, condição e estoque mínimo desejado.</div>",
     unsafe_allow_html=True,
 )
 
@@ -45,7 +45,7 @@ with col_kw:
 col1, col2 = st.columns([1.6, 1.6])
 with col1:
     root_names = ["Todas as categorias"] + [n["name"] for n in tree]
-    sel_root = st.selectbox("Categoria (nivel 1)", root_names, index=0)
+    sel_root = st.selectbox("Categoria", root_names, index=0)
 with col2:
     child_names = ["Todas as subcategorias"]
     if sel_root != "Todas as categorias":
@@ -54,12 +54,12 @@ with col2:
                 for ch in n.get("children", []) or []:
                     child_names.append(ch["name"])
                 break
-    sel_child = st.selectbox("Subcategoria (nivel 2)", child_names, index=0)
+    sel_child = st.selectbox("Subcategoria (Opcional)", child_names, index=0)
 
 col3, col4, col5 = st.columns([1, 1, 1])
 with col3:
     pmin = st.number_input(
-        "Preco minimo (US$)",
+        "Preço mínimo (US$)",
         min_value=0.0,
         value=0.0,
         step=1.0,
@@ -68,7 +68,7 @@ with col3:
     )
 with col4:
     pmax = st.number_input(
-        "Preco maximo (US$)",
+        "Preço máximo (US$)",
         min_value=0.0,
         value=0.0,
         step=1.0,
@@ -76,7 +76,7 @@ with col4:
         key="pmax_input",
     )
 with col5:
-    cond_pt = st.selectbox("Condicao", ["Novo", "Usado", "Recondicionado", "Novo & Usado"], index=0)
+    cond_pt = st.selectbox("Condição", ["Novo", "Usado", "Recondicionado", "Novo & Usado"], index=0)
 
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -87,7 +87,7 @@ st.markdown("<div class='card-title'><strong>Filtros Amazon</strong></div>", uns
 col_am1, col_am2, col_am3 = st.columns([1, 1, 1])
 with col_am1:
     amazon_price_min = st.number_input(
-        "Preco minimo Amazon (US$)",
+        "Preço mínimo Amazon (US$)",
         min_value=0.0,
         value=0.0,
         step=1.0,
@@ -96,7 +96,7 @@ with col_am1:
     )
 with col_am2:
     amazon_price_max = st.number_input(
-        "Preco maximo Amazon (US$)",
+        "Preço máximo Amazon (US$)",
         min_value=0.0,
         value=0.0,
         step=1.0,
@@ -110,7 +110,7 @@ with col_am3:
         index=0,
     )
 min_monthly_sales = st.number_input(
-    "Vendas/mes minimas na Amazon (estimadas via BSR)",
+    "Buscar por vendas aproximadas do último mês",
     min_value=0,
     value=0,
     step=10,

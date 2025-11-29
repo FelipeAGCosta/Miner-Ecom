@@ -2,15 +2,15 @@
 
 /* Fundo da aplicação */
 .stApp {
-    background: linear-gradient(135deg, #f3f4f6 0%, #eef2f6 50%, #e9eef2 100%); /* cinza claro com suave degradê */
+    background: linear-gradient(135deg, #f3f4f6 0%, #eef2f6 50%, #e9eef2 100%);
 }
 
-/* Fundo da área principal (garante efeito também nas páginas internas) */
+/* Fundo da área principal (páginas internas) */
 div[data-testid="stAppViewContainer"] {
     background: linear-gradient(135deg, #f3f4f6 0%, #eef7f4 40%, #e8f3ef 100%);
 }
 
-/* Container principal (conteúdo) */
+/* Container principal */
 .block-container {
     padding-top: 1rem;
     padding-bottom: 1.8rem;
@@ -18,26 +18,24 @@ div[data-testid="stAppViewContainer"] {
     background: transparent;
 }
 
-/* Remover fundo padrão do header do Streamlit e aplicar top bar verde */
+/* Header/top bar */
 header[data-testid="stHeader"] {
-    background: #059669; /* verde mais escuro (barra superior) */
+    background: #059669;
     color: #ECFDF5;
 }
 
-/* Empurrar o conteúdo um pouco para baixo para não colar na barra */
 header[data-testid="stHeader"] + div {
     padding-top: 0.75rem;
 }
 
-/* Opcional: esconder o menu "hamburger" e o ícone de footer do Streamlit */
 button[kind="header"] {
     display: none;
 }
 
-/* ==================== SIDEBAR (NAVEGAÇÃO) ==================== */
+/* ==================== SIDEBAR ==================== */
 
 section[data-testid="stSidebar"] {
-    background-color: #111827; /* cinza bem escuro */
+    background-color: #111827;
     border-right: 1px solid #0F172A;
 }
 
@@ -46,33 +44,29 @@ section[data-testid="stSidebar"] * {
     font-size: 0.9rem;
 }
 
-/* Links / itens da navegação de páginas */
 section[data-testid="stSidebar"] a,
 section[data-testid="stSidebar"] button {
     border-radius: 8px !important;
     color: #E5E7EB !important;
 }
 
-/* Item de navegação "hover" */
 section[data-testid="stSidebar"] a:hover,
 section[data-testid="stSidebar"] button:hover {
     background-color: #1F2937 !important;
     color: #ECFDF5 !important;
 }
 
-/* Item ativo da lateral (estilo “selecionado”) */
 section[data-testid="stSidebar"] [data-testid="stSidebarNav"] a[aria-current="page"] {
     background-color: #0f172a !important;
     border: 1px solid #10B981;
     font-weight: 600;
 }
 
-/* Ícone para o primeiro item (app) */
+/* Ícone para o item "app" */
 section[data-testid="stSidebar"] [data-testid="stSidebarNav"] li:nth-child(1) a::before {
     content: "🏠 ";
 }
 
-/* Logo/título da app na sidebar um pouco mais destacado */
 section[data-testid="stSidebar"] h1,
 section[data-testid="stSidebar"] h2 {
     font-size: 1rem;
@@ -80,7 +74,7 @@ section[data-testid="stSidebar"] h2 {
     color: #F9FAFB !important;
 }
 
-/* ==================== TIPOGRAFIA GERAL ==================== */
+/* ==================== TIPOGRAFIA ==================== */
 
 h1, h2, h3 {
     font-weight: 600;
@@ -96,9 +90,8 @@ p, label, span {
     color: #6B7280;
 }
 
-/* ==================== CARDS (BLOCOS DE FILTROS / INFOS) ==================== */
+/* ==================== CARDS ==================== */
 
-/* Card principal (ex.: filtros eBay) */
 .card {
     border-radius: 12px;
     padding: 1.2rem 1.5rem;
@@ -109,7 +102,6 @@ p, label, span {
     border-left: 4px solid #10B981;
 }
 
-/* Card secundário (ex.: filtros Amazon, alertas) */
 .card-muted {
     border-radius: 12px;
     padding: 1rem 1.3rem;
@@ -119,7 +111,6 @@ p, label, span {
     border-left: 4px solid #34D399;
 }
 
-/* Título do card */
 .card-title {
     font-size: 1.08rem;
     font-weight: 800;
@@ -128,34 +119,40 @@ p, label, span {
     letter-spacing: 0.03em;
 }
 
-/* Descrição do card */
 .card-caption {
-    font-size: 0.8rem;
-    color: #6B7280;
+    font-size: 0.9rem;
+    color: #4B5563;
     margin-bottom: 0.8rem;
+}
+
+/* esconder cards vazios */
+.card:empty,
+.card-muted:empty {
+    display: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: 0 !important;
+    box-shadow: none !important;
 }
 
 /* ==================== BOTÕES ==================== */
 
-/* Botão padrão do Streamlit (Minerar eBay, etc.) */
 div.stButton > button:first-child {
-    border-radius: 999px;
+    border-radius: 10px;
     padding: 0.55rem 1.6rem;
     font-weight: 600;
     border: 1px solid #059669;
-    background: #10B981; /* verde principal */
+    background: #10B981;
     color: #ECFDF5;
     box-shadow: 0 10px 18px rgba(16, 185, 129, 0.25);
 }
 
-/* Hover */
 div.stButton > button:first-child:hover {
     background: #059669;
     border-color: #047857;
     box-shadow: 0 12px 24px rgba(16, 185, 129, 0.35);
 }
 
-/* Botão desabilitado */
 div.stButton > button[disabled] {
     background: #9CA3AF;
     border-color: #9CA3AF;
@@ -163,9 +160,8 @@ div.stButton > button[disabled] {
     box-shadow: none;
 }
 
-/* ==================== INPUTS / SELECTS / TEXTAREAS ==================== */
+/* ==================== INPUTS / SELECTS ==================== */
 
-/* Inputs base (HTML) */
 input, select, textarea {
     background-color: #FFFFFF;
     border-radius: 8px;
@@ -174,13 +170,11 @@ input, select, textarea {
     font-size: 0.9rem;
 }
 
-/* Placeholders */
 input::placeholder,
 textarea::placeholder {
     color: #9CA3AF;
 }
 
-/* Wrappers dos widgets baseweb (Streamlit) */
 div[data-baseweb="input"],
 div[data-baseweb="select"],
 div[data-baseweb="textarea"],
@@ -191,7 +185,6 @@ div[data-baseweb="datepicker"] {
     border: 1px solid #D1D5DB;
 }
 
-/* Foco nos campos */
 div[data-baseweb="input"]:focus-within,
 div[data-baseweb="select"]:focus-within,
 div[data-baseweb="textarea"]:focus-within,
@@ -203,14 +196,13 @@ textarea:focus {
     box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.5);
 }
 
-/* Labels dos campos */
 label, .stTextInput label, .stNumberInput label, .stSelectbox label {
-    font-size: 0.85rem;
+    font-size: 0.9rem;
     font-weight: 500;
     color: #4B5563;
 }
 
-/* ==================== TABELAS (st.dataframe) ==================== */
+/* ==================== TABELAS ==================== */
 
 .dataframe {
     border-radius: 12px !important;
@@ -219,43 +211,40 @@ label, .stTextInput label, .stNumberInput label, .stSelectbox label {
     background-color: #FFFFFF;
 }
 
-/* Cabeçalho da tabela */
 .dataframe thead tr th {
     background-color: #F9FAFB;
     font-weight: 600;
-    font-size: 0.8rem;
-    color: #4B5563;
-}
-
-/* Linhas */
-.dataframe tbody tr td {
     font-size: 0.85rem;
-    color: #374151;
+    color: #4B5563;
+    text-align: center !important;
 }
 
-/* Hover nas linhas */
+.dataframe tbody tr td {
+    font-size: 0.9rem;
+    color: #374151;
+    text-align: center !important;
+}
+
+.dataframe thead tr th:first-child,
+.dataframe tbody tr td:first-child {
+    text-align: left !important;
+}
+
 .dataframe tbody tr:hover {
     background-color: #EEF2FF !important;
-}
-
-/* Código / blocos de texto (ex.: variáveis de ambiente) */
-.stCode, .stCodeBlock, pre {
-    background: #E8F3EF !important;
-    border: 1px solid #D1FAE5 !important;
-    border-radius: 10px !important;
 }
 
 /* ==================== LINKS ==================== */
 
 a:link {
-    color: #2563EB; /* azul para links */
+    color: #2563EB;
 }
 
 a:visited {
     color: #4C51BF;
 }
 
-/* ==================== BADGES / CHIPS (se usados para demanda, status etc.) ==================== */
+/* ==================== BADGES / CHIPS ==================== */
 
 .badge {
     display: inline-flex;
@@ -267,4 +256,12 @@ a:visited {
     border: 1px solid #E5E7EB;
     background: #F3F4FF;
     color: #4338CA;
+}
+
+/* ==================== CODE BLOCKS ==================== */
+
+.stCode, .stCodeBlock, pre {
+    background: #E8F3EF !important;
+    border: 1px solid #D1FAE5 !important;
+    border-radius: 10px !important;
 }

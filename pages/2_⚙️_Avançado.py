@@ -11,7 +11,7 @@ CSS_PATH = Path(__file__).resolve().parent.parent / "assets" / "style.css"
 if CSS_PATH.exists():
     st.markdown(f"<style>{CSS_PATH.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
 
-st.markdown("<h1 style='text-align:center;'>⚙️ Avançado (diagnóstico)</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align:center; margin-top:8px;'>⚙️ Avançado (diagnóstico)</h1>", unsafe_allow_html=True)
 
 st.subheader("Diagnóstico rápido do ambiente")
 colA, colB = st.columns(2)
