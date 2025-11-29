@@ -401,7 +401,7 @@ def _render_table(df: pd.DataFrame):
     if not exist:
         return
 
-    display_df = df[exist].copy()
+    display_df = df[exist].copy().fillna("")
     left_cols = [c for c in ["title", "amazon_title"] if c in display_df.columns]
     styler = (
         display_df.style.set_properties(**{"text-align": "center"})
