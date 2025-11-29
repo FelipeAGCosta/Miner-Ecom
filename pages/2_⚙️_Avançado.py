@@ -2,21 +2,25 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import text
 from pathlib import Path
+
 from lib.config import make_engine, DB_HOST, DB_PORT, DB_USER, DB_NAME
 from lib.tasks import load_tasks
 
 # aplicar CSS global
 CSS_PATH = Path(__file__).resolve().parent.parent / "assets" / "style.css"
 if CSS_PATH.exists():
-    st.markdown(f"<style>{CSS_PATH.read_text(encoding="utf-8")}</style>", unsafe_allow_html=True)
+    st.markdown(f"<style>{CSS_PATH.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
 
-st.header("⚙️ Avançado (diagnóstico)")
+st.markdown("<h1 style='text-align:center;'>⚙️ Avançado (diagnóstico)</h1>", unsafe_allow_html=True)
 
 st.subheader("Diagnóstico rápido do ambiente")
 colA, colB = st.columns(2)
 with colA:
     st.write("**Variáveis de ambiente (DB)**")
-    st.code(f"DB_HOST={DB_HOST}\nDB_PORT={DB_PORT}\nDB_USER={DB_USER}\nDB_NAME={DB_NAME}", language="bash")
+    st.code(
+        f"DB_HOST={DB_HOST}\nDB_PORT={DB_PORT}\nDB_USER={DB_USER}\nDB_NAME={DB_NAME}",
+        language="bash",
+    )
 with colB:
     st.write("**Arquivos**")
     root = Path(__file__).resolve().parents[1]

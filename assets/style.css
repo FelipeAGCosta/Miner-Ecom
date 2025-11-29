@@ -12,9 +12,9 @@ div[data-testid="stAppViewContainer"] {
 
 /* Container principal (conteúdo) */
 .block-container {
-    padding-top: 1.5rem;
-    padding-bottom: 3rem;
-    max-width: 1280px;
+    padding-top: 1rem;
+    padding-bottom: 1.8rem;
+    max-width: 1200px;
     background: transparent;
 }
 
@@ -67,6 +67,11 @@ section[data-testid="stSidebar"] [data-testid="stSidebarNav"] a[aria-current="pa
     font-weight: 600;
 }
 
+/* Ícone para o primeiro item (app) */
+section[data-testid="stSidebar"] [data-testid="stSidebarNav"] li:nth-child(1) a::before {
+    content: "🏠 ";
+}
+
 /* Logo/título da app na sidebar um pouco mais destacado */
 section[data-testid="stSidebar"] h1,
 section[data-testid="stSidebar"] h2 {
@@ -116,11 +121,11 @@ p, label, span {
 
 /* Título do card */
 .card-title {
-    font-size: 1rem;
-    font-weight: 700;
-    color: #047857;
-    margin-bottom: 0.4rem;
-    letter-spacing: 0.02em;
+    font-size: 1.08rem;
+    font-weight: 800;
+    color: #065F46;
+    margin-bottom: 0.5rem;
+    letter-spacing: 0.03em;
 }
 
 /* Descrição do card */
@@ -231,6 +236,13 @@ label, .stTextInput label, .stNumberInput label, .stSelectbox label {
 /* Hover nas linhas */
 .dataframe tbody tr:hover {
     background-color: #EEF2FF !important;
+}
+
+/* Código / blocos de texto (ex.: variáveis de ambiente) */
+.stCode, .stCodeBlock, pre {
+    background: #E8F3EF !important;
+    border: 1px solid #D1FAE5 !important;
+    border-radius: 10px !important;
 }
 
 /* ==================== LINKS ==================== */

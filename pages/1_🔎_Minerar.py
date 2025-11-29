@@ -21,7 +21,7 @@ CSS_PATH = Path(__file__).resolve().parent.parent / "assets" / "style.css"
 if CSS_PATH.exists():
     st.markdown(f"<style>{CSS_PATH.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
 
-st.header("Minerar produtos")
+st.markdown("<h1 style='text-align:center; margin-top:0;'>Minerar produtos</h1>", unsafe_allow_html=True)
 
 API_ITEMS_PER_PAGE = int(st.secrets.get("EBAY_LIMIT_PER_PAGE", os.getenv("EBAY_LIMIT_PER_PAGE", 200)))
 API_MAX_PAGES = int(st.secrets.get("EBAY_MAX_PAGES", os.getenv("EBAY_MAX_PAGES", 25)))
@@ -31,7 +31,7 @@ flat = flatten_categories(tree)
 
 # --- filtros eBay -----------------------------------------------------------
 st.markdown("<div class='card'>", unsafe_allow_html=True)
-st.markdown("<div class='card-title'>Filtros eBay</div>", unsafe_allow_html=True)
+st.markdown("<div class='card-title'><strong>Filtros eBay</strong></div>", unsafe_allow_html=True)
 st.markdown(
     "<div class='card-caption'>Defina categoria, faixa de preco, condicao e estoque minimo desejado.</div>",
     unsafe_allow_html=True,
@@ -82,7 +82,7 @@ st.markdown("</div>", unsafe_allow_html=True)
 
 # --- filtros Amazon (opcionais) --------------------------------------------
 st.markdown("<div class='card-muted'>", unsafe_allow_html=True)
-st.markdown("<div class='card-title'>Filtros Amazon</div>", unsafe_allow_html=True)
+st.markdown("<div class='card-title'><strong>Filtros Amazon</strong></div>", unsafe_allow_html=True)
 
 col_am1, col_am2, col_am3 = st.columns([1, 1, 1])
 with col_am1:
@@ -121,7 +121,6 @@ st.markdown("</div>", unsafe_allow_html=True)
 st.caption(
     "Quanto mais ampla a busca, maior o tempo de pesquisa. Use os filtros para equilibrar velocidade e profundidade."
 )
-st.divider()
 # ── helpers ────────────────────────────────────────────────────────────────────
 def _fmt_eta(seconds: float) -> str:
     return str(timedelta(seconds=int(max(0, seconds))))
