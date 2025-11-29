@@ -26,7 +26,7 @@ st.markdown("<div class='page-shell'>", unsafe_allow_html=True)
 st.markdown(
     """
     <div class="page-header">
-      <div class="page-header-tag">Minerar</div>
+      <div class="page-header-tag"></div>
       <h1 class="page-header-title">Minerar produtos</h1>
       <p class="page-header-subtitle">
         Defina filtros de eBay e Amazon para encontrar oportunidades com preço e demanda interessantes.
@@ -36,8 +36,12 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+stage = st.session_state.get("_stage", "filters")
+step2_active = stage in ("running", "results")
+step3_active = stage == "results"
+
 st.markdown(
-    """
+    f"""
     <div class="flow-steps">
       <div class="flow-step flow-step--active">
         <div class="flow-step-index">1</div>
@@ -46,14 +50,14 @@ st.markdown(
           <div class="flow-step-subtitle">Defina categoria, preços e demanda</div>
         </div>
       </div>
-      <div class="flow-step">
+      <div class="flow-step {'flow-step--active' if step2_active else ''}">
         <div class="flow-step-index">2</div>
         <div class="flow-step-text">
           <div class="flow-step-title">Minerar</div>
           <div class="flow-step-subtitle">Buscamos no eBay e Amazon</div>
         </div>
       </div>
-      <div class="flow-step">
+      <div class="flow-step {'flow-step--active' if step3_active else ''}">
         <div class="flow-step-index">3</div>
         <div class="flow-step-text">
           <div class="flow-step-title">Resultados</div>
@@ -390,8 +394,14 @@ def _render_table(df: pd.DataFrame):
     if not exist:
         return
 
+    display_df = df[exist].copy()
+    left_cols = [c for c in ["title", "amazon_title"] if c in display_df.columns]
+    styler = display_df.style.set_properties(**{"text-align": "center"})
+    if left_cols:
+        styler = styler.set_properties(subset=left_cols, **{"text-align": "left"})
+
     st.dataframe(
-        df[exist],
+        styler,
         use_container_width=True,
         hide_index=True,
         height=500,
@@ -426,6 +436,7 @@ def _ensure_currency(df: pd.DataFrame) -> pd.DataFrame:
 
 # Ação principal de mineração
 if st.button("Minerar"):
+    st.session_state["_stage"] = "running"
     pmin_v = pmin if pmin > 0 else None
     pmax_v = pmax if pmax > 0 else None
     qmin_v = None
@@ -604,14 +615,17 @@ if st.button("Minerar"):
                 st.success(f"{len(matched)} Itens após filtros Amazon - {len(matched)} (de {len(view)} itens do eBay).")
                 st.session_state["_results_df"] = matched.reset_index(drop=True)
                 st.session_state["_results_source"] = "amazon"
+            st.session_state["_stage"] = "results"
         except Exception as e:
             st.error(f"Falha ao consultar Amazon SP-API: {e}")
             st.session_state["_results_df"] = view.copy()
             st.session_state["_results_source"] = "ebay"
+            st.session_state["_stage"] = "results"
 
         st.session_state["_page_num"] = 1
     except Exception as e:
         st.error(f"Falha na mineração/enriquecimento: {e}")
+        st.session_state["_stage"] = "filters"
 
 # Tabela + paginação
 if "_results_df" in st.session_state and not st.session_state["_results_df"].empty:
@@ -646,12 +660,12 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
     )
 
     with col_jump_back:
-        if st.button("<<", use_container_width=True, disabled=(page <= 1), key="jump_back_10"):
+        if st.button("⏪", use_container_width=True, disabled=(page <= 1), key="jump_back_10"):
             st.session_state["_page_num"] = max(1, page - 10)
             st.rerun()
 
     with col_prev:
-        if st.button("<", use_container_width=True, disabled=(page <= 1), key="prev_page"):
+        if st.button("◀", use_container_width=True, disabled=(page <= 1), key="prev_page"):
             st.session_state["_page_num"] = max(1, page - 1)
             st.rerun()
 
@@ -662,12 +676,12 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
         )
 
     with col_next:
-        if st.button(">", use_container_width=True, disabled=(page >= total_pages), key="next_page"):
+        if st.button("▶", use_container_width=True, disabled=(page >= total_pages), key="next_page"):
             st.session_state["_page_num"] = min(total_pages, page + 1)
             st.rerun()
 
     with col_jump_forward:
-        if st.button(">>", use_container_width=True, disabled=(page >= total_pages), key="jump_forward_10"):
+        if st.button("⏩", use_container_width=True, disabled=(page >= total_pages), key="jump_forward_10"):
             st.session_state["_page_num"] = min(total_pages, page + 10)
             st.rerun()
 
@@ -689,17 +703,18 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
         else:
             with st.spinner("Enriquecendo e filtrando por quantidade..."):
                 filtered, enr_cnt, proc_cnt, qty_non_null = _enrich_and_filter_qty(df, int(qty_after), cond_pt)
-            st.info(
-                f"Detalhes consultados para {proc_cnt} itens (enriquecidos: {enr_cnt}). "
-                f"Itens com quantidade conhecida: {qty_non_null}."
-            )
-            if filtered.empty:
-                st.warning("Nenhum item com a quantidade mínima informada.")
-            else:
-                st.success(f"Itens após filtro de quantidade: {len(filtered)}.")
-                st.session_state["_results_df"] = filtered.reset_index(drop=True)
-            st.session_state["_results_source"] = source
-            st.session_state["_show_qty"] = True
-            st.session_state["_page_num"] = 1
-            st.rerun()
+        st.info(
+            f"Detalhes consultados para {proc_cnt} itens (enriquecidos: {enr_cnt}). "
+            f"Itens com quantidade conhecida: {qty_non_null}."
+        )
+        if filtered.empty:
+            st.warning("Nenhum item com a quantidade mínima informada.")
+        else:
+            st.success(f"Itens após filtro de quantidade: {len(filtered)}.")
+            st.session_state["_results_df"] = filtered.reset_index(drop=True)
+        st.session_state["_results_source"] = source
+        st.session_state["_show_qty"] = True
+        st.session_state["_page_num"] = 1
+        st.session_state["_stage"] = "results"
+        st.rerun()
 st.markdown("</div>", unsafe_allow_html=True)
