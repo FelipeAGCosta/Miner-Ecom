@@ -2,7 +2,7 @@
 
 /* Fundo da aplicação */
 .stApp {
-    background-color: #F3F4F6; /* cinza claro */
+    background: linear-gradient(135deg, #f3f4f6 0%, #eef2f6 50%, #e9eef2 100%); /* cinza claro com suave degradê */
 }
 
 /* Container principal (conteúdo) */
@@ -44,17 +44,20 @@ section[data-testid="stSidebar"] * {
 section[data-testid="stSidebar"] a,
 section[data-testid="stSidebar"] button {
     border-radius: 8px !important;
+    color: #E5E7EB !important;
 }
 
 /* Item de navegação "hover" */
 section[data-testid="stSidebar"] a:hover,
 section[data-testid="stSidebar"] button:hover {
     background-color: #1F2937 !important;
+    color: #ECFDF5 !important;
 }
 
 /* Item ativo da lateral (estilo “selecionado”) */
 section[data-testid="stSidebar"] [data-testid="stSidebarNav"] a[aria-current="page"] {
-    background-color: #1F2937 !important;
+    background-color: #0f172a !important;
+    border: 1px solid #10B981;
     font-weight: 600;
 }
 
@@ -91,7 +94,8 @@ p, label, span {
     margin-bottom: 1.5rem;
     background: #FFFFFF;
     border: 1px solid #E5E7EB;
-    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
+    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+    border-left: 4px solid #10B981;
 }
 
 /* Card secundário (ex.: filtros Amazon, alertas) */
@@ -101,14 +105,16 @@ p, label, span {
     margin-bottom: 1.2rem;
     background: #F9FAFB;
     border: 1px solid #E5E7EB;
+    border-left: 4px solid #34D399;
 }
 
 /* Título do card */
 .card-title {
-    font-size: 0.95rem;
-    font-weight: 600;
-    color: #111827;
+    font-size: 1rem;
+    font-weight: 700;
+    color: #047857;
     margin-bottom: 0.4rem;
+    letter-spacing: 0.02em;
 }
 
 /* Descrição do card */
