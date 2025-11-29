@@ -1,130 +1,180 @@
-/* --- Estrutura geral / fundo --- */
+/* ==================== LAYOUT GERAL ==================== */
 
-/* Fundo geral da aplicação */
+/* Fundo da aplicação */
 .stApp {
-    background: radial-gradient(circle at 20% 20%, #1b243a 0, #111827 45%, #0f1629 100%);
+    background-color: #F3F4F6; /* cinza claro */
 }
 
-/* Container principal */
+/* Container principal (conteúdo) */
 .block-container {
     padding-top: 1.5rem;
     padding-bottom: 3rem;
     max-width: 1280px;
 }
 
-/* Sidebar com destaque lateral */
+/* Remover fundo padrão do header do Streamlit e aplicar top bar verde */
+header[data-testid="stHeader"] {
+    background: #059669; /* verde mais escuro (barra superior) */
+    color: #ECFDF5;
+}
+
+/* Empurrar o conteúdo um pouco para baixo para não colar na barra */
+header[data-testid="stHeader"] + div {
+    padding-top: 0.75rem;
+}
+
+/* Opcional: esconder o menu "hamburger" e o ícone de footer do Streamlit */
+button[kind="header"] {
+    display: none;
+}
+
+/* ==================== SIDEBAR (NAVEGAÇÃO) ==================== */
+
 section[data-testid="stSidebar"] {
-    background-color: #16213a;
-    border-right: 1px solid #22304d;
-    position: relative;
+    background-color: #111827; /* cinza bem escuro */
+    border-right: 1px solid #0F172A;
 }
 
-/* Faixa vertical de cor na sidebar */
-section[data-testid="stSidebar"]::before {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 4px;
-    height: 100%;
-    background: linear-gradient(to bottom, #6366F1, #A855F7);
+section[data-testid="stSidebar"] * {
+    color: #E5E7EB !important;
+    font-size: 0.9rem;
 }
 
-/* --- Tipografia e textos --- */
+/* Links / itens da navegação de páginas */
+section[data-testid="stSidebar"] a,
+section[data-testid="stSidebar"] button {
+    border-radius: 8px !important;
+}
+
+/* Item de navegação "hover" */
+section[data-testid="stSidebar"] a:hover,
+section[data-testid="stSidebar"] button:hover {
+    background-color: #1F2937 !important;
+}
+
+/* Item ativo da lateral (estilo “selecionado”) */
+section[data-testid="stSidebar"] [data-testid="stSidebarNav"] a[aria-current="page"] {
+    background-color: #1F2937 !important;
+    font-weight: 600;
+}
+
+/* Logo/título da app na sidebar um pouco mais destacado */
+section[data-testid="stSidebar"] h1,
+section[data-testid="stSidebar"] h2 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #F9FAFB !important;
+}
+
+/* ==================== TIPOGRAFIA GERAL ==================== */
 
 h1, h2, h3 {
     font-weight: 600;
-    letter-spacing: 0.02em;
-    color: #F9FAFB;
+    color: #111827;
+}
+
+p, label, span {
+    color: #374151;
 }
 
 .small-muted {
     font-size: 0.85rem;
-    color: #9CA3AF;
+    color: #6B7280;
 }
 
-/* --- Cards (blocos de filtros e infos) --- */
+/* ==================== CARDS (BLOCOS DE FILTROS / INFOS) ==================== */
 
+/* Card principal (ex.: filtros eBay) */
 .card {
-    border-radius: 16px;
-    padding: 1.25rem 1.55rem;
-    margin-bottom: 1.6rem;
-    background: #111827;
-    border: 1px solid rgba(148, 163, 184, 0.45);
-    box-shadow: 0 18px 40px rgba(12, 18, 32, 0.9);
+    border-radius: 12px;
+    padding: 1.2rem 1.5rem;
+    margin-bottom: 1.5rem;
+    background: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.05);
 }
 
+/* Card secundário (ex.: filtros Amazon, alertas) */
 .card-muted {
-    border-radius: 16px;
-    padding: 1.15rem 1.45rem;
-    margin-bottom: 1.3rem;
-    background: #0f172a;
-    border: 1px solid rgba(79, 70, 229, 0.35);
-    box-shadow: 0 14px 32px rgba(12, 18, 32, 0.7);
+    border-radius: 12px;
+    padding: 1rem 1.3rem;
+    margin-bottom: 1.2rem;
+    background: #F9FAFB;
+    border: 1px solid #E5E7EB;
 }
 
+/* Título do card */
 .card-title {
-    font-size: 1.05rem;
-    font-weight: 700;
-    color: #e0e7ff;
-    margin-bottom: 0.45rem;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    text-shadow: 0 1px 8px rgba(99, 102, 241, 0.35);
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #111827;
+    margin-bottom: 0.4rem;
 }
 
+/* Descrição do card */
 .card-caption {
-    font-size: 0.86rem;
-    color: #9CA3AF;
-    margin-bottom: 0.85rem;
+    font-size: 0.8rem;
+    color: #6B7280;
+    margin-bottom: 0.8rem;
 }
 
-/* --- Botões --- */
+/* ==================== BOTÕES ==================== */
 
+/* Botão padrão do Streamlit (Minerar eBay, etc.) */
 div.stButton > button:first-child {
     border-radius: 999px;
-    padding: 0.65rem 1.9rem;
-    font-weight: 700;
-    border: 1px solid rgba(148, 163, 184, 0.45);
-    background: linear-gradient(135deg, #4F46E5, #7C3AED);
-    color: #EEF2FF;
-    box-shadow: 0 14px 35px rgba(15, 23, 42, 0.9);
-    transition: transform 0.08s ease, box-shadow 0.12s ease;
+    padding: 0.55rem 1.6rem;
+    font-weight: 600;
+    border: 1px solid #059669;
+    background: #10B981; /* verde principal */
+    color: #ECFDF5;
+    box-shadow: 0 10px 18px rgba(16, 185, 129, 0.25);
 }
 
+/* Hover */
 div.stButton > button:first-child:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 22px 50px rgba(15, 23, 42, 0.95);
+    background: #059669;
+    border-color: #047857;
+    box-shadow: 0 12px 24px rgba(16, 185, 129, 0.35);
 }
 
+/* Botão desabilitado */
 div.stButton > button[disabled] {
-    background: #1F2937;
-    border-color: #374151;
+    background: #9CA3AF;
+    border-color: #9CA3AF;
+    color: #F9FAFB;
     box-shadow: none;
 }
 
-/* --- Inputs, selects, number_inputs etc. --- */
+/* ==================== INPUTS / SELECTS / TEXTAREAS ==================== */
 
+/* Inputs base (HTML) */
 input, select, textarea {
-    background-color: #ffffff;
-    border-radius: 10px;
-    border: 1px solid #cbd5e1;
-    color: #0f172a;
+    background-color: #FFFFFF;
+    border-radius: 8px;
+    border: 1px solid #D1D5DB;
+    color: #111827;
+    font-size: 0.9rem;
 }
 
+/* Placeholders */
 input::placeholder,
 textarea::placeholder {
-    color: #6b7280;
+    color: #9CA3AF;
 }
 
+/* Wrappers dos widgets baseweb (Streamlit) */
 div[data-baseweb="input"],
 div[data-baseweb="select"],
-div[data-baseweb="textarea"] {
-    background-color: #ffffff;
-    border-radius: 10px;
-    border: 1px solid #cbd5e1;
+div[data-baseweb="textarea"],
+div[data-baseweb="timepicker"],
+div[data-baseweb="datepicker"] {
+    background-color: #FFFFFF;
+    border-radius: 8px;
+    border: 1px solid #D1D5DB;
 }
 
+/* Foco nos campos */
 div[data-baseweb="input"]:focus-within,
 div[data-baseweb="select"]:focus-within,
 div[data-baseweb="textarea"]:focus-within,
@@ -132,57 +182,65 @@ input:focus,
 select:focus,
 textarea:focus {
     outline: none;
-    border-color: #6366F1;
-    box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.7);
+    border-color: #10B981 !important;
+    box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.5);
 }
 
+/* Labels dos campos */
 label, .stTextInput label, .stNumberInput label, .stSelectbox label {
-    font-size: 0.88rem;
-    font-weight: 600;
-    color: #E5E7EB;
-    letter-spacing: 0.01em;
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: #4B5563;
 }
 
-/* --- Tabelas (st.dataframe) --- */
+/* ==================== TABELAS (st.dataframe) ==================== */
 
 .dataframe {
-    border-radius: 14px !important;
+    border-radius: 12px !important;
     overflow: hidden;
-    border: 1px solid rgba(31, 41, 55, 0.9);
-    background-color: #0f172a;
+    border: 1px solid #E5E7EB;
+    background-color: #FFFFFF;
 }
 
+/* Cabeçalho da tabela */
 .dataframe thead tr th {
-    font-weight: 700;
-    font-size: 0.84rem;
-    background-color: #0f172a;
-    color: #E5E7EB;
+    background-color: #F9FAFB;
+    font-weight: 600;
+    font-size: 0.8rem;
+    color: #4B5563;
 }
 
+/* Linhas */
+.dataframe tbody tr td {
+    font-size: 0.85rem;
+    color: #374151;
+}
+
+/* Hover nas linhas */
 .dataframe tbody tr:hover {
-    background-color: rgba(79, 70, 229, 0.18) !important;
+    background-color: #EEF2FF !important;
 }
 
-/* --- Links --- */
+/* ==================== LINKS ==================== */
 
 a:link {
-    color: #4F46E5;
+    color: #2563EB; /* azul para links */
 }
 
 a:visited {
-    color: #A855F7;
+    color: #4C51BF;
 }
 
-/* --- Badges --- */
+/* ==================== BADGES / CHIPS (se usados para demanda, status etc.) ==================== */
 
 .badge {
     display: inline-flex;
     align-items: center;
     border-radius: 999px;
-    padding: 0.15rem 0.55rem;
-    font-size: 0.72rem;
-    font-weight: 600;
-    border: 1px solid rgba(148, 163, 184, 0.6);
-    background: rgba(15, 23, 42, 0.7);
-    color: #E5E7EB;
+    padding: 0.15rem 0.6rem;
+    font-size: 0.7rem;
+    font-weight: 500;
+    border: 1px solid #E5E7EB;
+    background: #F3F4FF;
+    color: #4338CA;
 }
