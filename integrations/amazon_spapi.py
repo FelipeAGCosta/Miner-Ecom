@@ -466,6 +466,39 @@ def search_by_title(title: str, original_title: Optional[str] = None, page_size:
     return _extract_catalog_item(items[0], cfg.marketplace_id)
 
 
+def search_catalog_items(
+    keywords: str,
+    page_size: int = 20,
+    page: int = 1,
+    included_data: str = "summaries,identifiers,salesRanks",
+) -> List[Dict[str, Any]]:
+    """
+    Busca itens no Catalog Items API por palavra-chave, retornando a lista bruta de itens.
+    Útil para descoberta Amazon-first. Limita page_size entre 1 e 20.
+    """
+    cfg = _load_config_from_env()
+    if not keywords:
+        return []
+
+    page_size = max(1, min(int(page_size), 20))
+    params = {
+        "marketplaceIds": cfg.marketplace_id,
+        "keywords": keywords[:200],
+        "includedData": included_data,
+        "pageSize": page_size,
+        "page": max(1, int(page)),
+    }
+
+    data = _request_sp_api(
+        cfg=cfg,
+        method="GET",
+        path="/catalog/2022-04-01/items",
+        params=params,
+    )
+
+    return data.get("items") or []
+
+
 # ---------------------------------------------------------------------------
 # Funcoes de alto nivel - Catalog existentes
 # ---------------------------------------------------------------------------

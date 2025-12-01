@@ -462,15 +462,9 @@ elif st.session_state.get("_start_run", False):
 if run_requested:
     pmin_v = pmin if pmin > 0 else None
     pmax_v = pmax if pmax > 0 else None
-    qmin_v = None
 
     if pmin_v is not None and pmax_v is not None and pmax_v < pmin_v:
         st.error("Preço máximo não pode ser menor que o preço mínimo.")
-        st.session_state["_stage"] = "filters"
-        st.stop()
-
-    if sel_root == "Todas as categorias" and st.session_state.get("_kw", "") == "":
-        st.error("Escolha **uma categoria** ou informe uma **palavra-chave** para buscar.")
         st.session_state["_stage"] = "filters"
         st.stop()
 
@@ -481,15 +475,14 @@ if run_requested:
         st.stop()
 
     if cond_pt == "Novo":
-        cond_list = ["NEW"]
+        ebay_condition = "NEW"
     elif cond_pt == "Usado":
-        cond_list = ["USED"]
+        ebay_condition = "USED"
     elif cond_pt == "Recondicionado":
-        cond_list = ["REFURBISHED"]
+        ebay_condition = "REFURBISHED"
     else:
-        cond_list = ["NEW", "USED"]
+        ebay_condition = "ANY"
 
-    # Filtros Amazon avaliados antes do match automático
     amazon_pmin_v = amazon_price_min if amazon_price_min > 0 else None
     amazon_pmax_v = amazon_price_max if amazon_price_max > 0 else None
     if amazon_offer_label.startswith("Prime"):
@@ -499,151 +492,61 @@ if run_requested:
     else:
         amazon_offer_type = "any"
 
-    try:
-        ns, payload = (
-            "browse_results_v2",
-            {
-                "cat_ids": cat_ids,
-                "pmin": pmin_v,
-                "pmax": pmax_v,
-                "cond_pt": cond_pt,
-                "kw": st.session_state.get("_kw", ""),
-                "items_per_page": API_ITEMS_PER_PAGE,
-                "max_pages": API_MAX_PAGES,
-            },
-        )
-        cached = cache_get(ns, payload)
-        t0 = time.time()
-        msg = st.empty()
-        progress = st.progress(0.0, text="Preparando coleta...")
-
-        if cached:
-            df = _dedup(pd.DataFrame(cached))
-        else:
-            all_rows: list[dict] = []
-            total_steps = len(cat_ids) * len(cond_list)
-            step = 0
-            failures = 0
-
-            for cond in cond_list:
-                for cat_id in cat_ids:
-                    step += 1
-                    try:
-                        items = search_items(
-                            category_id=cat_id,
-                            keyword=st.session_state.get("_kw", "") or None,
-                            price_min=pmin_v,
-                            price_max=pmax_v,
-                            condition=cond,
-                            limit_per_page=API_ITEMS_PER_PAGE,
-                            max_pages=API_MAX_PAGES,
-                        )
-                        all_rows.extend(items)
-                    except Exception:
-                        failures += 1
-
-                    elapsed = time.time() - t0
-                    per_step = elapsed / max(1, step)
-                    rem = (total_steps - step) * per_step
-                    progress.progress(step / total_steps, text="")
-                    msg.markdown(
-                        f"⏳ Buscando… **{step}/{total_steps}** — decorrido **{elapsed:0.1f}s** · estimado restante **{_fmt_eta(rem)}**"
-                    )
-
-            df = _dedup(pd.DataFrame(all_rows))
-
-            # falhas silenciosas: mantemos o que veio das demais categorias
-            cache_set(ns, payload, df.to_dict(orient="records"), ttl_sec=1800)
-
-        if df.empty:
-            st.warning("Sem resultados para os filtros (antes dos filtros locais).")
-            st.session_state["_stage"] = "filters"
-            st.stop()
-
-        # Filtro local de preço
-        df = _apply_price_filter(df, pmin_v, pmax_v)
-        if df.empty:
-            st.warning("Nenhum item dentro da faixa de preço informada.")
-            st.session_state["_stage"] = "filters"
-            st.stop()
-
-        # Filtro local de condição
-        view = _apply_condition_filter(df, cond_pt)
-        st.info(f"🔎 Filtragem encontrou {len(view)} itens.")
-        if view.empty:
-            st.warning("Nenhum item após aplicar a condição selecionada.")
-            st.session_state["_stage"] = "filters"
-            st.stop()
-
-        # Ordenação inicial por preço
-        view["price_num"] = pd.to_numeric(view["price"], errors="coerce")
-        view = (
-            view.sort_values(by=["price_num", "title"], ascending=[True, True], kind="mergesort")
-            .reset_index(drop=True)
-        )
-        view["price_disp"] = view["price_num"].apply(_fmt_price)
-
-        # Persistir (mantém currency) e exibir (sem currency extra)
-        view_for_db = _ensure_currency(view.copy())
-        n = upsert_ebay_listings(make_engine(), sql_safe_frame(view_for_db))
-
-        # guarda resultado eBay
-        if "search_url" not in view.columns:
-            view["search_url"] = view.apply(_make_search_url, axis=1)
-        if "currency" in view.columns:
-            view = view.drop(columns=["currency"])
-
-        view = view.reset_index(drop=True)
-        st.session_state["_ebay_df"] = view.copy()
-        st.session_state["_results_source"] = "ebay"
-        st.session_state["_show_qty"] = False
-
-        try:
-            prog = st.progress(0.0, text="Buscando correspondências na Amazon...")
-            t0 = time.time()
-
-            def _update_progress(done: int, total: int):
-                elapsed = time.time() - t0
-                frac = done / max(1, total)
-                countdown = max(0, 600 - elapsed)  # contador ilustrativo de 10 min
-                prog.progress(
-                    frac,
-                    text=f"Buscando na Amazon... {done}/{total} · Restante ~{_fmt_eta(countdown)}",
-                )
-
-            matched = match_ebay_to_amazon(
-                df_ebay=view,
-                amazon_price_min=amazon_pmin_v,
-                amazon_price_max=amazon_pmax_v,
-                amazon_offer_type=amazon_offer_type,
-                max_title_lookups=200,
-                max_gtin_lookups=400,
-                max_price_lookups=400,
-                min_monthly_sales_est=min_monthly_sales if min_monthly_sales > 0 else None,
-                progress_cb=_update_progress,
-            )
-            prog.empty()
-            if matched.empty:
-                st.warning("Nenhum item encontrou match na Amazon com os filtros selecionados (GTIN/título, faixa de preço, oferta e vendas mínimas).")
-                st.session_state["_results_df"] = view.copy()
-                st.session_state["_results_source"] = "ebay"
-            else:
-                st.success(f"{len(matched)} Itens após filtros Amazon - {len(matched)} (de {len(view)} itens do eBay).")
-                st.session_state["_results_df"] = matched.reset_index(drop=True)
-                st.session_state["_results_source"] = "amazon"
-            st.session_state["_stage"] = "results"
-        except Exception as e:
-            st.error(f"Falha ao consultar Amazon SP-API: {e}")
-            st.session_state["_results_df"] = view.copy()
-            st.session_state["_results_source"] = "ebay"
-            st.session_state["_stage"] = "results"
-
-        st.session_state["_page_num"] = 1
-        st.session_state["_start_run"] = False
-    except Exception as e:
-        st.error(f"Falha na mineração/enriquecimento: {e}")
+    if amazon_pmin_v is not None and amazon_pmax_v is not None and amazon_pmax_v < amazon_pmin_v:
+        st.error("Na Amazon, o preço máximo não pode ser menor que o preço mínimo.")
         st.session_state["_stage"] = "filters"
         st.session_state["_start_run"] = False
+        st.stop()
+
+    prog = st.progress(0.0, text="Buscando produtos na Amazon...")
+
+    def _update_progress(done: int, total: int, phase: str):
+        frac = done / max(1, total)
+        if phase == "amazon":
+            txt = f"Buscando produtos na Amazon... {done}/{total}"
+        elif phase == "ebay":
+            txt = f"Buscando fornecedores no eBay... {done}/{total}"
+        else:
+            txt = "Processando..."
+        prog.progress(frac, text=txt)
+
+    try:
+        matched = discover_amazon_and_match_ebay(
+            kw=st.session_state.get("_kw", "") or None,
+            amazon_price_min=amazon_pmin_v,
+            amazon_price_max=amazon_pmax_v,
+            amazon_offer_type=amazon_offer_type,
+            min_monthly_sales_est=min_monthly_sales if min_monthly_sales > 0 else None,
+            ebay_price_min=pmin_v,
+            ebay_price_max=pmax_v,
+            ebay_condition=ebay_condition,
+            ebay_category_ids=cat_ids,
+            progress_cb=_update_progress,
+        )
+        prog.empty()
+
+        if matched.empty:
+            st.warning(
+                "Nenhum item encontrou match entre Amazon e eBay com os filtros selecionados "
+                "(preço, condição, vendas mínimas, oferta, etc.)."
+            )
+            st.session_state["_results_df"] = matched
+            st.session_state["_results_source"] = "amazon_first"
+            st.session_state["_stage"] = "filters"
+        else:
+            # preenche campos auxiliares
+            if "search_url" not in matched.columns:
+                matched["search_url"] = matched.apply(_make_search_url, axis=1)
+            st.success(f"{len(matched)} Itens após filtros Amazon - {len(matched)} (de {len(cat_ids)} categorias eBay).")
+            st.session_state["_results_df"] = matched.reset_index(drop=True)
+            st.session_state["_results_source"] = "amazon_first"
+            st.session_state["_page_num"] = 1
+            st.session_state["_show_qty"] = False
+            st.session_state["_stage"] = "results"
+    except Exception as e:
+        prog.empty()
+        st.error(f"Falha na mineração Amazon-first: {e}")
+        st.session_state["_stage"] = "filters"
     st.session_state["_start_run"] = False
 
 # Tabela + paginação

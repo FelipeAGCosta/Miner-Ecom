@@ -3,13 +3,28 @@ from typing import Optional, Dict, Any, List, Tuple
 
 import pandas as pd
 
-from integrations.amazon_spapi import search_by_gtin, search_by_title, get_buybox_price
+import os
+from functools import lru_cache
+
+from integrations.amazon_spapi import (
+    search_by_gtin,
+    search_by_title,
+    get_buybox_price,
+    search_catalog_items,
+    _extract_catalog_item,
+    _load_config_from_env,
+)
+from lib.ebay_search import search_items
 
 
 # Caches em memória para evitar chamadas repetidas
 _gtin_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 _asin_price_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 _title_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+
+DEFAULT_DISCOVERY_MAX_PAGES = int(os.getenv("AMAZON_DISCOVERY_MAX_PAGES", 5))
+DEFAULT_DISCOVERY_PAGE_SIZE = int(os.getenv("AMAZON_DISCOVERY_PAGE_SIZE", 20))
+DEFAULT_DISCOVERY_MAX_ITEMS = int(os.getenv("AMAZON_DISCOVERY_MAX_ITEMS", 300))
 
 # Cada tupla: (BSR, vendas_mensais_estimadas) - ancoras conservadoras por cluster
 CATEGORY_BSR_ANCHORS: Dict[str, List[Tuple[int, int]]] = {
@@ -508,3 +523,229 @@ def match_ebay_to_amazon(
         return df_ebay.iloc[0:0].copy()
 
     return pd.DataFrame(results)
+
+
+# ---------------------------------------------------------------------------
+# Fluxo Amazon-first: descobre na Amazon e busca fornecedores no eBay
+# ---------------------------------------------------------------------------
+
+def _get_buybox_price_cached(asin: str) -> Optional[Dict[str, Any]]:
+    if asin in _asin_price_cache:
+        return _asin_price_cache[asin]
+    try:
+        price_info = get_buybox_price(asin)
+    except Exception:
+        price_info = None
+    _asin_price_cache[asin] = price_info
+    return price_info
+
+
+def _discover_amazon_products(
+    kw: Optional[str],
+    amazon_price_min: Optional[float],
+    amazon_price_max: Optional[float],
+    amazon_offer_type: str,
+    min_monthly_sales_est: Optional[int],
+    max_pages: int,
+    page_size: int,
+    max_items: int,
+    progress_cb: Optional[callable],
+) -> List[Dict[str, Any]]:
+    """
+    Descobre produtos na Amazon aplicando filtros de preço, oferta e vendas estimadas.
+    Retorna uma lista de dicts com campos já enriquecidos (BSR, vendas estimadas, etc.).
+    """
+    if not kw:
+        return []
+
+    offer_type_norm = (amazon_offer_type or "any").strip().lower()
+    found: List[Dict[str, Any]] = []
+
+    # descobre total estimado para feedback ao usuário
+    estimated_total = max_items
+    done = 0
+
+    for page in range(1, max_pages + 1):
+        if len(found) >= max_items:
+            break
+        items = search_catalog_items(
+            keywords=kw,
+            page_size=page_size,
+            page=page,
+            included_data="summaries,identifiers,salesRanks",
+        )
+        if not items:
+            break
+
+        for raw_item in items:
+            if len(found) >= max_items:
+                break
+
+            extracted = _extract_catalog_item(raw_item, _load_config_from_env().marketplace_id)
+            asin = extracted.get("asin")
+            if not asin:
+                continue
+
+            price_info = _get_buybox_price_cached(asin)
+            if not price_info or price_info.get("price") is None:
+                continue
+
+            price = float(price_info["price"])
+            currency = price_info.get("currency") or ""
+            is_prime = bool(price_info.get("is_prime") or False)
+            fulfillment_channel = (price_info.get("fulfillment_channel") or "").upper()
+
+            if amazon_price_min is not None and price < amazon_price_min:
+                continue
+            if amazon_price_max is not None and price > amazon_price_max:
+                continue
+
+            if offer_type_norm in ("prime", "fba"):
+                if not (is_prime or fulfillment_channel == "AMAZON"):
+                    continue
+            elif offer_type_norm in ("fbm", "merchant", "mf"):
+                if fulfillment_channel == "AMAZON":
+                    continue
+
+            rank = extracted.get("sales_rank")
+            cat_display = extracted.get("sales_rank_category")
+            est_monthly = _estimate_monthly_sales_from_bsr(rank, cat_display)
+            if min_monthly_sales_est is not None:
+                if est_monthly is None or est_monthly < min_monthly_sales_est:
+                    continue
+
+            demand_bucket = _demand_bucket_from_sales(est_monthly)
+            cat_key = _normalize_category_key(cat_display)
+
+            found.append(
+                {
+                    "amazon_asin": asin,
+                    "amazon_title": extracted.get("title"),
+                    "amazon_brand": extracted.get("brand"),
+                    "amazon_browse_node_id": extracted.get("browse_node_id"),
+                    "amazon_browse_node_name": extracted.get("browse_node_name"),
+                    "amazon_sales_rank_raw": rank,
+                    "amazon_sales_rank": rank,
+                    "amazon_sales_rank_category": cat_display,
+                    "amazon_demand_category_key": cat_key,
+                    "amazon_est_monthly_sales": est_monthly,
+                    "amazon_demand_bucket": demand_bucket,
+                    "amazon_price": price,
+                    "amazon_currency": currency,
+                    "amazon_is_prime": is_prime,
+                    "amazon_fulfillment_channel": fulfillment_channel,
+                    "amazon_product_url": f"https://www.amazon.com/dp/{asin}",
+                    "gtin": extracted.get("gtin"),
+                    "gtin_type": extracted.get("gtin_type"),
+                }
+            )
+            done += 1
+            if progress_cb:
+                progress_cb(done, estimated_total, "amazon")
+
+    # ordenar por demanda e rank
+    found.sort(
+        key=lambda x: (
+            -(x.get("amazon_est_monthly_sales") or 0),
+            x.get("amazon_sales_rank") or 10**9,
+        )
+    )
+    return found[:max_items]
+
+
+def discover_amazon_and_match_ebay(
+    kw: Optional[str],
+    amazon_price_min: Optional[float],
+    amazon_price_max: Optional[float],
+    amazon_offer_type: str,
+    min_monthly_sales_est: Optional[int],
+    ebay_price_min: Optional[float],
+    ebay_price_max: Optional[float],
+    ebay_condition: str,
+    ebay_category_ids: List[int],
+    progress_cb: Optional[callable] = None,
+) -> pd.DataFrame:
+    """
+    Fluxo Amazon-first: encontra produtos relevantes na Amazon, depois busca fornecedores no eBay.
+    Retorna DataFrame pronto para exibição, no mesmo formato geral usado hoje.
+    """
+    max_pages = DEFAULT_DISCOVERY_MAX_PAGES
+    page_size = DEFAULT_DISCOVERY_PAGE_SIZE
+    max_items = DEFAULT_DISCOVERY_MAX_ITEMS
+
+    amazon_items = _discover_amazon_products(
+        kw=kw,
+        amazon_price_min=amazon_price_min,
+        amazon_price_max=amazon_price_max,
+        amazon_offer_type=amazon_offer_type,
+        min_monthly_sales_est=min_monthly_sales_est,
+        max_pages=max_pages,
+        page_size=page_size,
+        max_items=max_items,
+        progress_cb=progress_cb,
+    )
+
+    if not amazon_items:
+        return pd.DataFrame()
+
+    matches: List[Dict[str, Any]] = []
+    total_amz = len(amazon_items)
+    offer_type_norm = (amazon_offer_type or "any").strip().lower()
+
+    for idx, am in enumerate(amazon_items, start=1):
+        search_term = _normalize_gtin_value(am.get("gtin")) or (am.get("amazon_title") or "")
+        if not search_term:
+            if progress_cb:
+                progress_cb(idx, total_amz, "ebay")
+            continue
+
+        ebay_found: List[Dict[str, Any]] = []
+
+        cat_ids = ebay_category_ids or [None]
+        for cat_id in cat_ids:
+            try:
+                items = search_items(
+                    category_id=cat_id,
+                    keyword=search_term,
+                    price_min=ebay_price_min,
+                    price_max=ebay_price_max,
+                    condition=None if ebay_condition == "ANY" else ebay_condition,
+                    limit_per_page=200,
+                    max_pages=5,
+                )
+                ebay_found.extend(items)
+            except Exception:
+                continue
+
+        if not ebay_found:
+            if progress_cb:
+                progress_cb(idx, total_amz, "ebay")
+            continue
+
+        ebay_df = pd.DataFrame(ebay_found)
+        ebay_df["price"] = pd.to_numeric(ebay_df["price"], errors="coerce")
+        if ebay_price_min is not None:
+            ebay_df = ebay_df[ebay_df["price"] >= (ebay_price_min - 1e-9)]
+        if ebay_price_max is not None:
+            ebay_df = ebay_df[ebay_df["price"] <= (ebay_price_max + 1e-9)]
+
+        if ebay_df.empty:
+            if progress_cb:
+                progress_cb(idx, total_amz, "ebay")
+            continue
+
+        ebay_df = ebay_df.sort_values(by=["price"], ascending=True).reset_index(drop=True)
+        best = ebay_df.iloc[0].to_dict()
+
+        combined = dict(best)
+        combined.update(am)
+        combined["amazon_match_basis"] = combined.get("amazon_match_basis") or "amazon_first"
+        matches.append(combined)
+
+        if progress_cb:
+            progress_cb(idx, total_amz, "ebay")
+
+    if not matches:
+        return pd.DataFrame()
+
+    return pd.DataFrame(matches)
