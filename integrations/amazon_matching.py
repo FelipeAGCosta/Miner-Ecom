@@ -770,3 +770,93 @@ def discover_amazon_and_match_ebay(
         )
 
     return df_matches.reset_index(drop=True)
+
+
+def match_amazon_list_to_ebay(
+    amazon_items: List[Dict[str, Any]],
+    ebay_price_min: Optional[float],
+    ebay_price_max: Optional[float],
+    ebay_condition: str,
+    ebay_category_ids: List[int],
+    progress_cb: Optional[callable] = None,
+) -> pd.DataFrame:
+    """
+    Usa uma lista já descoberta na Amazon para procurar fornecedores no eBay.
+    Mantém apenas o fornecedor mais barato por ASIN. Retorna DataFrame pronto.
+    """
+    if not amazon_items:
+        return pd.DataFrame()
+
+    # dedup Amazon por ASIN
+    uniq = []
+    seen = set()
+    for it in amazon_items:
+        asin = it.get("amazon_asin")
+        if asin and asin not in seen:
+            uniq.append(it)
+            seen.add(asin)
+
+    matches: List[Dict[str, Any]] = []
+    total = len(uniq)
+
+    for idx, am in enumerate(uniq, start=1):
+        term = _normalize_gtin_value(am.get("gtin")) or (am.get("amazon_title") or "")
+        if not term:
+            if progress_cb:
+                progress_cb(idx, total, "ebay")
+            continue
+
+        ebay_found: List[Dict[str, Any]] = []
+        cat_ids = ebay_category_ids or [None]
+        for cat_id in cat_ids:
+            try:
+                items = search_items(
+                    category_id=cat_id,
+                    keyword=term,
+                    price_min=ebay_price_min,
+                    price_max=ebay_price_max,
+                    condition=None if ebay_condition == "ANY" else ebay_condition,
+                    limit_per_page=200,
+                    max_pages=5,
+                )
+                ebay_found.extend(items)
+            except Exception:
+                continue
+
+        if not ebay_found:
+            if progress_cb:
+                progress_cb(idx, total, "ebay")
+            continue
+
+        ebay_df = pd.DataFrame(ebay_found)
+        ebay_df["price"] = pd.to_numeric(ebay_df["price"], errors="coerce")
+        if ebay_price_min is not None:
+            ebay_df = ebay_df[ebay_df["price"] >= (ebay_price_min - 1e-9)]
+        if ebay_price_max is not None:
+            ebay_df = ebay_df[ebay_df["price"] <= (ebay_price_max + 1e-9)]
+        if ebay_df.empty:
+            if progress_cb:
+                progress_cb(idx, total, "ebay")
+            continue
+
+        ebay_df = ebay_df.sort_values(by=["price"], ascending=True).reset_index(drop=True)
+        best = ebay_df.iloc[0].to_dict()
+        combined = dict(best)
+        combined.update(am)
+        combined["amazon_match_basis"] = combined.get("amazon_match_basis") or "amazon_first"
+        matches.append(combined)
+
+        if progress_cb:
+            progress_cb(idx, total, "ebay")
+
+    if not matches:
+        return pd.DataFrame()
+
+    df_matches = pd.DataFrame(matches)
+    if "amazon_asin" in df_matches.columns and "price" in df_matches.columns:
+        df_matches["price"] = pd.to_numeric(df_matches["price"], errors="coerce")
+        df_matches = (
+            df_matches.sort_values(by=["amazon_asin", "price"], ascending=[True, True])
+            .drop_duplicates(subset=["amazon_asin"], keep="first")
+        )
+    return df_matches.reset_index(drop=True)

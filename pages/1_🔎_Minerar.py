@@ -15,7 +15,8 @@ from lib.ebay_api import get_item_detail          # detalhes para enriquecimento
 from lib.redis_cache import cache_get, cache_set
 from integrations.amazon_matching import (
     match_ebay_to_amazon,  # legado (não removido)
-    discover_amazon_and_match_ebay,  # fluxo Amazon-first
+    discover_amazon_and_match_ebay,  # fluxo unificado
+    match_amazon_list_to_ebay,  # fluxo em duas etapas
 )
 
 # --- carregar CSS global (tema aplicado também nesta página) ---
@@ -459,30 +460,65 @@ def _ensure_currency(df: pd.DataFrame) -> pd.DataFrame:
         df["currency"] = df["currency"].fillna("USD").replace("", "USD")
     return df
 
-run_requested = False
-
-# Ação principal de mineração
-if st.button("Minerar", key="run_btn"):
+st.markdown("### 🚀 Passo 1: Buscar produtos na Amazon")
+if st.button("Buscar Amazon", key="run_amazon"):
     st.session_state["_stage"] = "running"
-    st.session_state["_start_run"] = True
-    run_requested = True
-elif st.session_state.get("_start_run", False):
-    run_requested = True
+    st.session_state["_page_num"] = 1
+    st.session_state["_show_qty"] = False
+    prog = st.progress(0.0, text="Buscando produtos na Amazon...")
 
-if run_requested:
+    amazon_pmin_v = amazon_price_min if amazon_price_min > 0 else None
+    amazon_pmax_v = amazon_price_max if amazon_price_max > 0 else None
+    if amazon_offer_label.startswith("Prime"):
+        amazon_offer_type = "prime"
+    elif amazon_offer_label.startswith("Terceiros"):
+        amazon_offer_type = "fbm"
+    else:
+        amazon_offer_type = "any"
+
+    def _update_amz(done: int, total: int, phase: str):
+        frac = done / max(1, total)
+        txt = f"Buscando produtos na Amazon... {done}/{total}" if phase == "amazon" else "Processando..."
+        prog.progress(frac, text=txt)
+
+    try:
+        am_df = discover_amazon_and_match_ebay(
+            kw=st.session_state.get("_kw", "") or None,
+            amazon_price_min=amazon_pmin_v,
+            amazon_price_max=amazon_pmax_v,
+            amazon_offer_type=amazon_offer_type,
+            min_monthly_sales_est=min_monthly_sales if min_monthly_sales > 0 else None,
+            ebay_price_min=None,
+            ebay_price_max=None,
+            ebay_condition="ANY",
+            ebay_category_ids=[],
+            progress_cb=_update_amz,
+        )
+        prog.empty()
+        st.session_state["_amazon_items_df"] = am_df.copy()
+        st.session_state["_results_df"] = pd.DataFrame()  # limpa final
+        st.session_state["_stage"] = "amazon"
+        if am_df.empty:
+            st.warning("Nenhum produto encontrado na Amazon com os filtros selecionados.")
+        else:
+            st.success(f"{len(am_df)} produtos encontrados na Amazon. Agora aplique os filtros do eBay e clique em 'Buscar fornecedores eBay'.")
+    except Exception as e:
+        prog.empty()
+        st.error(f"Falha na busca Amazon: {e}")
+        st.session_state["_stage"] = "filters"
+
+st.markdown("---")
+st.markdown("### 🔍 Passo 2: Buscar fornecedores no eBay (sobre a lista Amazon)")
+if st.button("Buscar fornecedores eBay", key="run_ebay", disabled=("_amazon_items_df" not in st.session_state or st.session_state.get("_amazon_items_df", pd.DataFrame()).empty)):
+    if "_amazon_items_df" not in st.session_state or st.session_state["_amazon_items_df"].empty:
+        st.error("Busque primeiro na Amazon antes de aplicar os filtros do eBay.")
+        st.stop()
+
     pmin_v = pmin if pmin > 0 else None
     pmax_v = pmax if pmax > 0 else None
 
     if pmin_v is not None and pmax_v is not None and pmax_v < pmin_v:
         st.error("Preço máximo não pode ser menor que o preço mínimo.")
-        st.session_state["_stage"] = "filters"
-        st.stop()
-
-    cat_ids = _resolve_category_ids()
-    if not cat_ids:
-        st.error("Nenhuma categoria selecionada.")
-        st.session_state["_stage"] = "filters"
-        st.session_state["_start_run"] = False
         st.stop()
 
     if cond_pt == "Novo":
@@ -494,71 +530,42 @@ if run_requested:
     else:
         ebay_condition = "ANY"
 
-    amazon_pmin_v = amazon_price_min if amazon_price_min > 0 else None
-    amazon_pmax_v = amazon_price_max if amazon_price_max > 0 else None
-    if amazon_offer_label.startswith("Prime"):
-        amazon_offer_type = "prime"
-    elif amazon_offer_label.startswith("Terceiros"):
-        amazon_offer_type = "fbm"
-    else:
-        amazon_offer_type = "any"
+    prog2 = st.progress(0.0, text="Buscando fornecedores no eBay...")
 
-    if amazon_pmin_v is not None and amazon_pmax_v is not None and amazon_pmax_v < amazon_pmin_v:
-        st.error("Na Amazon, o preço máximo não pode ser menor que o preço mínimo.")
-        st.session_state["_stage"] = "filters"
-        st.session_state["_start_run"] = False
-        st.stop()
-
-    prog = st.progress(0.0, text="Buscando produtos na Amazon...")
-
-    def _update_progress(done: int, total: int, phase: str):
+    def _update_ebay(done: int, total: int, phase: str):
         frac = done / max(1, total)
-        if phase == "amazon":
-            txt = f"Buscando produtos na Amazon... {done}/{total}"
-        elif phase == "ebay":
-            txt = f"Buscando fornecedores no eBay... {done}/{total}"
-        else:
-            txt = "Processando..."
-        prog.progress(frac, text=txt)
+        txt = f"Buscando fornecedores no eBay... {done}/{total}"
+        prog2.progress(frac, text=txt)
 
     try:
-        matched = discover_amazon_and_match_ebay(
-            kw=st.session_state.get("_kw", "") or None,
-            amazon_price_min=amazon_pmin_v,
-            amazon_price_max=amazon_pmax_v,
-            amazon_offer_type=amazon_offer_type,
-            min_monthly_sales_est=min_monthly_sales if min_monthly_sales > 0 else None,
+        matched = match_amazon_list_to_ebay(
+            amazon_items=st.session_state["_amazon_items_df"].to_dict(orient="records"),
             ebay_price_min=pmin_v,
             ebay_price_max=pmax_v,
             ebay_condition=ebay_condition,
-            ebay_category_ids=cat_ids,
-            progress_cb=_update_progress,
+            ebay_category_ids=[],  # busca sem restringir categoria eBay
+            progress_cb=_update_ebay,
         )
-        prog.empty()
+        prog2.empty()
 
         if matched.empty:
-            st.warning(
-                "Nenhum item encontrou match entre Amazon e eBay com os filtros selecionados "
-                "(preço, condição, vendas mínimas, oferta, etc.)."
-            )
+            st.warning("Nenhum fornecedor eBay encontrado para os produtos da Amazon com esses filtros.")
             st.session_state["_results_df"] = matched
             st.session_state["_results_source"] = "amazon_first"
-            st.session_state["_stage"] = "filters"
+            st.session_state["_stage"] = "amazon"
         else:
-            # preenche campos auxiliares
             if "search_url" not in matched.columns:
                 matched["search_url"] = matched.apply(_make_search_url, axis=1)
-            st.success(f"{len(matched)} Itens após filtros Amazon - {len(matched)} (de {len(cat_ids)} categorias eBay).")
+            st.success(f"{len(matched)} Itens após filtros Amazon + eBay.")
             st.session_state["_results_df"] = matched.reset_index(drop=True)
             st.session_state["_results_source"] = "amazon_first"
             st.session_state["_page_num"] = 1
             st.session_state["_show_qty"] = False
             st.session_state["_stage"] = "results"
     except Exception as e:
-        prog.empty()
-        st.error(f"Falha na mineração Amazon-first: {e}")
-        st.session_state["_stage"] = "filters"
-    st.session_state["_start_run"] = False
+        prog2.empty()
+        st.error(f"Falha ao buscar fornecedores eBay: {e}")
+        st.session_state["_stage"] = "amazon"
 
 # Tabela + paginação
 if "_results_df" in st.session_state and not st.session_state["_results_df"].empty:
