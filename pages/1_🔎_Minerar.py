@@ -357,7 +357,8 @@ def _make_search_url(row) -> str | None:
             break
     if not q and "title" in row:
         q = str(row["title"]).strip()
-    return f"https://www.ebay.com/sch/i.html_nkw={_url.quote_plus(q)}" if q else None
+    # Busca precisa no eBay: usa parâmetro _nkw corretamente
+    return f"https://www.ebay.com/sch/i.html?_nkw={_url.quote_plus(q)}" if q else None
 
 def _fmt_price(x):
     try:

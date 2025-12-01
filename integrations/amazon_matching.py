@@ -688,11 +688,20 @@ def discover_amazon_and_match_ebay(
     if not amazon_items:
         return pd.DataFrame()
 
+    # dedup Amazon por ASIN, mantendo os mais relevantes (já ordenados)
+    seen_asin = set()
+    uniq_amazon: List[Dict[str, Any]] = []
+    for it in amazon_items:
+        asin = it.get("amazon_asin")
+        if asin and asin not in seen_asin:
+            uniq_amazon.append(it)
+            seen_asin.add(asin)
+
     matches: List[Dict[str, Any]] = []
-    total_amz = len(amazon_items)
+    total_amz = len(uniq_amazon)
     offer_type_norm = (amazon_offer_type or "any").strip().lower()
 
-    for idx, am in enumerate(amazon_items, start=1):
+    for idx, am in enumerate(uniq_amazon, start=1):
         search_term = _normalize_gtin_value(am.get("gtin")) or (am.get("amazon_title") or "")
         if not search_term:
             if progress_cb:
@@ -748,4 +757,13 @@ def discover_amazon_and_match_ebay(
     if not matches:
         return pd.DataFrame()
 
-    return pd.DataFrame(matches)
+    # dedup final por ASIN mantendo o menor preço eBay
+    df_matches = pd.DataFrame(matches)
+    if "amazon_asin" in df_matches.columns and "price" in df_matches.columns:
+        df_matches["price"] = pd.to_numeric(df_matches["price"], errors="coerce")
+        df_matches = (
+            df_matches.sort_values(by=["amazon_asin", "price"], ascending=[True, True])
+            .drop_duplicates(subset=["amazon_asin"], keep="first")
+        )
+
+    return df_matches.reset_index(drop=True)
