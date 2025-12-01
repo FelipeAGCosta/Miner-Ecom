@@ -90,10 +90,29 @@ st.markdown(
         <div class='card-title-icon'>📦</div>
         <div>Filtros Amazon</div>
       </div>
-      <p class='card-caption'>Filtre por preço de venda, tipo de oferta (FBA/FBM) e demanda estimada.</p>
+      <p class='card-caption'>Defina palavra-chave, filtros de preço/tipo de oferta e demanda estimada. A busca começa pela Amazon e depois procura fornecedores no eBay.</p>
     """,
     unsafe_allow_html=True,
 )
+
+col_kw_am, _ = st.columns([2, 1])
+with col_kw_am:
+    kw = st.text_input("Palavra-chave (obrigatória)", value="").strip()
+    st.session_state["_kw"] = kw
+
+col_cat1, col_cat2 = st.columns([1.6, 1.6])
+with col_cat1:
+    root_names = ["Todas as categorias"] + [n["name"] for n in tree]
+    sel_root = st.selectbox("Categoria (opcional, eBay)", root_names, index=0)
+with col_cat2:
+    child_names = ["Todas as subcategorias"]
+    if sel_root != "Todas as categorias":
+        for n in tree:
+            if n["name"] == sel_root:
+                for ch in n.get("children", []) or []:
+                    child_names.append(ch["name"])
+                break
+    sel_child = st.selectbox("Subcategoria (Opcional, eBay)", child_names, index=0)
 
 col_am1, col_am2, col_am3 = st.columns([1, 1, 1])
 with col_am1:
@@ -137,29 +156,10 @@ st.markdown(
         <div class='card-title-icon'>🛒</div>
         <div>Filtros eBay</div>
       </div>
-      <p class='card-caption'>Defina categoria, faixa de preço, condição e estoque mínimo desejado.</p>
+      <p class='card-caption'>Refine fornecedores no eBay por preço e condição.</p>
     """,
     unsafe_allow_html=True,
 )
-
-col_kw, _ = st.columns([2, 1])
-with col_kw:
-    kw = st.text_input("Palavra-chave (opcional)", value="").strip()
-    st.session_state["_kw"] = kw
-
-col1, col2 = st.columns([1.6, 1.6])
-with col1:
-    root_names = ["Todas as categorias"] + [n["name"] for n in tree]
-    sel_root = st.selectbox("Categoria", root_names, index=0)
-with col2:
-    child_names = ["Todas as subcategorias"]
-    if sel_root != "Todas as categorias":
-        for n in tree:
-            if n["name"] == sel_root:
-                for ch in n.get("children", []) or []:
-                    child_names.append(ch["name"])
-                break
-    sel_child = st.selectbox("Subcategoria (Opcional)", child_names, index=0)
 
 col3, col4, col5 = st.columns([1, 1, 1])
 with col3:
