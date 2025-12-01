@@ -482,26 +482,33 @@ if st.button("Buscar Amazon", key="run_amazon"):
         prog.progress(frac, text=txt)
 
     try:
-        am_df = discover_amazon_and_match_ebay(
+        am_items, stats = discover_amazon_products(
             kw=st.session_state.get("_kw", "") or None,
             amazon_price_min=amazon_pmin_v,
             amazon_price_max=amazon_pmax_v,
             amazon_offer_type=amazon_offer_type,
             min_monthly_sales_est=min_monthly_sales if min_monthly_sales > 0 else None,
-            ebay_price_min=None,
-            ebay_price_max=None,
-            ebay_condition="ANY",
-            ebay_category_ids=[],
             progress_cb=_update_amz,
         )
         prog.empty()
+        am_df = pd.DataFrame(am_items)
         st.session_state["_amazon_items_df"] = am_df.copy()
         st.session_state["_results_df"] = pd.DataFrame()  # limpa final
         st.session_state["_stage"] = "amazon"
         if am_df.empty:
-            st.warning("Nenhum produto encontrado na Amazon com os filtros selecionados.")
+            st.warning(
+                f"Nenhum produto encontrado na Amazon. Stats: total catálogo {stats.get('catalog_seen')}, "
+                f"com preço {stats.get('with_price')}, sem preço {stats.get('skipped_no_price')}, "
+                f"filtrados por preço {stats.get('skipped_price_filter')}, oferta {stats.get('skipped_offer')}, "
+                f"vendas {stats.get('skipped_sales')}."
+            )
         else:
-            st.success(f"{len(am_df)} produtos encontrados na Amazon. Agora aplique os filtros do eBay e clique em 'Buscar fornecedores eBay'.")
+            st.success(
+                f"{len(am_df)} produtos encontrados na Amazon "
+                f"(catálogo visto: {stats.get('catalog_seen')}, com preço: {stats.get('with_price')}). "
+                "Agora aplique os filtros do eBay e clique em 'Buscar fornecedores eBay'."
+            )
+            st.session_state["_amazon_stats"] = stats
     except Exception as e:
         prog.empty()
         st.error(f"Falha na busca Amazon: {e}")

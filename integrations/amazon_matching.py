@@ -553,7 +553,7 @@ def _discover_amazon_products(
     page_size: int,
     max_items: int,
     progress_cb: Optional[callable],
-) -> List[Dict[str, Any]]:
+) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
     """
     Descobre produtos na Amazon aplicando filtros de preço, oferta e vendas estimadas.
     Retorna uma lista de dicts com campos já enriquecidos (BSR, vendas estimadas, etc.).
@@ -568,83 +568,120 @@ def _discover_amazon_products(
     estimated_total = max_items
     done = 0
 
-    for page in range(1, max_pages + 1):
-        if len(found) >= max_items:
-            break
-        items = search_catalog_items(
-            keywords=kw,
-            page_size=page_size,
-            page=page,
-            included_data="summaries,identifiers,salesRanks",
-        )
-        if not items:
-            break
+    stats = {
+        "catalog_seen": 0,
+        "with_price": 0,
+        "kept": 0,
+        "skipped_price_filter": 0,
+        "skipped_offer": 0,
+        "skipped_sales": 0,
+        "skipped_no_price": 0,
+    }
 
-        for raw_item in items:
+    def _run_search(keyword: str):
+        nonlocal done
+        for page in range(1, max_pages + 1):
             if len(found) >= max_items:
                 break
-
-            extracted = _extract_catalog_item(raw_item, _load_config_from_env().marketplace_id)
-            asin = extracted.get("asin")
-            if not asin:
-                continue
-
-            price_info = _get_buybox_price_cached(asin)
-            if not price_info or price_info.get("price") is None:
-                continue
-
-            price = float(price_info["price"])
-            currency = price_info.get("currency") or ""
-            is_prime = bool(price_info.get("is_prime") or False)
-            fulfillment_channel = (price_info.get("fulfillment_channel") or "").upper()
-
-            if amazon_price_min is not None and price < amazon_price_min:
-                continue
-            if amazon_price_max is not None and price > amazon_price_max:
-                continue
-
-            if offer_type_norm in ("prime", "fba"):
-                if not (is_prime or fulfillment_channel == "AMAZON"):
-                    continue
-            elif offer_type_norm in ("fbm", "merchant", "mf"):
-                if fulfillment_channel == "AMAZON":
-                    continue
-
-            rank = extracted.get("sales_rank")
-            cat_display = extracted.get("sales_rank_category")
-            est_monthly = _estimate_monthly_sales_from_bsr(rank, cat_display)
-            if min_monthly_sales_est is not None:
-                if est_monthly is None or est_monthly < min_monthly_sales_est:
-                    continue
-
-            demand_bucket = _demand_bucket_from_sales(est_monthly)
-            cat_key = _normalize_category_key(cat_display)
-
-            found.append(
-                {
-                    "amazon_asin": asin,
-                    "amazon_title": extracted.get("title"),
-                    "amazon_brand": extracted.get("brand"),
-                    "amazon_browse_node_id": extracted.get("browse_node_id"),
-                    "amazon_browse_node_name": extracted.get("browse_node_name"),
-                    "amazon_sales_rank_raw": rank,
-                    "amazon_sales_rank": rank,
-                    "amazon_sales_rank_category": cat_display,
-                    "amazon_demand_category_key": cat_key,
-                    "amazon_est_monthly_sales": est_monthly,
-                    "amazon_demand_bucket": demand_bucket,
-                    "amazon_price": price,
-                    "amazon_currency": currency,
-                    "amazon_is_prime": is_prime,
-                    "amazon_fulfillment_channel": fulfillment_channel,
-                    "amazon_product_url": f"https://www.amazon.com/dp/{asin}",
-                    "gtin": extracted.get("gtin"),
-                    "gtin_type": extracted.get("gtin_type"),
-                }
+            items = search_catalog_items(
+                keywords=keyword,
+                page_size=page_size,
+                page=page,
+                included_data="summaries,identifiers,salesRanks",
             )
-            done += 1
-            if progress_cb:
-                progress_cb(done, estimated_total, "amazon")
+            if not items:
+                break
+
+            for raw_item in items:
+                if len(found) >= max_items:
+                    break
+
+                stats["catalog_seen"] += 1
+
+                extracted = _extract_catalog_item(raw_item, _load_config_from_env().marketplace_id)
+                asin = extracted.get("asin")
+                if not asin:
+                    continue
+
+                price_info = _get_buybox_price_cached(asin)
+                if not price_info or price_info.get("price") is None:
+                    stats["skipped_no_price"] += 1
+                    # Se não há preço e não há filtro de preço mínimo, deixamos passar como None
+                    if amazon_price_min:
+                        continue
+                    price = None
+                    currency = None
+                    is_prime = False
+                    fulfillment_channel = ""
+                else:
+                    stats["with_price"] += 1
+                    price = float(price_info["price"])
+                    currency = price_info.get("currency") or ""
+                    is_prime = bool(price_info.get("is_prime") or False)
+                    fulfillment_channel = (price_info.get("fulfillment_channel") or "").upper()
+
+                if price is not None:
+                    if amazon_price_min is not None and price < amazon_price_min:
+                        stats["skipped_price_filter"] += 1
+                        continue
+                    if amazon_price_max is not None and price > amazon_price_max:
+                        stats["skipped_price_filter"] += 1
+                        continue
+
+                if offer_type_norm in ("prime", "fba"):
+                    if not (is_prime or fulfillment_channel == "AMAZON"):
+                        stats["skipped_offer"] += 1
+                        continue
+                elif offer_type_norm in ("fbm", "merchant", "mf"):
+                    if fulfillment_channel == "AMAZON":
+                        stats["skipped_offer"] += 1
+                        continue
+
+                rank = extracted.get("sales_rank")
+                cat_display = extracted.get("sales_rank_category")
+                est_monthly = _estimate_monthly_sales_from_bsr(rank, cat_display)
+                if min_monthly_sales_est is not None:
+                    if est_monthly is None or est_monthly < min_monthly_sales_est:
+                        stats["skipped_sales"] += 1
+                        continue
+
+                demand_bucket = _demand_bucket_from_sales(est_monthly)
+                cat_key = _normalize_category_key(cat_display)
+
+                found.append(
+                    {
+                        "amazon_asin": asin,
+                        "amazon_title": extracted.get("title"),
+                        "amazon_brand": extracted.get("brand"),
+                        "amazon_browse_node_id": extracted.get("browse_node_id"),
+                        "amazon_browse_node_name": extracted.get("browse_node_name"),
+                        "amazon_sales_rank_raw": rank,
+                        "amazon_sales_rank": rank,
+                        "amazon_sales_rank_category": cat_display,
+                        "amazon_demand_category_key": cat_key,
+                        "amazon_est_monthly_sales": est_monthly,
+                        "amazon_demand_bucket": demand_bucket,
+                        "amazon_price": price,
+                        "amazon_currency": currency,
+                        "amazon_is_prime": is_prime,
+                        "amazon_fulfillment_channel": fulfillment_channel,
+                        "amazon_product_url": f"https://www.amazon.com/dp/{asin}",
+                        "gtin": extracted.get("gtin"),
+                        "gtin_type": extracted.get("gtin_type"),
+                    }
+                )
+                stats["kept"] += 1
+                done += 1
+                if progress_cb:
+                    progress_cb(done, estimated_total, "amazon")
+
+    # primeira tentativa com a keyword informada (ou fallback "a")
+    _run_search(kw)
+
+    # se nada encontrado e havia keyword específica, tenta um fallback amplo "a"
+    if not found and kw and kw.strip() and kw.strip().lower() != "a":
+        kw_fallback = "a"
+        _run_search(kw_fallback)
 
     # ordenar por demanda e rank
     found.sort(
@@ -653,7 +690,7 @@ def _discover_amazon_products(
             x.get("amazon_sales_rank") or 10**9,
         )
     )
-    return found[:max_items]
+    return found[:max_items], stats
 
 
 def discover_amazon_and_match_ebay(
@@ -676,7 +713,7 @@ def discover_amazon_and_match_ebay(
     page_size = DEFAULT_DISCOVERY_PAGE_SIZE
     max_items = DEFAULT_DISCOVERY_MAX_ITEMS
 
-    amazon_items = _discover_amazon_products(
+    amazon_items, _ = _discover_amazon_products(
         kw=kw,
         amazon_price_min=amazon_price_min,
         amazon_price_max=amazon_price_max,
@@ -786,6 +823,11 @@ def match_amazon_list_to_ebay(
     """
     if not amazon_items:
         return pd.DataFrame()
+
+    # Se foi passado um DataFrame convertido para dicts, preserva metadados de debug se existirem
+    debug_stats = None
+    if isinstance(amazon_items, dict) and "__stats" in amazon_items:
+        debug_stats = amazon_items.get("__stats")
 
     # dedup Amazon por ASIN
     uniq = []
