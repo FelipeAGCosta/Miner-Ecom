@@ -157,43 +157,6 @@ min_monthly_sales = st.number_input(
 
 st.markdown("</div>", unsafe_allow_html=True)
 
-# --- filtros eBay -----------------------------------------------------------
-st.markdown(
-    """
-    <div class='card'>
-      <div class='card-title'>
-        <div class='card-title-icon'>🛒</div>
-        <div>Filtros eBay</div>
-      </div>
-      <p class='card-caption'>Refine fornecedores no eBay por preço e condição.</p>
-    """,
-    unsafe_allow_html=True,
-)
-
-col3, col4, col5 = st.columns([1, 1, 1])
-with col3:
-    pmin = st.number_input(
-        "Preço mínimo (US$)",
-        min_value=0.0,
-        value=0.0,
-        step=1.0,
-        format="%.2f",
-        key="pmin_input",
-    )
-with col4:
-    pmax = st.number_input(
-        "Preço máximo (US$)",
-        min_value=0.0,
-        value=0.0,
-        step=1.0,
-        format="%.2f",
-        key="pmax_input",
-    )
-with col5:
-    cond_pt = st.selectbox("Condição", ["Novo", "Usado", "Recondicionado", "Novo & Usado"], index=0)
-
-st.markdown("</div>", unsafe_allow_html=True)
-
 st.caption(
     "Quanto mais ampla a busca, maior o tempo de pesquisa. Use os filtros para equilibrar velocidade e profundidade."
 )
@@ -507,73 +470,21 @@ if st.button("Buscar Amazon", key="run_amazon"):
             st.success(
                 f"{len(am_df)} produtos encontrados na Amazon "
                 f"(catálogo visto: {stats.get('catalog_seen')}, com preço: {stats.get('with_price')}). "
-                "Agora aplique os filtros do eBay e clique em 'Buscar fornecedores eBay'."
+                "A tabela abaixo mostra todos os produtos encontrados na Amazon."
             )
             st.session_state["_amazon_stats"] = stats
+            st.session_state["_results_df"] = am_df.reset_index(drop=True)
+            st.session_state["_results_source"] = "amazon_only"
+            st.session_state["_page_num"] = 1
+            st.session_state["_stage"] = "results"
     except Exception as e:
         prog.empty()
         st.error(f"Falha na busca Amazon: {e}")
         st.session_state["_stage"] = "filters"
 
 st.markdown("---")
-st.markdown("### 🔍 Passo 2: Buscar fornecedores no eBay (sobre a lista Amazon)")
-if st.button("Buscar fornecedores eBay", key="run_ebay", disabled=("_amazon_items_df" not in st.session_state or st.session_state.get("_amazon_items_df", pd.DataFrame()).empty)):
-    if "_amazon_items_df" not in st.session_state or st.session_state["_amazon_items_df"].empty:
-        st.error("Busque primeiro na Amazon antes de aplicar os filtros do eBay.")
-        st.stop()
-
-    pmin_v = pmin if pmin > 0 else None
-    pmax_v = pmax if pmax > 0 else None
-
-    if pmin_v is not None and pmax_v is not None and pmax_v < pmin_v:
-        st.error("Preço máximo não pode ser menor que o preço mínimo.")
-        st.stop()
-
-    if cond_pt == "Novo":
-        ebay_condition = "NEW"
-    elif cond_pt == "Usado":
-        ebay_condition = "USED"
-    elif cond_pt == "Recondicionado":
-        ebay_condition = "REFURBISHED"
-    else:
-        ebay_condition = "ANY"
-
-    prog2 = st.progress(0.0, text="Buscando fornecedores no eBay...")
-
-    def _update_ebay(done: int, total: int, phase: str):
-        frac = done / max(1, total)
-        txt = f"Buscando fornecedores no eBay... {done}/{total}"
-        prog2.progress(frac, text=txt)
-
-    try:
-        matched = match_amazon_list_to_ebay(
-            amazon_items=st.session_state["_amazon_items_df"].to_dict(orient="records"),
-            ebay_price_min=pmin_v,
-            ebay_price_max=pmax_v,
-            ebay_condition=ebay_condition,
-            ebay_category_ids=[],  # busca sem restringir categoria eBay
-            progress_cb=_update_ebay,
-        )
-        prog2.empty()
-
-        if matched.empty:
-            st.warning("Nenhum fornecedor eBay encontrado para os produtos da Amazon com esses filtros.")
-            st.session_state["_results_df"] = matched
-            st.session_state["_results_source"] = "amazon_first"
-            st.session_state["_stage"] = "amazon"
-        else:
-            if "search_url" not in matched.columns:
-                matched["search_url"] = matched.apply(_make_search_url, axis=1)
-            st.success(f"{len(matched)} Itens após filtros Amazon + eBay.")
-            st.session_state["_results_df"] = matched.reset_index(drop=True)
-            st.session_state["_results_source"] = "amazon_first"
-            st.session_state["_page_num"] = 1
-            st.session_state["_show_qty"] = False
-            st.session_state["_stage"] = "results"
-    except Exception as e:
-        prog2.empty()
-        st.error(f"Falha ao buscar fornecedores eBay: {e}")
-        st.session_state["_stage"] = "amazon"
+st.markdown("### 🔍 Passo 2: (temporariamente desativado) Buscar fornecedores no eBay")
+st.info("Foco atual: mineração Amazon. A etapa eBay será reativada depois que a lista Amazon estiver validada.")
 
 # Tabela + paginação
 if "_results_df" in st.session_state and not st.session_state["_results_df"].empty:
