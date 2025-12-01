@@ -556,7 +556,7 @@ def _discover_amazon_products(
     Retorna uma lista de dicts com campos já enriquecidos (BSR, vendas estimadas, etc.).
     """
     if not kw:
-        return []
+        kw = "a"  # fallback genérico para permitir busca sem keyword explícita
 
     offer_type_norm = (amazon_offer_type or "any").strip().lower()
     found: List[Dict[str, Any]] = []

@@ -95,7 +95,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-kw = st.text_input("Palavra-chave (opcional)", value="").strip()
+kw_input = st.text_input("Palavra-chave (opcional)", value="").strip()
 
 # Categoria/Subcategoria (usamos árvore disponível)
 col_cat1, col_cat2 = st.columns([1.6, 1.6])
@@ -112,12 +112,13 @@ with col_cat2:
                 break
     sel_child = st.selectbox("Subcategoria (Opcional)", child_names, index=0)
 
-# keyword opcional: se vazio, aproveita categoria para montar termo
-if not kw:
-    if sel_child != "Todas as subcategorias":
-        kw = sel_child
-    elif sel_root != "Todas as categorias":
-        kw = sel_root
+# Monta keyword combinando entrada + categoria/subcategoria (se houver)
+kw_parts = [kw_input]
+if sel_child != "Todas as subcategorias":
+    kw_parts.append(sel_child)
+elif sel_root != "Todas as categorias":
+    kw_parts.append(sel_root)
+kw = " ".join(p for p in kw_parts if p).strip()
 st.session_state["_kw"] = kw
 
 col_am1, col_am2, col_am3 = st.columns([1, 1, 1])
