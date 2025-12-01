@@ -561,6 +561,9 @@ def _discover_amazon_products(
     if not kw:
         kw = "a"  # fallback genérico para permitir busca sem keyword explícita
 
+    cfg = _load_config_from_env()
+    marketplace_id = cfg.marketplace_id or "ATVPDKIKX0DER"
+
     offer_type_norm = (amazon_offer_type or "any").strip().lower()
     found: List[Dict[str, Any]] = []
 
@@ -598,7 +601,7 @@ def _discover_amazon_products(
 
                 stats["catalog_seen"] += 1
 
-                extracted = _extract_catalog_item(raw_item, _load_config_from_env().marketplace_id)
+                extracted = _extract_catalog_item(raw_item, marketplace_id)
                 asin = extracted.get("asin")
                 if not asin:
                     continue
