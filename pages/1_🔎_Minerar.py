@@ -96,6 +96,28 @@ st.markdown(
 )
 
 kw = st.text_input("Palavra-chave (opcional)", value="").strip()
+
+# Categoria/Subcategoria (usamos árvore disponível)
+col_cat1, col_cat2 = st.columns([1.6, 1.6])
+with col_cat1:
+    root_names = ["Todas as categorias"] + [n["name"] for n in tree]
+    sel_root = st.selectbox("Categoria", root_names, index=0)
+with col_cat2:
+    child_names = ["Todas as subcategorias"]
+    if sel_root != "Todas as categorias":
+        for n in tree:
+            if n["name"] == sel_root:
+                for ch in n.get("children", []) or []:
+                    child_names.append(ch["name"])
+                break
+    sel_child = st.selectbox("Subcategoria (Opcional)", child_names, index=0)
+
+# keyword opcional: se vazio, aproveita categoria para montar termo
+if not kw:
+    if sel_child != "Todas as subcategorias":
+        kw = sel_child
+    elif sel_root != "Todas as categorias":
+        kw = sel_root
 st.session_state["_kw"] = kw
 
 col_am1, col_am2, col_am3 = st.columns([1, 1, 1])
@@ -454,8 +476,12 @@ if run_requested:
         st.session_state["_stage"] = "filters"
         st.stop()
 
-    # categorias eBay agora opcionais (busca sem categoria se vazio)
-    cat_ids: list[int] = []
+    cat_ids = _resolve_category_ids()
+    if not cat_ids:
+        st.error("Nenhuma categoria selecionada.")
+        st.session_state["_stage"] = "filters"
+        st.session_state["_start_run"] = False
+        st.stop()
 
     if cond_pt == "Novo":
         ebay_condition = "NEW"
