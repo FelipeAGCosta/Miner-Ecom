@@ -11,10 +11,12 @@ from pathlib import Path
 from lib.config import make_engine
 from lib.tasks import load_categories_tree, flatten_categories
 from lib.db import upsert_ebay_listings, sql_safe_frame
-from lib.ebay_search import search_items          # novo cliente de busca
 from lib.ebay_api import get_item_detail          # detalhes para enriquecimento
 from lib.redis_cache import cache_get, cache_set
-from integrations.amazon_matching import match_ebay_to_amazon  # integracao Amazon
+from integrations.amazon_matching import (
+    match_ebay_to_amazon,  # legado (não removido)
+    discover_amazon_and_match_ebay,  # fluxo Amazon-first
+)
 
 # --- carregar CSS global (tema aplicado também nesta página) ---
 CSS_PATH = Path(__file__).resolve().parent.parent / "assets" / "style.css"
@@ -80,6 +82,53 @@ MAX_ENRICH = int(st.secrets.get("MAX_ENRICH", os.getenv("MAX_ENRICH", 500)))
 tree = load_categories_tree()
 flat = flatten_categories(tree)
 
+# --- filtros Amazon (opcionais) --------------------------------------------
+st.markdown(
+    """
+    <div class='card'>
+      <div class='card-title'>
+        <div class='card-title-icon'>📦</div>
+        <div>Filtros Amazon</div>
+      </div>
+      <p class='card-caption'>Filtre por preço de venda, tipo de oferta (FBA/FBM) e demanda estimada.</p>
+    """,
+    unsafe_allow_html=True,
+)
+
+col_am1, col_am2, col_am3 = st.columns([1, 1, 1])
+with col_am1:
+    amazon_price_min = st.number_input(
+        "Preço mínimo Amazon (US$)",
+        min_value=0.0,
+        value=0.0,
+        step=1.0,
+        format="%.2f",
+        key="amazon_pmin_input",
+    )
+with col_am2:
+    amazon_price_max = st.number_input(
+        "Preço máximo Amazon (US$)",
+        min_value=0.0,
+        value=0.0,
+        step=1.0,
+        format="%.2f",
+        key="amazon_pmax_input",
+    )
+with col_am3:
+    amazon_offer_label = st.selectbox(
+        "Tipo de oferta Amazon",
+        ["Qualquer", "Prime / FBA", "Terceiros / FBM"],
+        index=0,
+    )
+min_monthly_sales = st.number_input(
+    "Buscar por vendas aproximadas do último mês",
+    min_value=0,
+    value=0,
+    step=10,
+)
+
+st.markdown("</div>", unsafe_allow_html=True)
+
 # --- filtros eBay -----------------------------------------------------------
 st.markdown(
     """
@@ -133,53 +182,6 @@ with col4:
     )
 with col5:
     cond_pt = st.selectbox("Condição", ["Novo", "Usado", "Recondicionado", "Novo & Usado"], index=0)
-
-st.markdown("</div>", unsafe_allow_html=True)
-
-# --- filtros Amazon (opcionais) --------------------------------------------
-st.markdown(
-    """
-    <div class='card'>
-      <div class='card-title'>
-        <div class='card-title-icon'>📦</div>
-        <div>Filtros Amazon</div>
-      </div>
-      <p class='card-caption'>Filtre por preço de venda, tipo de oferta (FBA/FBM) e demanda estimada.</p>
-    """,
-    unsafe_allow_html=True,
-)
-
-col_am1, col_am2, col_am3 = st.columns([1, 1, 1])
-with col_am1:
-    amazon_price_min = st.number_input(
-        "Preço mínimo Amazon (US$)",
-        min_value=0.0,
-        value=0.0,
-        step=1.0,
-        format="%.2f",
-        key="amazon_pmin_input",
-    )
-with col_am2:
-    amazon_price_max = st.number_input(
-        "Preço máximo Amazon (US$)",
-        min_value=0.0,
-        value=0.0,
-        step=1.0,
-        format="%.2f",
-        key="amazon_pmax_input",
-    )
-with col_am3:
-    amazon_offer_label = st.selectbox(
-        "Tipo de oferta Amazon",
-        ["Qualquer", "Prime / FBA", "Terceiros / FBM"],
-        index=0,
-    )
-min_monthly_sales = st.number_input(
-    "Buscar por vendas aproximadas do último mês",
-    min_value=0,
-    value=0,
-    step=10,
-)
 
 st.markdown("</div>", unsafe_allow_html=True)
 
