@@ -24,7 +24,8 @@ _title_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 
 # Limites padrão (podem ser sobrescritos por .env / st.secrets)
 # Objetivo: explorar mais itens na Amazon antes de filtrar
-DEFAULT_DISCOVERY_MAX_PAGES = int(os.getenv("AMAZON_DISCOVERY_MAX_PAGES", 25))
+# Para chegar perto de 1000 itens: 50 páginas x 20 itens/página = 1000
+DEFAULT_DISCOVERY_MAX_PAGES = int(os.getenv("AMAZON_DISCOVERY_MAX_PAGES", 50))
 DEFAULT_DISCOVERY_PAGE_SIZE = int(os.getenv("AMAZON_DISCOVERY_PAGE_SIZE", 20))  # API aceita até ~20 por página
 DEFAULT_DISCOVERY_MAX_ITEMS = int(os.getenv("AMAZON_DISCOVERY_MAX_ITEMS", 1000))
 
@@ -563,8 +564,8 @@ def _discover_amazon_products(
     offer_type_norm = (amazon_offer_type or "any").strip().lower()
     found: List[Dict[str, Any]] = []
 
-    # total estimado para feedback ao usuário (cap no menor de max_items ou páginas * page_size)
-    estimated_total = min(max_items, max_pages * page_size)
+    # total estimado para feedback ao usuário (usamos max_items como teto desejado)
+    estimated_total = max_items
     done = 0
 
     for page in range(1, max_pages + 1):
