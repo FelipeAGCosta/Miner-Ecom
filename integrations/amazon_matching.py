@@ -22,9 +22,11 @@ _gtin_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 _asin_price_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 _title_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 
-DEFAULT_DISCOVERY_MAX_PAGES = int(os.getenv("AMAZON_DISCOVERY_MAX_PAGES", 5))
-DEFAULT_DISCOVERY_PAGE_SIZE = int(os.getenv("AMAZON_DISCOVERY_PAGE_SIZE", 20))
-DEFAULT_DISCOVERY_MAX_ITEMS = int(os.getenv("AMAZON_DISCOVERY_MAX_ITEMS", 300))
+# Limites padrão (podem ser sobrescritos por .env / st.secrets)
+# Objetivo: explorar mais itens na Amazon antes de filtrar
+DEFAULT_DISCOVERY_MAX_PAGES = int(os.getenv("AMAZON_DISCOVERY_MAX_PAGES", 25))
+DEFAULT_DISCOVERY_PAGE_SIZE = int(os.getenv("AMAZON_DISCOVERY_PAGE_SIZE", 20))  # API aceita até ~20 por página
+DEFAULT_DISCOVERY_MAX_ITEMS = int(os.getenv("AMAZON_DISCOVERY_MAX_ITEMS", 1000))
 
 # Cada tupla: (BSR, vendas_mensais_estimadas) - ancoras conservadoras por cluster
 CATEGORY_BSR_ANCHORS: Dict[str, List[Tuple[int, int]]] = {
@@ -561,8 +563,8 @@ def _discover_amazon_products(
     offer_type_norm = (amazon_offer_type or "any").strip().lower()
     found: List[Dict[str, Any]] = []
 
-    # descobre total estimado para feedback ao usuário
-    estimated_total = max_items
+    # total estimado para feedback ao usuário (cap no menor de max_items ou páginas * page_size)
+    estimated_total = min(max_items, max_pages * page_size)
     done = 0
 
     for page in range(1, max_pages + 1):
