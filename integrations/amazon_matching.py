@@ -693,6 +693,33 @@ def _discover_amazon_products(
     return found[:max_items], stats
 
 
+def discover_amazon_products(
+    kw: Optional[str],
+    amazon_price_min: Optional[float],
+    amazon_price_max: Optional[float],
+    amazon_offer_type: str,
+    min_monthly_sales_est: Optional[int],
+    max_pages: int = DEFAULT_DISCOVERY_MAX_PAGES,
+    page_size: int = DEFAULT_DISCOVERY_PAGE_SIZE,
+    max_items: int = DEFAULT_DISCOVERY_MAX_ITEMS,
+    progress_cb: Optional[callable] = None,
+) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+    """
+    Wrapper público para descoberta de produtos na Amazon, retornando itens e stats de debug.
+    """
+    return _discover_amazon_products(
+        kw=kw,
+        amazon_price_min=amazon_price_min,
+        amazon_price_max=amazon_price_max,
+        amazon_offer_type=amazon_offer_type,
+        min_monthly_sales_est=min_monthly_sales_est,
+        max_pages=max_pages,
+        page_size=page_size,
+        max_items=max_items,
+        progress_cb=progress_cb,
+    )
+
+
 def discover_amazon_and_match_ebay(
     kw: Optional[str],
     amazon_price_min: Optional[float],
