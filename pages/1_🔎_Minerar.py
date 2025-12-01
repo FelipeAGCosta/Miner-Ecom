@@ -95,24 +95,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-col_kw_am, _ = st.columns([2, 1])
-with col_kw_am:
-    kw = st.text_input("Palavra-chave (obrigatória)", value="").strip()
-    st.session_state["_kw"] = kw
-
-col_cat1, col_cat2 = st.columns([1.6, 1.6])
-with col_cat1:
-    root_names = ["Todas as categorias"] + [n["name"] for n in tree]
-    sel_root = st.selectbox("Categoria (opcional, eBay)", root_names, index=0)
-with col_cat2:
-    child_names = ["Todas as subcategorias"]
-    if sel_root != "Todas as categorias":
-        for n in tree:
-            if n["name"] == sel_root:
-                for ch in n.get("children", []) or []:
-                    child_names.append(ch["name"])
-                break
-    sel_child = st.selectbox("Subcategoria (Opcional, eBay)", child_names, index=0)
+kw = st.text_input("Palavra-chave (opcional)", value="").strip()
+st.session_state["_kw"] = kw
 
 col_am1, col_am2, col_am3 = st.columns([1, 1, 1])
 with col_am1:
@@ -470,11 +454,8 @@ if run_requested:
         st.session_state["_stage"] = "filters"
         st.stop()
 
-    cat_ids = _resolve_category_ids()
-    if not cat_ids:
-        st.error("Nenhuma categoria resolvida.")
-        st.session_state["_stage"] = "filters"
-        st.stop()
+    # categorias eBay agora opcionais (busca sem categoria se vazio)
+    cat_ids: list[int] = []
 
     if cond_pt == "Novo":
         ebay_condition = "NEW"
