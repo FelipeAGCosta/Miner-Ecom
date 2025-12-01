@@ -17,6 +17,7 @@ from integrations.amazon_matching import (
     match_ebay_to_amazon,  # legado (não removido)
     discover_amazon_and_match_ebay,  # fluxo unificado
     match_amazon_list_to_ebay,  # fluxo em duas etapas
+    discover_amazon_products,  # descoberta Amazon (debug/etapa 1)
 )
 
 # --- carregar CSS global (tema aplicado também nesta página) ---
