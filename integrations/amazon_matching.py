@@ -567,8 +567,8 @@ def _discover_amazon_products(
     offer_type_norm = (amazon_offer_type or "any").strip().lower()
     found: List[Dict[str, Any]] = []
 
-    # total estimado para feedback ao usuário (usamos max_items como teto desejado)
-    estimated_total = max_items
+    # total estimado para feedback ao usuário (páginas x page_size ou max_items)
+    estimated_total = min(max_items, max_pages * page_size)
     done = 0
 
     stats = {

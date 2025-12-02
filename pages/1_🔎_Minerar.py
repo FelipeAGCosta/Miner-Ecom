@@ -427,9 +427,11 @@ if st.button("Buscar Amazon", key="run_amazon"):
         )
         prog.empty()
         am_df = pd.DataFrame(am_items)
-        # Dedup por ASIN para evitar itens repetidos
+        # Deduplica para evitar repetidos (prioriza ASIN; fallback título)
         if "amazon_asin" in am_df.columns:
             am_df = am_df.drop_duplicates(subset=["amazon_asin"], keep="first")
+        elif "amazon_title" in am_df.columns:
+            am_df = am_df.drop_duplicates(subset=["amazon_title"], keep="first")
         st.session_state["_amazon_items_df"] = am_df.copy()
         st.session_state["_results_df"] = pd.DataFrame()  # limpa final
         st.session_state["_stage"] = "amazon"
