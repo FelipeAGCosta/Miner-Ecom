@@ -83,10 +83,26 @@ st.markdown(
         <div class='card-title-icon'>📦</div>
         <div>Filtros Amazon</div>
       </div>
-      <p class='card-caption'>Escolha apenas a categoria/subcategoria para minerar produtos na Amazon.</p>
+      <p class='card-caption'>Escolha categoria/subcategoria (em PT) mas buscaremos na Amazon usando o campo amazon_kw (EN). Você pode adicionar palavra-chave livre opcional.</p>
     """,
     unsafe_allow_html=True,
 )
+
+def _find_node_by_name(nodes: list[dict], name: str) -> dict | None:
+    for n in nodes:
+        if n.get("name") == name:
+            return n
+        for ch in n.get("children", []) or []:
+            if ch.get("name") == name:
+                return ch
+    return None
+
+def _kw_for_node(node: dict | None) -> str:
+    if not node:
+        return ""
+    return (node.get("amazon_kw") or node.get("name") or "").strip()
+
+user_kw = st.text_input("Palavra-chave (opcional)", value="").strip()
 
 col_cat1, col_cat2 = st.columns([1.6, 1.6])
 with col_cat1:
@@ -94,20 +110,24 @@ with col_cat1:
     sel_root = st.selectbox("Categoria", root_names, index=0)
 with col_cat2:
     child_names = ["Todas as subcategorias"]
-    if sel_root != "Todas as categorias":
-        for n in tree:
-            if n["name"] == sel_root:
-                for ch in n.get("children", []) or []:
-                    child_names.append(ch["name"])
-                break
+    parent_node = _find_node_by_name(tree, sel_root) if sel_root != "Todas as categorias" else None
+    if parent_node and parent_node.get("children"):
+        for ch in parent_node.get("children", []) or []:
+            child_names.append(ch["name"])
     sel_child = st.selectbox("Subcategoria (Opcional)", child_names, index=0)
 
+selected_parent = parent_node if sel_root != "Todas as categorias" else None
+selected_child = _find_node_by_name(parent_node.get("children", []) if parent_node else [], sel_child) if sel_child != "Todas as subcategorias" else None
+
 kw_parts = []
-if sel_child != "Todas as subcategorias":
-    kw_parts.append(sel_child)
-elif sel_root != "Todas as categorias":
-    kw_parts.append(sel_root)
-kw = " ".join(p for p in kw_parts if p).strip() or ""
+if user_kw:
+    kw_parts.append(user_kw)
+if selected_child:
+    kw_parts.append(_kw_for_node(selected_child))
+elif selected_parent:
+    kw_parts.append(_kw_for_node(selected_parent))
+
+kw = " ".join(p for p in kw_parts if p).strip()
 st.session_state["_kw"] = kw
 
 st.markdown("</div>", unsafe_allow_html=True)
