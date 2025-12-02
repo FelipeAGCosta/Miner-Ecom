@@ -425,13 +425,13 @@ if st.button("Buscar Amazon", key="run_amazon"):
             st.warning(
                 f"Nenhum produto encontrado na Amazon. Stats: total catálogo {stats.get('catalog_seen')}, "
                 f"com preço {stats.get('with_price')}, sem preço {stats.get('skipped_no_price')}, "
-                f"filtrados por preço {stats.get('skipped_price_filter')}, oferta {stats.get('skipped_offer')}, "
-                f"vendas {stats.get('skipped_sales')}."
+                f"ignorados por idioma {stats.get('skipped_lang')}."
             )
         else:
             st.success(
                 f"{len(am_df)} produtos encontrados na Amazon "
-                f"(catálogo visto: {stats.get('catalog_seen')}, com preço: {stats.get('with_price')}). "
+                f"(catálogo visto: {stats.get('catalog_seen')}, com preço: {stats.get('with_price')}, "
+                f"sem preço: {stats.get('skipped_no_price')}, ignorados por idioma: {stats.get('skipped_lang')}). "
                 "A tabela abaixo mostra todos os produtos encontrados na Amazon."
             )
             st.session_state["_amazon_stats"] = stats

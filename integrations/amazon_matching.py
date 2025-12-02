@@ -23,11 +23,11 @@ _asin_price_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 _title_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 
 # Limites padrão (podem ser sobrescritos por .env / st.secrets)
-# Objetivo: explorar mais itens na Amazon antes de filtrar
-# Para chegar perto de 1000 itens: 50 páginas x 20 itens/página = 1000
-DEFAULT_DISCOVERY_MAX_PAGES = int(os.getenv("AMAZON_DISCOVERY_MAX_PAGES", 50))
+# Objetivo: explorar o máximo de itens na Amazon antes de qualquer lapidação
+# Para chegar perto de 2000 itens: 100 páginas x 20 itens/página = 2000
+DEFAULT_DISCOVERY_MAX_PAGES = int(os.getenv("AMAZON_DISCOVERY_MAX_PAGES", 100))
 DEFAULT_DISCOVERY_PAGE_SIZE = int(os.getenv("AMAZON_DISCOVERY_PAGE_SIZE", 20))  # API aceita até ~20 por página
-DEFAULT_DISCOVERY_MAX_ITEMS = int(os.getenv("AMAZON_DISCOVERY_MAX_ITEMS", 1000))
+DEFAULT_DISCOVERY_MAX_ITEMS = int(os.getenv("AMAZON_DISCOVERY_MAX_ITEMS", 2000))
 
 # Cada tupla: (BSR, vendas_mensais_estimadas) - ancoras conservadoras por cluster
 CATEGORY_BSR_ANCHORS: Dict[str, List[Tuple[int, int]]] = {
@@ -579,6 +579,7 @@ def _discover_amazon_products(
         "skipped_offer": 0,
         "skipped_sales": 0,
         "skipped_no_price": 0,
+        "skipped_lang": 0,
     }
 
     def _run_search(keyword: str):
@@ -606,12 +607,15 @@ def _discover_amazon_products(
                 if not asin:
                     continue
 
+                title_val = extracted.get("title") or ""
+                if "portuguese" in title_val.lower():
+                    stats["skipped_lang"] += 1
+                    continue
+
                 price_info = _get_buybox_price_cached(asin)
                 if not price_info or price_info.get("price") is None:
                     stats["skipped_no_price"] += 1
-                    # Se não há preço e não há filtro de preço mínimo, deixamos passar como None
-                    if amazon_price_min:
-                        continue
+                    # Aceitamos mesmo sem preço
                     price = None
                     currency = None
                     is_prime = False
@@ -623,31 +627,9 @@ def _discover_amazon_products(
                     is_prime = bool(price_info.get("is_prime") or False)
                     fulfillment_channel = (price_info.get("fulfillment_channel") or "").upper()
 
-                if price is not None:
-                    if amazon_price_min is not None and price < amazon_price_min:
-                        stats["skipped_price_filter"] += 1
-                        continue
-                    if amazon_price_max is not None and price > amazon_price_max:
-                        stats["skipped_price_filter"] += 1
-                        continue
-
-                if offer_type_norm in ("prime", "fba"):
-                    if not (is_prime or fulfillment_channel == "AMAZON"):
-                        stats["skipped_offer"] += 1
-                        continue
-                elif offer_type_norm in ("fbm", "merchant", "mf"):
-                    if fulfillment_channel == "AMAZON":
-                        stats["skipped_offer"] += 1
-                        continue
-
                 rank = extracted.get("sales_rank")
                 cat_display = extracted.get("sales_rank_category")
                 est_monthly = _estimate_monthly_sales_from_bsr(rank, cat_display)
-                if min_monthly_sales_est is not None:
-                    if est_monthly is None or est_monthly < min_monthly_sales_est:
-                        stats["skipped_sales"] += 1
-                        continue
-
                 demand_bucket = _demand_bucket_from_sales(est_monthly)
                 cat_key = _normalize_category_key(cat_display)
 
