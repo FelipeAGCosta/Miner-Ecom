@@ -579,7 +579,6 @@ def _discover_amazon_products(
         "skipped_offer": 0,
         "skipped_sales": 0,
         "skipped_no_price": 0,
-        "skipped_lang": 0,
     }
 
     def _run_search(keyword: str):
@@ -605,11 +604,6 @@ def _discover_amazon_products(
                 extracted = _extract_catalog_item(raw_item, marketplace_id)
                 asin = extracted.get("asin")
                 if not asin:
-                    continue
-
-                title_val = extracted.get("title") or ""
-                if "portuguese" in title_val.lower():
-                    stats["skipped_lang"] += 1
                     continue
 
                 price_info = _get_buybox_price_cached(asin)

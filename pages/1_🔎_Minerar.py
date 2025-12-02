@@ -8,17 +8,8 @@ import pandas as pd
 import streamlit as st
 from pathlib import Path
 
-from lib.config import make_engine
 from lib.tasks import load_categories_tree, flatten_categories
-from lib.db import upsert_ebay_listings, sql_safe_frame
-from lib.ebay_api import get_item_detail          # detalhes para enriquecimento
-from lib.redis_cache import cache_get, cache_set
-from integrations.amazon_matching import (
-    match_ebay_to_amazon,  # legado (não removido)
-    discover_amazon_and_match_ebay,  # fluxo unificado
-    match_amazon_list_to_ebay,  # fluxo em duas etapas
-    discover_amazon_products,  # descoberta Amazon (debug/etapa 1)
-)
+from integrations.amazon_matching import discover_amazon_products
 
 # --- carregar CSS global (tema aplicado também nesta página) ---
 CSS_PATH = Path(__file__).resolve().parent.parent / "assets" / "style.css"
