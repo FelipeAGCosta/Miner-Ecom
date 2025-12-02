@@ -293,10 +293,11 @@ if st.button("Buscar Amazon", key="run_amazon"):
     try:
         am_items, stats = discover_amazon_products(
             kw=st.session_state.get("_kw", "") or None,
-            amazon_price_min=None,
+            amazon_price_min=None,          # sem filtro de preço
             amazon_price_max=None,
-            amazon_offer_type="any",
-            min_monthly_sales_est=0,
+            amazon_offer_type="any",        # qualquer oferta
+            min_monthly_sales_est=0,        # 0 = não filtrar por BSR/vendas
+            max_items=5000,                 # até 5000 ASINs distintos com preço
             progress_cb=_update_amz,
         )
         prog.empty()

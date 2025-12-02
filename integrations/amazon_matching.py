@@ -555,37 +555,51 @@ def _discover_amazon_products(
     progress_cb: Optional[callable],
 ) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
     """
-    Descobre produtos na Amazon aplicando filtros de preço, oferta e vendas estimadas.
-    Retorna uma lista de dicts com campos já enriquecidos (BSR, vendas estimadas, etc.).
+    Descobre produtos na Amazon aplicando filtros de preço, oferta e (opcionalmente) vendas estimadas.
+
+    Requisitos desta versão:
+      - NÃO usar BSR para ordenação (apenas informação).
+      - Manter APENAS itens com preço de buybox.
+      - Garantir que len(found) seja o número de ASINs distintos (sem repetição).
+      - Continuar paginando até atingir max_items mantidos ou acabar o catálogo.
     """
+    # Palavra-chave fallback genérica
     if not kw:
-        kw = "a"  # fallback genérico para permitir busca sem keyword explícita
+        kw = "a"
 
     cfg = _load_config_from_env()
     marketplace_id = cfg.marketplace_id or "ATVPDKIKX0DER"
 
     offer_type_norm = (amazon_offer_type or "any").strip().lower()
-    found: List[Dict[str, Any]] = []
 
-    # total estimado para feedback ao usuário (páginas x page_size ou max_items)
+    found: List[Dict[str, Any]] = []
+    seen_asins: set[str] = set()
+
+    # total estimado apenas para feedback visual da barra de progresso
     estimated_total = max_items
     done = 0
 
-    stats = {
-        "catalog_seen": 0,
-        "with_price": 0,
-        "kept": 0,
-        "skipped_price_filter": 0,
-        "skipped_offer": 0,
-        "skipped_sales": 0,
-        "skipped_no_price": 0,
+    stats: Dict[str, int] = {
+        "catalog_seen": 0,          # itens brutos do catálogo
+        "with_price": 0,            # itens com preço de buybox
+        "kept": 0,                  # itens finais mantidos (ASINs únicos)
+        "skipped_no_asin": 0,       # sem ASIN
+        "skipped_duplicate_asin": 0,# ASIN já visto
+        "skipped_no_price": 0,      # sem preço de buybox
+        "skipped_price_filter": 0,  # fora da faixa de preço
+        "skipped_offer": 0,         # não bate com tipo de oferta (Prime/FBA/FBM)
+        "skipped_sales": 0,         # abaixo de min_monthly_sales_est, se >0
+        "skipped_lang": 0,          # reservado (não usamos idioma por enquanto)
     }
 
     def _run_search(keyword: str):
         nonlocal done
+
         for page in range(1, max_pages + 1):
+            # Se já atingimos o número desejado de itens distintos, paramos.
             if len(found) >= max_items:
                 break
+
             items = search_catalog_items(
                 keywords=keyword,
                 page_size=page_size,
@@ -604,31 +618,54 @@ def _discover_amazon_products(
                 extracted = _extract_catalog_item(raw_item, marketplace_id)
                 asin = extracted.get("asin")
                 if not asin:
+                    stats["skipped_no_asin"] += 1
                     continue
 
+                # evita repetir o mesmo produto
+                if asin in seen_asins:
+                    stats["skipped_duplicate_asin"] += 1
+                    continue
+
+                # --- preço / buybox obrigatório ---
                 price_info = _get_buybox_price_cached(asin)
                 if not price_info or price_info.get("price") is None:
                     stats["skipped_no_price"] += 1
-                    # Modo debug: aceitar sem preço (price None)
-                    price = None
-                    currency = None
-                    is_prime = False
-                    fulfillment_channel = ""
-                else:
-                    stats["with_price"] += 1
-                    price = float(price_info["price"])
-                    currency = price_info.get("currency") or ""
-                    is_prime = bool(price_info.get("is_prime") or False)
-                    fulfillment_channel = (price_info.get("fulfillment_channel") or "").upper()
+                    continue
 
+                price = float(price_info["price"])
+                currency = price_info.get("currency") or ""
+                is_prime = bool(price_info.get("is_prime") or False)
+                fulfillment_channel = (price_info.get("fulfillment_channel") or "").upper()
+
+                stats["with_price"] += 1
+
+                # --- filtros de preço (se definidos) ---
+                if amazon_price_min is not None and price < amazon_price_min:
+                    stats["skipped_price_filter"] += 1
+                    continue
+                if amazon_price_max is not None and price > amazon_price_max:
+                    stats["skipped_price_filter"] += 1
+                    continue
+
+                # --- filtro de tipo de oferta (Prime/FBA/FBM) ---
+                if offer_type_norm in ("prime", "fba"):
+                    if not (is_prime or fulfillment_channel == "AMAZON"):
+                        stats["skipped_offer"] += 1
+                        continue
+                elif offer_type_norm in ("fbm", "merchant", "mf"):
+                    if fulfillment_channel == "AMAZON":
+                        stats["skipped_offer"] += 1
+                        continue
+
+                # --- BSR → vendas estimadas (apenas cálculo) ---
                 rank = extracted.get("sales_rank")
                 cat_display = extracted.get("sales_rank_category")
                 est_monthly = _estimate_monthly_sales_from_bsr(rank, cat_display)
                 if est_monthly is None:
-                    est_monthly = 0  # não descarta se não houver BSR
+                    est_monthly = 0  # não descarta por falta de BSR
 
-                # Só filtra por vendas se o usuário pediu > 0
-                if min_monthly_sales_est and min_monthly_sales_est > 0:
+                # Só filtra por vendas se min_monthly_sales_est > 0
+                if min_monthly_sales_est is not None and min_monthly_sales_est > 0:
                     if est_monthly < min_monthly_sales_est:
                         stats["skipped_sales"] += 1
                         continue
@@ -658,27 +695,23 @@ def _discover_amazon_products(
                         "gtin_type": extracted.get("gtin_type"),
                     }
                 )
+                seen_asins.add(asin)
                 stats["kept"] += 1
                 done += 1
+
                 if progress_cb:
                     progress_cb(done, estimated_total, "amazon")
 
-    # primeira tentativa com a keyword informada (ou fallback "a")
+    # 1ª passada com a keyword construída (categoria/subcategoria/termo do usuário)
     _run_search(kw)
 
-    # se nada encontrado e havia keyword específica, tenta um fallback amplo "a"
-    if not found and kw and kw.strip() and kw.strip().lower() != "a":
-        kw_fallback = "a"
-        _run_search(kw_fallback)
+    # Se ainda não alcançamos max_items e a keyword não é o fallback,
+    # tenta uma keyword bem ampla ("a") para completar a amostra.
+    if len(found) < max_items and kw and kw.strip().lower() != "a":
+        _run_search("a")
 
-    # ordenar por demanda e rank
-    found.sort(
-        key=lambda x: (
-            -(x.get("amazon_est_monthly_sales") or 0),
-            x.get("amazon_sales_rank") or 10**9,
-        )
-    )
-    return found[:max_items], stats
+    # IMPORTANTE: não ordenar por BSR. Mantemos a ordem da API.
+    return found, stats
 
 
 def discover_amazon_products(
@@ -694,7 +727,13 @@ def discover_amazon_products(
 ) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
     """
     Wrapper público para descoberta de produtos na Amazon, retornando itens e stats de debug.
+
+    max_items define o NÚMERO DE ITENS MANTIDOS (ASINs distintos com preço),
+    não apenas o número de itens vistos no catálogo.
     """
+    if max_items is None or max_items <= 0:
+        max_items = DEFAULT_DISCOVERY_MAX_ITEMS
+
     return _discover_amazon_products(
         kw=kw,
         amazon_price_min=amazon_price_min,
