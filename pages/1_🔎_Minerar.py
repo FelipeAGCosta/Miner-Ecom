@@ -106,14 +106,15 @@ user_kw = st.text_input("Palavra-chave (opcional)", value="").strip()
 
 col_cat1, col_cat2 = st.columns([1.6, 1.6])
 with col_cat1:
-    root_names = ["Todas as categorias"] + [n["name"] for n in tree]
+    root_names = ["Todas as categorias"] + [n.get("name") for n in tree if n.get("name")]
     sel_root = st.selectbox("Categoria", root_names, index=0)
 with col_cat2:
     child_names = ["Todas as subcategorias"]
     parent_node = _find_node_by_name(tree, sel_root) if sel_root != "Todas as categorias" else None
     if parent_node and parent_node.get("children"):
         for ch in parent_node.get("children", []) or []:
-            child_names.append(ch["name"])
+            if ch.get("name"):
+                child_names.append(ch["name"])
     sel_child = st.selectbox("Subcategoria (Opcional)", child_names, index=0)
 
 selected_parent = parent_node if sel_root != "Todas as categorias" else None
