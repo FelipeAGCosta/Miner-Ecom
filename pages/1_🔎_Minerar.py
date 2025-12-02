@@ -297,7 +297,7 @@ if st.button("Buscar Amazon", key="run_amazon"):
             amazon_price_max=None,
             amazon_offer_type="any",        # qualquer oferta
             min_monthly_sales_est=0,        # 0 = não filtrar por BSR/vendas
-            max_items=5000,                 # até 5000 ASINs distintos com preço
+            max_items=500,                  # até 500 ASINs distintos com preço
             progress_cb=_update_amz,
         )
         prog.empty()
