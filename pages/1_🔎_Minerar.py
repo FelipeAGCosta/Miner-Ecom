@@ -92,14 +92,11 @@ st.markdown(
         <div class='card-title-icon'>📦</div>
         <div>Filtros Amazon</div>
       </div>
-      <p class='card-caption'>Defina palavra-chave, filtros de preço/tipo de oferta e demanda estimada. A busca começa pela Amazon e depois procura fornecedores no eBay.</p>
+      <p class='card-caption'>Escolha apenas a categoria/subcategoria para minerar produtos na Amazon.</p>
     """,
     unsafe_allow_html=True,
 )
 
-kw_input = st.text_input("Palavra-chave (opcional)", value="").strip()
-
-# Categoria/Subcategoria (usamos árvore disponível)
 col_cat1, col_cat2 = st.columns([1.6, 1.6])
 with col_cat1:
     root_names = ["Todas as categorias"] + [n["name"] for n in tree]
@@ -114,46 +111,13 @@ with col_cat2:
                 break
     sel_child = st.selectbox("Subcategoria (Opcional)", child_names, index=0)
 
-# Monta keyword combinando entrada + categoria/subcategoria (se houver)
-kw_parts = [kw_input]
+kw_parts = []
 if sel_child != "Todas as subcategorias":
     kw_parts.append(sel_child)
 elif sel_root != "Todas as categorias":
     kw_parts.append(sel_root)
-kw = " ".join(p for p in kw_parts if p).strip()
+kw = " ".join(p for p in kw_parts if p).strip() or ""
 st.session_state["_kw"] = kw
-
-col_am1, col_am2, col_am3 = st.columns([1, 1, 1])
-with col_am1:
-    amazon_price_min = st.number_input(
-        "Preço mínimo Amazon (US$)",
-        min_value=0.0,
-        value=0.0,
-        step=1.0,
-        format="%.2f",
-        key="amazon_pmin_input",
-    )
-with col_am2:
-    amazon_price_max = st.number_input(
-        "Preço máximo Amazon (US$)",
-        min_value=0.0,
-        value=0.0,
-        step=1.0,
-        format="%.2f",
-        key="amazon_pmax_input",
-    )
-with col_am3:
-    amazon_offer_label = st.selectbox(
-        "Tipo de oferta Amazon",
-        ["Qualquer", "Prime / FBA", "Terceiros / FBM"],
-        index=0,
-    )
-min_monthly_sales = st.number_input(
-    "Buscar por vendas aproximadas do último mês",
-    min_value=0,
-    value=0,
-    step=10,
-)
 
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -431,14 +395,9 @@ if st.button("Buscar Amazon", key="run_amazon"):
     st.session_state["_show_qty"] = False
     prog = st.progress(0.0, text="Buscando produtos na Amazon...")
 
-    amazon_pmin_v = amazon_price_min if amazon_price_min > 0 else None
-    amazon_pmax_v = amazon_price_max if amazon_price_max > 0 else None
-    if amazon_offer_label.startswith("Prime"):
-        amazon_offer_type = "prime"
-    elif amazon_offer_label.startswith("Terceiros"):
-        amazon_offer_type = "fbm"
-    else:
-        amazon_offer_type = "any"
+    amazon_pmin_v = None
+    amazon_pmax_v = None
+    amazon_offer_type = "any"
 
     def _update_amz(done: int, total: int, phase: str):
         frac = done / max(1, total)
@@ -451,11 +410,14 @@ if st.button("Buscar Amazon", key="run_amazon"):
             amazon_price_min=amazon_pmin_v,
             amazon_price_max=amazon_pmax_v,
             amazon_offer_type=amazon_offer_type,
-            min_monthly_sales_est=min_monthly_sales if min_monthly_sales > 0 else None,
+            min_monthly_sales_est=None,
             progress_cb=_update_amz,
         )
         prog.empty()
         am_df = pd.DataFrame(am_items)
+        # Dedup por ASIN para evitar itens repetidos
+        if "amazon_asin" in am_df.columns:
+            am_df = am_df.drop_duplicates(subset=["amazon_asin"], keep="first")
         st.session_state["_amazon_items_df"] = am_df.copy()
         st.session_state["_results_df"] = pd.DataFrame()  # limpa final
         st.session_state["_stage"] = "amazon"
