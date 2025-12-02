@@ -24,10 +24,10 @@ _title_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 
 # Limites padrão (podem ser sobrescritos por .env / st.secrets)
 # Objetivo: explorar o máximo de itens na Amazon antes de qualquer lapidação
-# Para chegar perto de 2000 itens: 100 páginas x 20 itens/página = 2000
-DEFAULT_DISCOVERY_MAX_PAGES = int(os.getenv("AMAZON_DISCOVERY_MAX_PAGES", 100))
+# Para chegar perto de 5000 itens: 150 páginas x 20 itens/página ≈ 3000; aumente via env se quiser mais.
+DEFAULT_DISCOVERY_MAX_PAGES = int(os.getenv("AMAZON_DISCOVERY_MAX_PAGES", 150))
 DEFAULT_DISCOVERY_PAGE_SIZE = int(os.getenv("AMAZON_DISCOVERY_PAGE_SIZE", 20))  # API aceita até ~20 por página
-DEFAULT_DISCOVERY_MAX_ITEMS = int(os.getenv("AMAZON_DISCOVERY_MAX_ITEMS", 2000))
+DEFAULT_DISCOVERY_MAX_ITEMS = int(os.getenv("AMAZON_DISCOVERY_MAX_ITEMS", 5000))
 
 # Cada tupla: (BSR, vendas_mensais_estimadas) - ancoras conservadoras por cluster
 CATEGORY_BSR_ANCHORS: Dict[str, List[Tuple[int, int]]] = {
@@ -568,7 +568,7 @@ def _discover_amazon_products(
     found: List[Dict[str, Any]] = []
 
     # total estimado para feedback ao usuário (páginas x page_size ou max_items)
-    estimated_total = min(max_items, max_pages * page_size)
+    estimated_total = max_items
     done = 0
 
     stats = {
@@ -609,7 +609,7 @@ def _discover_amazon_products(
                 price_info = _get_buybox_price_cached(asin)
                 if not price_info or price_info.get("price") is None:
                     stats["skipped_no_price"] += 1
-                    # Aceitamos mesmo sem preço
+                    # Modo debug: aceitar sem preço (price None)
                     price = None
                     currency = None
                     is_prime = False
@@ -624,6 +624,15 @@ def _discover_amazon_products(
                 rank = extracted.get("sales_rank")
                 cat_display = extracted.get("sales_rank_category")
                 est_monthly = _estimate_monthly_sales_from_bsr(rank, cat_display)
+                if est_monthly is None:
+                    est_monthly = 0  # não descarta se não houver BSR
+
+                # Só filtra por vendas se o usuário pediu > 0
+                if min_monthly_sales_est and min_monthly_sales_est > 0:
+                    if est_monthly < min_monthly_sales_est:
+                        stats["skipped_sales"] += 1
+                        continue
+
                 demand_bucket = _demand_bucket_from_sales(est_monthly)
                 cat_key = _normalize_category_key(cat_display)
 
