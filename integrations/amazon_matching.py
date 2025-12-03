@@ -1,10 +1,8 @@
 import math
+import os
 from typing import Optional, Dict, Any, List, Tuple
 
 import pandas as pd
-
-import os
-from functools import lru_cache
 
 from integrations.amazon_spapi import (
     search_by_gtin,
@@ -16,235 +14,233 @@ from integrations.amazon_spapi import (
 )
 from lib.ebay_search import search_items
 
-
 # Caches em memória para evitar chamadas repetidas
 _gtin_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 _asin_price_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 _title_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 
 # Limites padrão (podem ser sobrescritos por .env / st.secrets)
-# Objetivo: explorar o máximo de itens na Amazon antes de qualquer lapidação
-# Para chegar perto de 5000 itens: 150 páginas x 20 itens/página ≈ 3000; aumente via env se quiser mais.
 DEFAULT_DISCOVERY_MAX_PAGES = int(os.getenv("AMAZON_DISCOVERY_MAX_PAGES", 150))
 DEFAULT_DISCOVERY_PAGE_SIZE = int(os.getenv("AMAZON_DISCOVERY_PAGE_SIZE", 20))  # API aceita até ~20 por página
-DEFAULT_DISCOVERY_MAX_ITEMS = int(os.getenv("AMAZON_DISCOVERY_MAX_ITEMS", 5000))
+# IMPORTANTE: queremos no máximo 500 produtos distintos na tabela
+DEFAULT_DISCOVERY_MAX_ITEMS = int(os.getenv("AMAZON_DISCOVERY_MAX_ITEMS", 500))
 
 # Cada tupla: (BSR, vendas_mensais_estimadas) - ancoras conservadoras por cluster
 CATEGORY_BSR_ANCHORS: Dict[str, List[Tuple[int, int]]] = {
     # Home & Kitchen (principal)
     "home_kitchen": [
-        (5_000,    2_500),
-        (20_000,     900),
-        (50_000,     400),
-        (100_000,    180),
-        (300_000,     70),
-        (800_000,     20),
-        (2_000_000,   5),
+        (5_000, 2_500),
+        (20_000, 900),
+        (50_000, 400),
+        (100_000, 180),
+        (300_000, 70),
+        (800_000, 20),
+        (2_000_000, 5),
     ],
     # Categorias mais "quentes" (escala 1.2)
     "beauty_personal_care": [
-        (5_000,    3_000),
-        (20_000,   1_080),
-        (50_000,     480),
-        (100_000,    216),
-        (300_000,     84),
-        (800_000,     24),
-        (2_000_000,    6),
+        (5_000, 3_000),
+        (20_000, 1_080),
+        (50_000, 480),
+        (100_000, 216),
+        (300_000, 84),
+        (800_000, 24),
+        (2_000_000, 6),
     ],
     "grocery": [
-        (5_000,    3_000),
-        (20_000,   1_080),
-        (50_000,     480),
-        (100_000,    216),
-        (300_000,     84),
-        (800_000,     24),
-        (2_000_000,    6),
+        (5_000, 3_000),
+        (20_000, 1_080),
+        (50_000, 480),
+        (100_000, 216),
+        (300_000, 84),
+        (800_000, 24),
+        (2_000_000, 6),
     ],
     "clothing": [
-        (5_000,    3_000),
-        (20_000,   1_080),
-        (50_000,     480),
-        (100_000,    216),
-        (300_000,     84),
-        (800_000,     24),
-        (2_000_000,    6),
+        (5_000, 3_000),
+        (20_000, 1_080),
+        (50_000, 480),
+        (100_000, 216),
+        (300_000, 84),
+        (800_000, 24),
+        (2_000_000, 6),
     ],
     # Categorias "quentes" padrão (escala 1.0)
     "health_household": [
-        (5_000,    2_500),
-        (20_000,     900),
-        (50_000,     400),
-        (100_000,    180),
-        (300_000,     70),
-        (800_000,     20),
-        (2_000_000,    5),
+        (5_000, 2_500),
+        (20_000, 900),
+        (50_000, 400),
+        (100_000, 180),
+        (300_000, 70),
+        (800_000, 20),
+        (2_000_000, 5),
     ],
     "baby": [
-        (5_000,    2_500),
-        (20_000,     900),
-        (50_000,     400),
-        (100_000,    180),
-        (300_000,     70),
-        (800_000,     20),
-        (2_000_000,    5),
+        (5_000, 2_500),
+        (20_000, 900),
+        (50_000, 400),
+        (100_000, 180),
+        (300_000, 70),
+        (800_000, 20),
+        (2_000_000, 5),
     ],
     "shoes": [
-        (5_000,    2_500),
-        (20_000,     900),
-        (50_000,     400),
-        (100_000,    180),
-        (300_000,     70),
-        (800_000,     20),
-        (2_000_000,    5),
+        (5_000, 2_500),
+        (20_000, 900),
+        (50_000, 400),
+        (100_000, 180),
+        (300_000, 70),
+        (800_000, 20),
+        (2_000_000, 5),
     ],
     "video_games": [
-        (5_000,    2_500),
-        (20_000,     900),
-        (50_000,     400),
-        (100_000,    180),
-        (300_000,     70),
-        (800_000,     20),
-        (2_000_000,    5),
+        (5_000, 2_500),
+        (20_000, 900),
+        (50_000, 400),
+        (100_000, 180),
+        (300_000, 70),
+        (800_000, 20),
+        (2_000_000, 5),
     ],
     # Categorias "médias" (escala 0.7)
     "toys_games": [
-        (5_000,    1_750),
-        (20_000,     630),
-        (50_000,     280),
-        (100_000,    126),
-        (300_000,     49),
-        (800_000,     14),
-        (2_000_000,    4),
+        (5_000, 1_750),
+        (20_000, 630),
+        (50_000, 280),
+        (100_000, 126),
+        (300_000, 49),
+        (800_000, 14),
+        (2_000_000, 4),
     ],
     "sports_outdoors": [
-        (5_000,    1_750),
-        (20_000,     630),
-        (50_000,     280),
-        (100_000,    126),
-        (300_000,     49),
-        (800_000,     14),
-        (2_000_000,    4),
+        (5_000, 1_750),
+        (20_000, 630),
+        (50_000, 280),
+        (100_000, 126),
+        (300_000, 49),
+        (800_000, 14),
+        (2_000_000, 4),
     ],
     "pet_supplies": [
-        (5_000,    1_750),
-        (20_000,     630),
-        (50_000,     280),
-        (100_000,    126),
-        (300_000,     49),
-        (800_000,     14),
-        (2_000_000,    4),
+        (5_000, 1_750),
+        (20_000, 630),
+        (50_000, 280),
+        (100_000, 126),
+        (300_000, 49),
+        (800_000, 14),
+        (2_000_000, 4),
     ],
     "arts_crafts": [
-        (5_000,    1_750),
-        (20_000,     630),
-        (50_000,     280),
-        (100_000,    126),
-        (300_000,     49),
-        (800_000,     14),
-        (2_000_000,    4),
+        (5_000, 1_750),
+        (20_000, 630),
+        (50_000, 280),
+        (100_000, 126),
+        (300_000, 49),
+        (800_000, 14),
+        (2_000_000, 4),
     ],
     "garden_outdoors": [
-        (5_000,    1_750),
-        (20_000,     630),
-        (50_000,     280),
-        (100_000,    126),
-        (300_000,     49),
-        (800_000,     14),
-        (2_000_000,    4),
+        (5_000, 1_750),
+        (20_000, 630),
+        (50_000, 280),
+        (100_000, 126),
+        (300_000, 49),
+        (800_000, 14),
+        (2_000_000, 4),
     ],
     "office_products": [
-        (5_000,    1_750),
-        (20_000,     630),
-        (50_000,     280),
-        (100_000,    126),
-        (300_000,     49),
-        (800_000,     14),
-        (2_000_000,    4),
+        (5_000, 1_750),
+        (20_000, 630),
+        (50_000, 280),
+        (100_000, 126),
+        (300_000, 49),
+        (800_000, 14),
+        (2_000_000, 4),
     ],
     "tools_home_improvement": [
-        (5_000,    1_750),
-        (20_000,     630),
-        (50_000,     280),
-        (100_000,    126),
-        (300_000,     49),
-        (800_000,     14),
-        (2_000_000,    4),
+        (5_000, 1_750),
+        (20_000, 630),
+        (50_000, 280),
+        (100_000, 126),
+        (300_000, 49),
+        (800_000, 14),
+        (2_000_000, 4),
     ],
     "electronics": [
-        (5_000,    1_750),
-        (20_000,     630),
-        (50_000,     280),
-        (100_000,    126),
-        (300_000,     49),
-        (800_000,     14),
-        (2_000_000,    4),
+        (5_000, 1_750),
+        (20_000, 630),
+        (50_000, 280),
+        (100_000, 126),
+        (300_000, 49),
+        (800_000, 14),
+        (2_000_000, 4),
     ],
     # Categorias mais "frias" (escala 0.5)
     "automotive": [
-        (5_000,    1_250),
-        (20_000,     450),
-        (50_000,     200),
-        (100_000,     90),
-        (300_000,     35),
-        (800_000,     10),
-        (2_000_000,    2),
+        (5_000, 1_250),
+        (20_000, 450),
+        (50_000, 200),
+        (100_000, 90),
+        (300_000, 35),
+        (800_000, 10),
+        (2_000_000, 2),
     ],
     "industrial_scientific": [
-        (5_000,    1_250),
-        (20_000,     450),
-        (50_000,     200),
-        (100_000,     90),
-        (300_000,     35),
-        (800_000,     10),
-        (2_000_000,    2),
+        (5_000, 1_250),
+        (20_000, 450),
+        (50_000, 200),
+        (100_000, 90),
+        (300_000, 35),
+        (800_000, 10),
+        (2_000_000, 2),
     ],
     "musical_instruments": [
-        (5_000,    1_250),
-        (20_000,     450),
-        (50_000,     200),
-        (100_000,     90),
-        (300_000,     35),
-        (800_000,     10),
-        (2_000_000,    2),
+        (5_000, 1_250),
+        (20_000, 450),
+        (50_000, 200),
+        (100_000, 90),
+        (300_000, 35),
+        (800_000, 10),
+        (2_000_000, 2),
     ],
     "luggage_travel": [
-        (5_000,    1_250),
-        (20_000,     450),
-        (50_000,     200),
-        (100_000,     90),
-        (300_000,     35),
-        (800_000,     10),
-        (2_000_000,    2),
+        (5_000, 1_250),
+        (20_000, 450),
+        (50_000, 200),
+        (100_000, 90),
+        (300_000, 35),
+        (800_000, 10),
+        (2_000_000, 2),
     ],
     "jewelry": [
-        (5_000,    1_250),
-        (20_000,     450),
-        (50_000,     200),
-        (100_000,     90),
-        (300_000,     35),
-        (800_000,     10),
-        (2_000_000,    2),
+        (5_000, 1_250),
+        (20_000, 450),
+        (50_000, 200),
+        (100_000, 90),
+        (300_000, 35),
+        (800_000, 10),
+        (2_000_000, 2),
     ],
     # Books separado
     "books": [
-        (1_000,    8_000),
-        (5_000,    3_000),
-        (10_000,   1_000),
-        (50_000,     200),
-        (100_000,     80),
-        (300_000,     20),
-        (1_000_000,   5),
-        (2_000_000,   2),
+        (1_000, 8_000),
+        (5_000, 3_000),
+        (10_000, 1_000),
+        (50_000, 200),
+        (100_000, 80),
+        (300_000, 20),
+        (1_000_000, 5),
+        (2_000_000, 2),
     ],
     # Fallback genérico
     "default": [
-        (5_000,    1_750),
-        (20_000,     630),
-        (50_000,     280),
-        (100_000,    126),
-        (300_000,     49),
-        (800_000,     14),
-        (2_000_000,    4),
+        (5_000, 1_750),
+        (20_000, 630),
+        (50_000, 280),
+        (100_000, 126),
+        (300_000, 49),
+        (800_000, 14),
+        (2_000_000, 4),
     ],
 }
 
@@ -562,6 +558,8 @@ def _discover_amazon_products(
       - Manter APENAS itens com preço de buybox.
       - Garantir que len(found) seja o número de ASINs distintos (sem repetição).
       - Continuar paginando até atingir max_items mantidos ou acabar o catálogo.
+      - Tratar timeouts/erros de rede de search_catalog_items sem quebrar o app:
+        mantém os itens já coletados e registra em stats["api_errors"].
     """
     # Palavra-chave fallback genérica
     if not kw:
@@ -573,39 +571,56 @@ def _discover_amazon_products(
     offer_type_norm = (amazon_offer_type or "any").strip().lower()
 
     found: List[Dict[str, Any]] = []
-    seen_asins: set[str] = set()
+    seen_asins: set = set()
 
     # total estimado apenas para feedback visual da barra de progresso
     estimated_total = max_items
     done = 0
 
     stats: Dict[str, int] = {
-        "catalog_seen": 0,          # itens brutos do catálogo
-        "with_price": 0,            # itens com preço de buybox
-        "kept": 0,                  # itens finais mantidos (ASINs únicos)
-        "skipped_no_asin": 0,       # sem ASIN
-        "skipped_duplicate_asin": 0,# ASIN já visto
-        "skipped_no_price": 0,      # sem preço de buybox
-        "skipped_price_filter": 0,  # fora da faixa de preço
-        "skipped_offer": 0,         # não bate com tipo de oferta (Prime/FBA/FBM)
-        "skipped_sales": 0,         # abaixo de min_monthly_sales_est, se >0
-        "skipped_lang": 0,          # reservado (não usamos idioma por enquanto)
+        "catalog_seen": 0,            # itens brutos do catálogo
+        "with_price": 0,              # itens com preço de buybox
+        "kept": 0,                    # itens finais mantidos (ASINs únicos)
+        "skipped_no_asin": 0,         # sem ASIN
+        "skipped_duplicate_asin": 0,  # ASIN já visto
+        "skipped_no_price": 0,        # sem preço de buybox
+        "skipped_price_filter": 0,    # fora da faixa de preço
+        "skipped_offer": 0,           # não bate com tipo de oferta (Prime/FBA/FBM)
+        "skipped_sales": 0,           # abaixo de min_monthly_sales_est, se >0
+        "skipped_lang": 0,            # reservado (não usamos idioma por enquanto)
+        "api_errors": 0,              # erros de chamada à SP-API (ex: timeout)
     }
 
     def _run_search(keyword: str):
         nonlocal done
+
+        consecutive_errors = 0
 
         for page in range(1, max_pages + 1):
             # Se já atingimos o número desejado de itens distintos, paramos.
             if len(found) >= max_items:
                 break
 
-            items = search_catalog_items(
-                keywords=keyword,
-                page_size=page_size,
-                page=page,
-                included_data="summaries,identifiers,salesRanks",
-            )
+            # --- chamada SP-API com tratamento de erro ---
+            try:
+                items = search_catalog_items(
+                    keywords=keyword,
+                    page_size=page_size,
+                    page=page,
+                    included_data="summaries,identifiers,salesRanks",
+                )
+            except Exception:
+                stats["api_errors"] += 1
+                consecutive_errors += 1
+                # Se deu erro várias vezes seguidas, aborta esse keyword
+                if consecutive_errors >= 3:
+                    break
+                # Se foi só um erro pontual, tenta a próxima página
+                continue
+
+            # reset de erro se a chamada deu certo
+            consecutive_errors = 0
+
             if not items:
                 break
 
@@ -657,14 +672,13 @@ def _discover_amazon_products(
                         stats["skipped_offer"] += 1
                         continue
 
-                # --- BSR → vendas estimadas (apenas cálculo) ---
+                # --- BSR → vendas estimadas (apenas cálculo; filtro só se min_monthly_sales_est > 0) ---
                 rank = extracted.get("sales_rank")
                 cat_display = extracted.get("sales_rank_category")
                 est_monthly = _estimate_monthly_sales_from_bsr(rank, cat_display)
                 if est_monthly is None:
                     est_monthly = 0  # não descarta por falta de BSR
 
-                # Só filtra por vendas se min_monthly_sales_est > 0
                 if min_monthly_sales_est is not None and min_monthly_sales_est > 0:
                     if est_monthly < min_monthly_sales_est:
                         stats["skipped_sales"] += 1
@@ -710,7 +724,8 @@ def _discover_amazon_products(
     if len(found) < max_items and kw and kw.strip().lower() != "a":
         _run_search("a")
 
-    # IMPORTANTE: não ordenar por BSR. Mantemos a ordem da API.
+    # IMPORTANTE: não ordenar por BSR nem por vendas.
+    # Deixamos na ordem original da API (Featured/Relevance).
     return found, stats
 
 
