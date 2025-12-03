@@ -294,7 +294,12 @@ def _request_sp_api(
 # Catalog helpers
 # ---------------------------------------------------------------------------
 
-def _extract_catalog_item(item: Dict[str, Any], marketplace_id: str, fallback_gtin: Optional[str] = None) -> Dict[str, Any]:
+def _extract_catalog_item(
+    item: Dict[str, Any],
+    marketplace_id: str,
+    fallback_gtin: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Extrai campos principais de um item bruto da Catalog Items API."""
     asin = item.get("asin")
 
     summaries = item.get("summaries") or []
@@ -424,7 +429,11 @@ def search_by_gtin(gtin: str) -> Optional[Dict[str, Any]]:
     return _extract_catalog_item(item, cfg.marketplace_id, fallback_gtin=gtin_clean)
 
 
-def search_by_title(title: str, original_title: Optional[str] = None, page_size: int = 3) -> Optional[Dict[str, Any]]:
+def search_by_title(
+    title: str,
+    original_title: Optional[str] = None,
+    page_size: int = 3,
+) -> Optional[Dict[str, Any]]:
     """
     Fallback: busca item de catalogo por titulo/keywords.
     Retorna o item com melhor similaridade de titulo (se original_title fornecido).
@@ -468,26 +477,21 @@ def search_by_title(title: str, original_title: Optional[str] = None, page_size:
 
 def search_catalog_items(
     keywords: Optional[str] = None,
+    classification_ids: Optional[List[str]] = None,
     page_size: int = 20,
-    page: int = 1,
+    page_token: Optional[str] = None,
     included_data: str = "summaries,identifiers,salesRanks",
-    classification_ids: Optional[List[int]] = None,
-) -> List[Dict[str, Any]]:
+) -> Tuple[List[Dict[str, Any]], Optional[str]]:
     """
-    Busca itens no Catalog Items API por palavra-chave e/ou classificationIds (browse nodes).
+    Busca itens no Catalog Items API por palavra-chave e/ou classificationIds.
 
-    - `keywords`: termo de busca (pode ser None se você só quiser filtrar por classificationIds,
-      mas a API em geral performa melhor com alguma keyword, nem que seja uma letra).
-    - `classification_ids`: lista de browse node IDs Amazon (classificationIds) para restringir
-      a categoria/subcategoria.
-    - `page_size`: limite entre 1 e 20.
-    - `page`: numero da pagina.
+    Retorna (lista_de_itens_brutos, proximo_pageToken_ou_None).
     """
     cfg = _load_config_from_env()
 
-    # Se nao tiver keyword nem classificationIds, nao ha como buscar
     if not keywords and not classification_ids:
-        return []
+        # A API exige pelo menos um criterio de busca
+        return [], None
 
     page_size = max(1, min(int(page_size), 20))
 
@@ -495,15 +499,17 @@ def search_catalog_items(
         "marketplaceIds": cfg.marketplace_id,
         "includedData": included_data,
         "pageSize": page_size,
-        "page": max(1, int(page)),
     }
 
     if keywords:
         params["keywords"] = keywords[:200]
 
     if classification_ids:
-        # A API aceita lista de classificationIds; usamos string separada por virgula
-        params["classificationIds"] = ",".join(str(x) for x in classification_ids)
+        # classificationIds aceita lista, enviar como CSV
+        params["classificationIds"] = ",".join(str(cid) for cid in classification_ids if cid)
+
+    if page_token:
+        params["pageToken"] = page_token
 
     data = _request_sp_api(
         cfg=cfg,
@@ -512,7 +518,10 @@ def search_catalog_items(
         params=params,
     )
 
-    return data.get("items") or []
+    items = data.get("items") or []
+    pagination = data.get("pagination") or {}
+    next_token = pagination.get("nextToken")
+    return items, next_token
 
 
 # ---------------------------------------------------------------------------

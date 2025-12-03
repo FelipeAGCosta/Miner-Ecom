@@ -1,494 +1,494 @@
 categories:
   - name: "Eletrônicos"
     amazon_kw: "electronics"
-    category_id: 493964   # Electronics
+    category_id: 493964   
     children:
       - name: "Acessórios e Suprimentos"
         amazon_kw: "electronics accessories & supplies"
-        category_id: 281407          # Accessories & Supplies
+        category_id: 281407          
       - name: "Câmeras e Foto"
         amazon_kw: "camera & photo"
-        category_id: 502394                   # Camera & Photo
+        category_id: 502394                  
       - name: "Eletrônicos Automotivos"
         amazon_kw: "car & vehicle electronics"
-        category_id: 3248684011      # Car & Vehicle Electronics
+        category_id: 3248684011      
       - name: "Celulares e Acessórios"
         amazon_kw: "cell phones & accessories"
-        category_id: 2811119011       # Cell Phones & Accessories
+        category_id: 2811119011      
       - name: "Computadores e Acessórios"
         amazon_kw: "computers & accessories"
-        category_id: 541966        # Computers & Accessories
+        category_id: 541966        
       - name: "Garantias Eletrônicas"
         amazon_kw: "electronics warranties"
-        category_id: 2242348011        # Electronics Warranties
+        category_id: 2242348011   
       - name: "GPS e Localizadores"
         amazon_kw: "gps, finders & accessories"
-        category_id: 172526              # GPS, Finders & Accessories
+        category_id: 172526             
       - name: "Fones de Ouvido"
         amazon_kw: "headphones"
-        category_id: 172541                  # Headphones
+        category_id: 172541                  
       - name: "Áudio para Casa"
         amazon_kw: "home audio"
-        category_id: 667846011               # Home Audio
+        category_id: 667846011              
       - name: "Eletrônicos para Escritório"
         amazon_kw: "office electronics"
-        category_id: 172574      # Office Electronics
+        category_id: 172574     
       - name: "Áudio e Vídeo Portátil"
         amazon_kw: "portable audio & video"
-        category_id: 172623           # Portable Audio & Video
+        category_id: 172623          
       - name: "Segurança e Vigilância"
         amazon_kw: "security & surveillance"
-        category_id: 524136           # Security & Surveillance
+        category_id: 524136          
       - name: "Planos de Serviço"
         amazon_kw: "service plans"
-        category_id: 16285901              # Service Plans
+        category_id: 16285901              
       - name: "TV e Vídeo"
         amazon_kw: "television & video"
-        category_id: 1266092011             # Television & Video
+        category_id: 1266092011            
       - name: "Consoles e Acessórios de Games"
         amazon_kw: "video game consoles & accessories"
-        category_id: 7926841011 # Video Game Consoles & Accessories
+        category_id: 7926841011 
       - name: "Projetores de Vídeo"
         amazon_kw: "video projectors"
-        category_id: 300334              # Video Projectors
+        category_id: 300334              
       - name: "Tecnologia Vestível"
         amazon_kw: "wearable technology"
-        category_id: 10048700011         # Wearable Technology
+        category_id: 10048700011        
       - name: "e-Readers e Acessórios"
         amazon_kw: "ebook readers & accessories"
-        category_id: 2642125011       # eBook Readers & Accessories
+        category_id: 2642125011     
 
   - name: "Casa & Cozinha"
     amazon_kw: "home & kitchen"
-    category_id: 1063498   # Home & Kitchen
+    category_id: 1063498 
     children:
       - name: "Utensílios de Cozinha"
         amazon_kw: "kitchen utensils"
         category_id: 284507011
       - name: "Linha Infantil para Casa"
         amazon_kw: "kids' home store"
-        category_id: 3206325011     # Kids' Home Store
+        category_id: 3206325011     
       - name: "Cozinha & Jantar"
         amazon_kw: "kitchen & dining"
-        category_id: 284507                 # Kitchen & Dining
+        category_id: 284507                
       - name: "Roupa de Cama"
         amazon_kw: "bedding"
-        category_id: 1063252                   # Bedding
+        category_id: 1063252                 
       - name: "Banho"
         amazon_kw: "bath"
-        category_id: 1063236                           # Bath
+        category_id: 1063236                        
       - name: "Móveis"
         amazon_kw: "furniture"
-        category_id: 1063306                          # Furniture
+        category_id: 1063306                        
       - name: "Decoração para Casa"
         amazon_kw: "home decor"
-        category_id: 1063278             # Home Décor
+        category_id: 1063278          
       - name: "Quadros e Arte de Parede"
         amazon_kw: "wall art"
-        category_id: 3736081        # Wall Art
+        category_id: 3736081       
       - name: "Iluminação e Ventiladores de Teto"
         amazon_kw: "lighting & ceiling fans"
-        category_id: 16510975011 # Lighting & Ceiling Fans
+        category_id: 16510975011 
       - name: "Decoração Sazonal"
         amazon_kw: "seasonal decor"
-        category_id: 13679381              # Seasonal Décor
+        category_id: 13679381           
       - name: "Festas e Eventos"
         amazon_kw: "event & party supplies"
-        category_id: 901590                 # Event & Party Supplies
+        category_id: 901590               
       - name: "Climatização e Qualidade do Ar"
         amazon_kw: "heating, cooling & air quality"
-        category_id: 3206324011 # Heating, Cooling & Air Quality
+        category_id: 3206324011
       - name: "Ferros e Vaporizadores"
         amazon_kw: "irons & steamers"
-        category_id: 510240           # Irons & Steamers
+        category_id: 510240         
       - name: "Aspiradores e Limpeza de Piso"
         amazon_kw: "vacuums & floor care"
-        category_id: 510106    # Vacuums & Floor Care
+        category_id: 510106   
       - name: "Organização e Armazenamento"
         amazon_kw: "storage & organization"
-        category_id: 3610841     # Storage & Organization
+        category_id: 3610841    
       - name: "Produtos de Limpeza"
         amazon_kw: "cleaning supplies"
-        category_id: 10802561            # Cleaning Supplies
+        category_id: 10802561            
 
   - name: "Esporte & Lazer"
     amazon_kw: "sports & outdoors"
-    category_id: 3375301   # Sports & Outdoors
+    category_id: 3375301 
     children:
       - name: "Esportes ao Ar Livre"
         amazon_kw: "outdoor recreation"
-        category_id: 706814011          # Outdoor Recreation
+        category_id: 706814011         
       - name: "Esportes & Fitness"
         amazon_kw: "sports & fitness"
-        category_id: 10971181011          # Sports & Fitness
+        category_id: 10971181011         
       - name: "Loja de Torcedor"
         amazon_kw: "fan shop"
-        category_id: 3386071                # Fan Shop
+        category_id: 3386071              
       - name: "Náutica (Barcos & Vela)"
         amazon_kw: "boating & sailing"
-        category_id: 3421331         # Boating & Sailing
+        category_id: 3421331        
       - name: "Roupas Esportivas"
         amazon_kw: "sports clothing"
-        category_id: 11444071011           # Sports Clothing
+        category_id: 11444071011          
       - name: "Exercícios e Academia"
         amazon_kw: "exercise & fitness"
-        category_id: 3407731           # Exercise & Fitness
+        category_id: 3407731          
       - name: "Golfe"
         amazon_kw: "golf"
-        category_id: 3410851                           # Golf
+        category_id: 3410851                         
       - name: "Caça & Pesca"
         amazon_kw: "hunting & fishing"
-        category_id: 706813011                  # Hunting & Fishing
+        category_id: 706813011                 
       - name: "Esportes de Lazer & Jogos"
         amazon_kw: "leisure sports & game room"
-        category_id: 706808011     # Leisure Sports & Game Room
+        category_id: 706808011    
       - name: "Airsoft & Paintball"
         amazon_kw: "airsoft & paintball"
-        category_id: 706815011           # Airsoft & Paintball
+        category_id: 706815011         
       - name: "Corrida"
         amazon_kw: "running"
-        category_id: 3416071                         # Running
+        category_id: 3416071                      
       - name: "Natação"
         amazon_kw: "swimming"
-        category_id: 3418761                         # Swimming
+        category_id: 3418761                        
       - name: "Esportes de Equipe"
         amazon_kw: "team sports"
-        category_id: 706809011            # Team Sports
+        category_id: 706809011           
       - name: "Tênis & Esportes de Raquete"
         amazon_kw: "tennis & racquet sports"
-        category_id: 706816011   # Tennis & Racquet Sports
+        category_id: 706816011  
       - name: "Yoga"
         amazon_kw: "yoga"
-        category_id: 3422251                            # Yoga
+        category_id: 3422251                          
       - name: "Outros Esportes"
         amazon_kw: "other sports"
-        category_id: 706810011              # Other Sports
+        category_id: 706810011             
       - name: "Acessórios Esportivos"
         amazon_kw: "sports accessories"
-        category_id: 3394801          # Accessories
+        category_id: 3394801         
       - name: "Medicina Esportiva"
         amazon_kw: "sports medicine"
-        category_id: 3422351             # Sports Medicine
+        category_id: 3422351            
 
   - name: "Brinquedos"
     amazon_kw: "toys & games"
-    category_id: 165795011   # Toys & Games
+    category_id: 165795011   
     children:
       - name: "Artes & Artesanato"
         amazon_kw: "arts & crafts"
-        category_id: 166057011            # Arts & Crafts
+        category_id: 166057011           
       - name: "Brinquedos para Bebês e Primeira Infância"
         amazon_kw: "baby & toddler toys"
-        category_id: 196601011 # Baby & Toddler Toys
+        category_id: 196601011 
       - name: "Blocos e Brinquedos de Montar"
         amazon_kw: "building toys"
-        category_id: 166092011 # Building Toys
+        category_id: 166092011 
       - name: "Brinquedos Colecionáveis"
         amazon_kw: "collectible toys"
-        category_id: 19431275011    # Collectible Toys
+        category_id: 19431275011    
       - name: "Bonecas & Acessórios"
         amazon_kw: "dolls & accessories"
-        category_id: 166118011          # Dolls & Accessories
+        category_id: 166118011          
       - name: "Fantasias & Faz de Conta"
         amazon_kw: "dress up & pretend play"
-        category_id: 166316011      # Dress Up & Pretend Play
+        category_id: 166316011      
       - name: "Jogos & Acessórios"
         amazon_kw: "games & accessories"
-        category_id: 166220011            # Games & Accessories
+        category_id: 166220011           
       - name: "Hobbies"
         amazon_kw: "hobbies"
-        category_id: 276729011                       # Hobbies
+        category_id: 276729011                       
       - name: "Eletrônicos Infantis"
         amazon_kw: "kids' electronics"
-        category_id: 166164011          # Kids' Electronics
+        category_id: 166164011          
       - name: "Móveis e Decoração Infantil"
         amazon_kw: "kids' furniture, decor & storage"
-        category_id: 166210011   # Kids' Furniture, Décor & Storage
+        category_id: 166210011   
       - name: "Aprendizado & Educação"
         amazon_kw: "learning & education"
-        category_id: 166269011        # Learning & Education
+        category_id: 166269011        
       - name: "Brinquedos Engraçados & Novelties"
         amazon_kw: "novelty & gag toys"
-        category_id: 166027011 # Novelty & Gag Toys
+        category_id: 166027011 
       - name: "Artigos para Festa"
         amazon_kw: "party supplies"
-        category_id: 1266203011           # Party Supplies
+        category_id: 1266203011          
       - name: "Veículos de Brinquedo"
         amazon_kw: "play vehicles"
-        category_id: 166508011         # Play Vehicles
+        category_id: 166508011        
       - name: "Fantoches & Teatros de Fantoche"
         amazon_kw: "puppets & puppet theaters"
-        category_id: 166333011 # Puppets & Puppet Theaters
+        category_id: 166333011 
       - name: "Quebra-cabeças"
         amazon_kw: "puzzles"
-        category_id: 166359011                # Puzzles
+        category_id: 166359011              
       - name: "Brinquedos Esportivos & Ar Livre"
         amazon_kw: "sports & outdoor play"
-        category_id: 166420011 # Sports & Outdoor Play
+        category_id: 166420011 
       - name: "Pelúcias & Bichos de Pelúcia"
         amazon_kw: "stuffed animals & plush toys"
-        category_id: 166461011  # Stuffed Animals & Plush Toys
+        category_id: 166461011  
       - name: "Figuras de Ação & Playsets"
         amazon_kw: "toy figures & playsets"
-        category_id: 165993011    # Toy Figures & Playsets
+        category_id: 165993011    
       - name: "Triciclos, Patinetes & Carrinhos"
         amazon_kw: "tricycles, scooters & wagons"
-        category_id: 256994011 # Tricycles, Scooters & Wagons
+        category_id: 256994011 
 
   - name: "Roupas & Acessórios"
     amazon_kw: "clothing, shoes & jewelry"
-    category_id: 7141124011   # Clothing, Shoes & Jewelry
+    category_id: 7141124011   
     children:
       - name: "Moda Feminina"
         amazon_kw: "women"
-        category_id: 7147440011                # Women
+        category_id: 7147440011              
       - name: "Moda Masculina"
         amazon_kw: "men"
-        category_id: 7147441011               # Men
+        category_id: 7147441011            
       - name: "Moda Meninas"
         amazon_kw: "girls"
-        category_id: 7147442011                 # Girls
+        category_id: 7147442011                
       - name: "Moda Meninos"
         amazon_kw: "boys"
-        category_id: 7147443011                 # Boys
+        category_id: 7147443011               
       - name: "Moda Bebê"
         amazon_kw: "baby"
-        category_id: 7147444011                    # Baby
+        category_id: 7147444011                   
       - name: "Acessórios de Moda"
         amazon_kw: "women accessories"
-        category_id: 2474936011           # Women Accessories
+        category_id: 2474936011           
       - name: "Joias & Relógios"
         amazon_kw: "women jewelry"
-        category_id: 7192394011             # Women Jewelry
+        category_id: 7192394011            
 
   - name: "Beleza & Saúde"
     amazon_kw: "beauty & personal care"
-    category_id: 11055981   # Beauty & Personal Care (root Beauty)
+    category_id: 11055981   
     children:
       - name: "Maquiagem"
         amazon_kw: "makeup"
-        category_id: 11058281                      # Makeup
+        category_id: 11058281                      
       - name: "Cuidados com a Pele"
         amazon_kw: "skin care"
-        category_id: 11060451            # Skin Care
+        category_id: 11060451           
       - name: "Cuidados com o Cabelo"
         amazon_kw: "hair care"
-        category_id: 11057241          # Hair Care
+        category_id: 11057241          
       - name: "Perfumes & Fragrâncias"
         amazon_kw: "fragrance"
-        category_id: 11056591         # Fragrance
+        category_id: 11056591         
       - name: "Pés, Mãos & Unhas"
         amazon_kw: "foot, hand & nail care"
-        category_id: 17242866011 # Foot, Hand & Nail Care
+        category_id: 17242866011 
       - name: "Ferramentas & Acessórios de Beleza"
         amazon_kw: "beauty tools & accessories"
-        category_id: 11062741 # Tools & Accessories
+        category_id: 11062741 
       - name: "Barbear & Depilação"
         amazon_kw: "shave & hair removal"
-        category_id: 3778591             # Shave & Hair Removal
+        category_id: 3778591             
       - name: "Cuidados Pessoais"
         amazon_kw: "personal care"
-        category_id: 3777891             # Personal Care
+        category_id: 3777891             
       - name: "Higiene Bucal"
         amazon_kw: "oral care"
-        category_id: 10079992011 # Oral Care
+        category_id: 10079992011 
       - name: "Cuidados com Bebês & Crianças"
         amazon_kw: "baby & child care"
-        category_id: 10787321  # Baby & Child Care
+        category_id: 10787321  
       - name: "Cuidados de Saúde"
         amazon_kw: "health care"
-        category_id: 3760941               # Health Care
+        category_id: 3760941              
       - name: "Itens para Casa (Saúde & Limpeza)"
         amazon_kw: "household supplies"
-        category_id: 15342811 # Household Supplies
+        category_id: 15342811 
       - name: "Suprimentos & Equipamentos Médicos"
         amazon_kw: "medical supplies & equipment"
-        category_id: 3775161 # Medical Supplies & Equipment
+        category_id: 3775161 
       - name: "Bem-estar Sexual"
         amazon_kw: "sexual wellness"
-        category_id: 3777371                # Sexual Wellness
+        category_id: 3777371               
       - name: "Nutrição Esportiva"
         amazon_kw: "sports nutrition"
-        category_id: 6973663011           # Sports Nutrition
+        category_id: 6973663011          
       - name: "Papelaria & Embalagens para Presente"
         amazon_kw: "stationery & gift wrapping"
-        category_id: 723418011 # Stationery & Gift Wrapping
+        category_id: 723418011 
       - name: "Cuidados com a Visão"
         amazon_kw: "vision care"
-        category_id: 10079994011        # Vision Care
+        category_id: 10079994011        
       - name: "Vitaminas & Suplementos"
         amazon_kw: "vitamins & dietary supplements"
-        category_id: 3764441 # Vitamins & Dietary Supplements
+        category_id: 3764441 
       - name: "Bem-estar & Relaxamento"
         amazon_kw: "wellness & relaxation"
-        category_id: 10079996011 # Wellness & Relaxation
+        category_id: 10079996011 
 
   - name: "Automotivo"
     amazon_kw: "automotive"
-    category_id: 15690151   # Automotive
+    category_id: 15690151   
     children:
       - name: "Cuidados com o Carro"
         amazon_kw: "car care"
-        category_id: 15718271           # Car Care
+        category_id: 15718271          
       - name: "Eletrônicos & Acessórios para Carro"
         amazon_kw: "car electronics & accessories"
-        category_id: 2230642011 # Car Electronics & Accessories
+        category_id: 2230642011 
       - name: "Acessórios Externos"
         amazon_kw: "exterior accessories"
-        category_id: 15857511            # Exterior Accessories
+        category_id: 15857511           
       - name: "Acessórios Internos"
         amazon_kw: "interior accessories"
-        category_id: 15857501            # Interior Accessories
+        category_id: 15857501          
       - name: "Iluminação Automotiva"
         amazon_kw: "lights & lighting accessories"
-        category_id: 15736321          # Lights & Lighting Accessories
+        category_id: 15736321         
       - name: "Motos & Powersports"
         amazon_kw: "motorcycle & powersports"
-        category_id: 346333011 # Motorcycle & Powersports
+        category_id: 346333011 
       - name: "Óleos & Fluidos"
         amazon_kw: "oils & fluids"
-        category_id: 15718791                # Oils & Fluids
+        category_id: 15718791                
       - name: "Tintas & Pintura"
         amazon_kw: "paint & paint supplies"
-        category_id: 13591416011 # Paint & Paint Supplies
+        category_id: 13591416011 
       - name: "Performance & Acessórios"
         amazon_kw: "performance parts & accessories"
-        category_id: 15710351       # Performance Parts & Accessories
+        category_id: 15710351      
       - name: "Peças de Reposição"
         amazon_kw: "replacement parts"
-        category_id: 15719731             # Replacement Parts
+        category_id: 15719731            
       - name: "Peças para Motorhomes & Trailers"
         amazon_kw: "rv parts & accessories"
-        category_id: 2258019011 # RV Parts & Accessories
+        category_id: 2258019011
       - name: "Pneus & Rodas"
         amazon_kw: "tires & wheels"
-        category_id: 15706571                  # Tires & Wheels
+        category_id: 15706571                  
       - name: "Ferramentas & Equipamentos"
         amazon_kw: "automotive tools & equipment"
-        category_id: 15706941 # Tools & Equipment
+        category_id: 15706941 
       - name: "Merchandising Automotivo"
         amazon_kw: "automotive enthusiast merchandise"
-        category_id: 2204830011     # Automotive Enthusiast Merchandise
+        category_id: 2204830011     
       - name: "Veículos Pesados & Comerciais"
         amazon_kw: "heavy duty & commercial"
-        category_id: 15682003011 # Heavy Duty & Commercial
+        category_id: 15682003011 
 
   - name: "Pet Shop"
     amazon_kw: "pet supplies"
-    category_id: 2619534011   # Pet Supplies
+    category_id: 2619534011   
     children:
       - name: "Cachorros"
         amazon_kw: "dogs"
-        category_id: 2975312011                    # Dogs
+        category_id: 2975312011                    
       - name: "Gatos"
         amazon_kw: "cats"
-        category_id: 2975241011                        # Cats
+        category_id: 2975241011                        
       - name: "Peixes & Aquáticos"
         amazon_kw: "fish & aquatic pets"
-        category_id: 2975446011           # Fish & Aquatic Pets
+        category_id: 2975446011           
       - name: "Pássaros"
         amazon_kw: "birds"
-        category_id: 2975221011                     # Birds
+        category_id: 2975221011                     
       - name: "Cavalos"
         amazon_kw: "horses"
-        category_id: 2975481011                      # Horses
+        category_id: 2975481011                     
       - name: "Répteis & Anfíbios"
         amazon_kw: "reptiles & amphibians"
-        category_id: 2975504011           # Reptiles & Amphibians
+        category_id: 2975504011           
       - name: "Pequenos Animais"
         amazon_kw: "small animals"
-        category_id: 2975520011             # Small Animals
+        category_id: 2975520011             
 
   - name: "Ferramentas"
     amazon_kw: "tools & home improvement"
-    category_id: 468240   # Tools & Home Improvement
+    category_id: 468240   
     children:
       - name: "Eletrodomésticos (Ferramentas)"
         amazon_kw: "appliances"
-        category_id: 13397451 # Appliances
+        category_id: 13397451 
       - name: "Materiais de Construção"
         amazon_kw: "building supplies"
-        category_id: 551240          # Building Supplies
+        category_id: 551240          
       - name: "Elétrica"
         amazon_kw: "electrical"
-        category_id: 495266                         # Electrical
+        category_id: 495266                         
       - name: "Ferragens"
         amazon_kw: "hardware"
-        category_id: 511228                        # Hardware
+        category_id: 511228                        
       - name: "Louças & Metais para Cozinha/Banho"
         amazon_kw: "kitchen & bath fixtures"
-        category_id: 3754161 # Kitchen & Bath Fixtures
+        category_id: 3754161 
       - name: "Lâmpadas"
         amazon_kw: "light bulbs"
-        category_id: 322525011 # Light Bulbs
+        category_id: 322525011 
       - name: "Iluminação & Ventiladores"
         amazon_kw: "lighting & ceiling fans"
-        category_id: 495224 # Lighting & Ceiling Fans
+        category_id: 495224 
       - name: "Medição & Layout"
         amazon_kw: "measuring & layout tools"
-        category_id: 553244 # Measuring & Layout Tools
+        category_id: 553244 
       - name: "Tintas & Acabamentos"
         amazon_kw: "paint, wall treatments & supplies"
-        category_id: 228899 # Paint, Wall Treatments & Supplies
+        category_id: 228899 
       - name: "Ferramentas Elétricas & Manuais"
         amazon_kw: "power & hand tools"
-        category_id: 328182011 # Power & Hand Tools
+        category_id: 328182011 
       - name: "Hidráulica Bruta"
         amazon_kw: "rough plumbing"
-        category_id: 13749581 # Rough Plumbing
+        category_id: 13749581 
       - name: "Segurança & Proteção"
         amazon_kw: "safety & security"
-        category_id: 3180231 # Safety & Security
+        category_id: 3180231
       - name: "Armazenamento & Organização"
         amazon_kw: "storage & home organization"
-        category_id: 13400631 # Storage & Home Organization
+        category_id: 13400631 
       - name: "Solda & Brasagem"
         amazon_kw: "welding & soldering"
-        category_id: 8106310011 # Welding & Soldering
+        category_id: 8106310011 
 
   - name: "Jardinagem"
     amazon_kw: "patio, lawn & garden"
-    category_id: 3238155011   # Patio, Lawn & Garden
+    category_id: 3238155011  
     children:
       - name: "Jardinagem & Gramado"
         amazon_kw: "gardening & lawn care"
-        category_id: 3610851            # Gardening & Lawn Care
+        category_id: 3610851           
       - name: "Decoração Externa"
         amazon_kw: "outdoor decor"
-        category_id: 553788                # Outdoor Décor
+        category_id: 553788                
       - name: "Móveis para Área Externa"
         amazon_kw: "patio furniture & accessories"
-        category_id: 553824         # Patio Furniture & Accessories
+        category_id: 553824         
       - name: "Churrasqueiras & Cozinha Externa"
         amazon_kw: "grills & outdoor cooking"
-        category_id: 553760 # Grills & Outdoor Cooking
+        category_id: 553760 
       - name: "Iluminação Externa"
         amazon_kw: "outdoor lighting"
-        category_id: 495236               # Outdoor Lighting
+        category_id: 495236               
       - name: "Ferramentas Elétricas Externas"
         amazon_kw: "outdoor power tools"
-        category_id: 551242   # Outdoor Power Tools
+        category_id: 551242   
       - name: "Piscinas, Ofurôs & Acessórios"
         amazon_kw: "pools, hot tubs & supplies"
-        category_id: 1272941011 # Pools, Hot Tubs & Supplies
+        category_id: 1272941011 
       - name: "Geradores & Energia Portátil"
         amazon_kw: "generators & portable power"
-        category_id: 552808     # Generators & Portable Power
+        category_id: 552808    
       - name: "Controle de Pragas"
         amazon_kw: "pest control"
-        category_id: 553844               # Pest Control
+        category_id: 553844               
       - name: "Remoção de Neve"
         amazon_kw: "snow removal"
-        category_id: 3043471                 # Snow Removal
+        category_id: 3043471                 
       - name: "Aquecimento & Resfriamento Externo"
         amazon_kw: "outdoor heating & cooling"
-        category_id: 13638732011 # Outdoor Heating & Cooling
+        category_id: 13638732011 
       - name: "Armazenamento Externo"
         amazon_kw: "outdoor storage"
-        category_id: 13400641          # Outdoor Storage
+        category_id: 13400641          
       - name: "Fazenda & Pecuária"
         amazon_kw: "farm & ranch"
-        category_id: 4619352011 # Farm & Ranch
+        category_id: 4619352011
 
 tasks:
   - name: "Pads eletrônicos"
