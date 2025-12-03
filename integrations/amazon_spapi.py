@@ -467,27 +467,43 @@ def search_by_title(title: str, original_title: Optional[str] = None, page_size:
 
 
 def search_catalog_items(
-    keywords: str,
+    keywords: Optional[str] = None,
     page_size: int = 20,
     page: int = 1,
     included_data: str = "summaries,identifiers,salesRanks",
+    classification_ids: Optional[List[int]] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Busca itens no Catalog Items API por palavra-chave, retornando a lista bruta de itens.
-    Útil para descoberta Amazon-first. Limita page_size entre 1 e 20.
+    Busca itens no Catalog Items API por palavra-chave e/ou classificationIds (browse nodes).
+
+    - `keywords`: termo de busca (pode ser None se você só quiser filtrar por classificationIds,
+      mas a API em geral performa melhor com alguma keyword, nem que seja uma letra).
+    - `classification_ids`: lista de browse node IDs Amazon (classificationIds) para restringir
+      a categoria/subcategoria.
+    - `page_size`: limite entre 1 e 20.
+    - `page`: numero da pagina.
     """
     cfg = _load_config_from_env()
-    if not keywords:
+
+    # Se nao tiver keyword nem classificationIds, nao ha como buscar
+    if not keywords and not classification_ids:
         return []
 
     page_size = max(1, min(int(page_size), 20))
-    params = {
+
+    params: Dict[str, Any] = {
         "marketplaceIds": cfg.marketplace_id,
-        "keywords": keywords[:200],
         "includedData": included_data,
         "pageSize": page_size,
         "page": max(1, int(page)),
     }
+
+    if keywords:
+        params["keywords"] = keywords[:200]
+
+    if classification_ids:
+        # A API aceita lista de classificationIds; usamos string separada por virgula
+        params["classificationIds"] = ",".join(str(x) for x in classification_ids)
 
     data = _request_sp_api(
         cfg=cfg,

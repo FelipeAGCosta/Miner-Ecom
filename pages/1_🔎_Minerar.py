@@ -140,6 +140,14 @@ selected_child = (
     else None
 )
 
+# ID da categoria Amazon (browse node) escolhido na UI
+browse_node_id = None
+if selected_child and selected_child.get("category_id"):
+    browse_node_id = int(selected_child["category_id"])
+elif selected_parent and selected_parent.get("category_id"):
+    browse_node_id = int(selected_parent["category_id"])
+
+
 kw_parts: list[str] = []
 if user_kw:
     kw_parts.append(user_kw)
@@ -248,7 +256,10 @@ if st.button("Buscar Amazon", key="run_amazon"):
             amazon_price_max=None,
             amazon_offer_type="any",
             min_monthly_sales_est=0,  # BSR NÃO influencia nada
-            max_items=MAX_RESULTS,
+            browse_node_id=browse_node_id,
+            max_pages=150,                 # pode ajustar se quiser
+            page_size=20,
+            max_items=500,
             progress_cb=_update_amz,
         )
         prog.empty()
@@ -264,7 +275,9 @@ if st.button("Buscar Amazon", key="run_amazon"):
                 f"Nenhum produto encontrado na Amazon. "
                 f"Catálogo visto: {stats.get('catalog_seen')}, "
                 f"com preço: {stats.get('with_price')}, "
-                f"sem preço: {stats.get('without_price')}, "
+                f"sem preço: {stats.get('skipped_no_price')}, "
+                f"mantidos: {stats.get('kept')}, "
+                f"duplicados: {stats.get('skipped_duplicate_asin')}, "
                 f"erros de API: {stats.get('api_errors')}."
             )
         else:
@@ -272,11 +285,13 @@ if st.button("Buscar Amazon", key="run_amazon"):
                 f"{len(am_df)} produtos distintos encontrados na Amazon "
                 f"(catálogo visto: {stats.get('catalog_seen')}, "
                 f"com preço: {stats.get('with_price')}, "
-                f"sem preço: {stats.get('without_price')}, "
+                f"sem preço: {stats.get('skipped_no_price')}, "
                 f"mantidos: {stats.get('kept')}, "
+                f"duplicados ignorados: {stats.get('skipped_duplicate_asin')}, "
                 f"erros de API: {stats.get('api_errors')}). "
                 "A tabela abaixo mostra os produtos encontrados."
             )
+
 
     except Exception as e:
         prog.empty()
