@@ -63,8 +63,11 @@ categories:
     category_id: 1063498 
     children:
       - name: "Utensílios de Cozinha"
-        amazon_kw: "kitchen utensils"
-        category_id: 284507011
+        amazon_kw: "kitchen utensils gadgets"
+        category_id: 284507011   # opcional por enquanto, bom pra futuro browse node
+      - name: "Decoração para casa"
+        amazon_kw: "home decor"
+        category_id: 1063278
       - name: "Linha Infantil para Casa"
         amazon_kw: "kids' home store"
         category_id: 3206325011     
