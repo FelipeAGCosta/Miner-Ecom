@@ -1,40 +1,48 @@
 import math
-import os
-import urllib.parse as _url
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
 from integrations.amazon_matching import discover_amazon_products
-from lib.tasks import flatten_categories, load_categories_tree
-from lib.ebay_api import get_item_detail  # usado apenas no enriquecimento opcional eBay
+from lib.tasks import load_categories_tree
 
-# Carrega CSS global
+# -------------------------------------------------------
+# CSS global
+# -------------------------------------------------------
 CSS_PATH = Path(__file__).resolve().parent.parent / "assets" / "style.css"
 if CSS_PATH.exists():
     st.markdown(f"<style>{CSS_PATH.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
 
 st.markdown("<div class='page-shell'>", unsafe_allow_html=True)
 
-# Cabeçalho da página
+# -------------------------------------------------------
+# Cabeçalho
+# -------------------------------------------------------
 st.markdown(
     """
     <div class="page-header">
       <div class="page-header-tag"></div>
-      <h1 class="page-header-title">Minerar produtos</h1>
+      <h1 class="page-header-title">Minerar produtos (Amazon)</h1>
       <p class="page-header-subtitle">
-        Defina filtros Amazon (categoria/palavra-chave) e veja até 500 produtos aleatórios com preço de buybox.
+        Selecione categoria/subcategoria e busque até 500 produtos da Amazon
+        (Título, preço, ASIN e link da oferta).
       </p>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
-# Estado visual do stepper
+# -------------------------------------------------------
+# Stepper visual
+# -------------------------------------------------------
+if "_stage" not in st.session_state:
+    st.session_state["_stage"] = "filters"
+
 stage = st.session_state.get("_stage", "filters")
 step2_active = stage in ("running", "results")
 step3_active = stage == "results"
+
 st.markdown(
     f"""
     <div class="flow-steps">
@@ -42,21 +50,21 @@ st.markdown(
         <div class="flow-step-index">1</div>
         <div class="flow-step-text">
           <div class="flow-step-title">Filtros</div>
-          <div class="flow-step-subtitle">Defina categoria e palavra-chave</div>
+          <div class="flow-step-subtitle">Escolha categoria e palavra-chave</div>
         </div>
       </div>
       <div class="flow-step {'flow-step--active' if step2_active else ''}">
         <div class="flow-step-index">2</div>
         <div class="flow-step-text">
           <div class="flow-step-title">Minerar</div>
-          <div class="flow-step-subtitle">Buscamos na Amazon</div>
+          <div class="flow-step-subtitle">Buscamos produtos na Amazon</div>
         </div>
       </div>
       <div class="flow-step {'flow-step--active' if step3_active else ''}">
         <div class="flow-step-index">3</div>
         <div class="flow-step-text">
           <div class="flow-step-title">Resultados</div>
-          <div class="flow-step-subtitle">Analise os produtos</div>
+          <div class="flow-step-subtitle">Analise os produtos encontrados</div>
         </div>
       </div>
     </div>
@@ -64,12 +72,13 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Carrega árvore de categorias
+# -------------------------------------------------------
+# Carrega árvore de categorias (YAML) com amazon_kw
+# -------------------------------------------------------
 tree = load_categories_tree()
-flat = flatten_categories(tree)  # ainda não usamos diretamente, mas mantemos por compatibilidade
 
-# Helpers de categoria/palavra-chave
-def _find_node_by_name(nodes, name: str):
+
+def _find_node_by_name(nodes: list[dict], name: str) -> dict | None:
     for n in nodes:
         if n.get("name") == name:
             return n
@@ -79,13 +88,21 @@ def _find_node_by_name(nodes, name: str):
     return None
 
 
-def _kw_for_node(node) -> str:
+def _kw_for_node(node: dict | None) -> str:
+    """
+    Retorna a keyword em inglês para a Amazon:
+      - amazon_kw (se existir)
+      - senão, o próprio name.
+    """
     if not node:
         return ""
-    return (node.get("amazon_kw") or node.get("name") or "").strip()
+    kw_val = (node.get("amazon_kw") or node.get("name") or "").strip()
+    return kw_val or ""
 
 
+# -------------------------------------------------------
 # Card de filtros Amazon
+# -------------------------------------------------------
 st.markdown(
     """
     <div class='card'>
@@ -94,14 +111,14 @@ st.markdown(
         <div>Filtros Amazon</div>
       </div>
       <p class='card-caption'>
-        Escolha categoria/subcategoria em PT (usamos <code>amazon_kw</code> em EN para buscar). 
-        Palavra-chave é opcional.
+        Escolha categoria/subcategoria em PT (usamos o campo <code>amazon_kw</code> em EN para buscar na Amazon).
+        Você também pode digitar uma palavra-chave livre para refinar.
       </p>
     """,
     unsafe_allow_html=True,
 )
 
-user_kw = st.text_input("Palavra-chave (opcional)", value="").strip()
+user_kw = st.text_input("Palavra-chave adicional (opcional)", value="").strip()
 
 col_cat1, col_cat2 = st.columns([1.6, 1.6])
 with col_cat1:
@@ -114,7 +131,7 @@ with col_cat2:
         for ch in parent_node.get("children", []) or []:
             if ch.get("name"):
                 child_names.append(ch["name"])
-    sel_child = st.selectbox("Subcategoria (Opcional)", child_names, index=0)
+    sel_child = st.selectbox("Subcategoria (opcional)", child_names, index=0)
 
 selected_parent = parent_node if sel_root != "Todas as categorias" else None
 selected_child = (
@@ -123,7 +140,7 @@ selected_child = (
     else None
 )
 
-kw_parts = []
+kw_parts: list[str] = []
 if user_kw:
     kw_parts.append(user_kw)
 if selected_child:
@@ -131,133 +148,54 @@ if selected_child:
 elif selected_parent:
     kw_parts.append(_kw_for_node(selected_parent))
 
-kw = " ".join(p for p in kw_parts if p).strip() or "a"
+kw = " ".join(p for p in kw_parts if p).strip()
+if not kw:
+    kw = "a"  # fallback super amplo
 st.session_state["_kw"] = kw
 
 st.markdown("</div>", unsafe_allow_html=True)
 st.caption(
-    "A busca retorna no máximo 500 produtos distintos (ASINs únicos com preço de buybox). "
-    "Quanto mais ampla a categoria/keyword, mais variados serão os resultados."
+    "A busca usa apenas a API da Amazon (SP-API). "
+    "Neste momento não há filtro de demanda/BSR: o objetivo é listar produtos 'brutos'."
 )
 
-# Helpers de enriquecimento e tabela (mantidos para futuro uso com eBay)
-def _dedup(df: pd.DataFrame) -> pd.DataFrame:
-    if "item_id" not in df.columns:
-        return df
-    return df.dropna(subset=["item_id"]).drop_duplicates(subset=["item_id"], keep="first").copy()
-
-
-def _apply_condition_filter(df: pd.DataFrame, cond_pt: str) -> pd.DataFrame:
-    if "condition" not in df.columns:
-        return df
-    cond = df["condition"].astype(str).str.lower()
-    if cond_pt == "Novo":
-        mask = cond.str.contains("new")
-    elif cond_pt == "Usado":
-        mask = cond.str.contains("used")
-    elif cond_pt == "Recondicionado":
-        mask = cond.str.contains("refurb")
-    else:
-        mask = cond.str.contains("new") | cond.str.contains("used")
-    return df[mask].copy()
-
-
-def _apply_qty_filter(df: pd.DataFrame, qmin: int | None, include_unknown: bool = False) -> pd.DataFrame:
-    if qmin is None:
-        return df
-    if "available_qty" not in df.columns:
-        return df.iloc[0:0].copy()
-    qty = pd.to_numeric(df["available_qty"], errors="coerce")
-    mask = qty.notna() & (qty >= qmin)
-    if include_unknown:
-        mask = mask | qty.isna()
-    return df[mask].copy()
-
-
-def _enrich_and_filter_qty(df: pd.DataFrame, qmin: int, cond_pt: str) -> tuple[pd.DataFrame, int, int, int]:
+# -------------------------------------------------------
+# Helper para exibir tabela
+# -------------------------------------------------------
+def _render_table(df: pd.DataFrame) -> None:
     """
-    Enriquecimento tardio: busca detalhes no eBay para preencher estoque e filtra por quantidade mínima.
-    Só funciona se o DataFrame tiver coluna item_id (resultado de match com eBay).
+    Exibe somente:
+      - amazon_title
+      - amazon_price (como número formatado)
+      - amazon_asin
+      - amazon_product_url (como link)
     """
-    if qmin <= 0 or df.empty:
-        return df.copy(), 0, 0, 0
-    if "item_id" not in df.columns:
-        # Resultado apenas de Amazon, nada a enriquecer
-        return df.copy(), 0, 0, 0
+    if df.empty:
+        st.info("Nenhum produto para exibir.")
+        return
 
-    base = df.copy()
-    no_qty_mask = pd.isna(base["available_qty"]) if "available_qty" in base.columns else pd.Series(True, index=base.index)
-    ids = base.loc[no_qty_mask, "item_id"].dropna().astype(str).unique().tolist()
-    to_enrich = ids[: int(os.getenv("MAX_ENRICH", 500))]
-    enr = []
-    for iid in to_enrich:
-        try:
-            d = get_item_detail(iid)
-        except Exception as e:
-            d = {
-                "item_id": iid,
-                "available_qty": None,
-                "qty_flag": f"ERROR:{type(e).__name__}",
-                "brand": None,
-                "mpn": None,
-                "gtin": None,
-                "category_id": None,
-            }
-        enr.append(d)
-    if enr:
-        df_enr = _dedup(pd.DataFrame(enr))
-        if not df_enr.empty and "item_id" in df_enr.columns:
-            cols = [c for c in ["item_id", "available_qty", "qty_flag", "brand", "mpn", "gtin", "category_id"] if c in df_enr.columns]
-            df = df.merge(df_enr[cols], on="item_id", how="left", suffixes=("", "_enr"))
-            for col in ["available_qty", "qty_flag", "brand", "mpn", "gtin", "category_id"]:
-                alt = f"{col}_enr"
-                if alt in df.columns:
-                    df[col] = df[col].where(df[col].notna(), df[alt])
-            df = df.drop(columns=[c for c in df.columns if c.endswith("_enr")])
-    view = _apply_condition_filter(df, cond_pt)
-    view = _apply_qty_filter(view, qmin, include_unknown=True)
-    qty_non_null = pd.to_numeric(df.get("available_qty"), errors="coerce").notna().sum()
-    return view, len(enr), len(to_enrich), qty_non_null
+    df = df.copy()
 
-
-def _make_search_url(row) -> str | None:
-    q = None
-    for key in ["gtin", "UPC/EAN/ISBN", "upc", "ean"]:
-        if key in row and pd.notna(row[key]):
-            q = str(row[key]).strip()
-            break
-    if not q and "title" in row:
-        q = str(row["title"]).strip()
-    return f"https://www.ebay.com/sch/i.html?_nkw={_url.quote_plus(q)}" if q else None
-
-
-def _render_table(df: pd.DataFrame):
+    # Normaliza preço numérico
     if "amazon_price" in df.columns:
         df["amazon_price_num"] = pd.to_numeric(df["amazon_price"], errors="coerce")
-    if "amazon_sales_rank" in df.columns:
-        df["amazon_sales_rank"] = pd.to_numeric(df["amazon_sales_rank"], errors="coerce").round(0)
-    if "amazon_is_prime" in df.columns:
-        df["prime_icon"] = df["amazon_is_prime"].apply(lambda x: "✅" if bool(x) else "❌")
     else:
-        df["prime_icon"] = "❌"
+        df["amazon_price_num"] = None
 
     show_cols = [
-        "amazon_price_num",
-        "amazon_est_monthly_sales",
-        "amazon_sales_rank",
-        "amazon_sales_rank_category",
-        "amazon_demand_bucket",
-        "amazon_brand",
         "amazon_title",
-        "amazon_product_url",
+        "amazon_price_num",
         "amazon_asin",
-        "prime_icon",
+        "amazon_product_url",
     ]
     exist = [c for c in show_cols if c in df.columns]
     if not exist:
+        st.warning("Os dados retornados não possuem as colunas esperadas da Amazon.")
         return
 
     display_df = df[exist].copy().fillna("")
+
+    # Estilo: título à esquerda, resto centralizado
     left_cols = [c for c in ["amazon_title"] if c in display_df.columns]
     styler = (
         display_df.style.set_properties(**{"text-align": "center"})
@@ -277,29 +215,28 @@ def _render_table(df: pd.DataFrame):
         hide_index=True,
         height=500,
         column_config={
-            "amazon_price_num": st.column_config.NumberColumn("Preço (Amazon)", format="$%.2f"),
-            "amazon_est_monthly_sales": st.column_config.NumberColumn("Vendas aproximadas (último mês)", format="%d"),
-            "amazon_sales_rank": st.column_config.NumberColumn("BSR Amazon", format="%d"),
-            "amazon_sales_rank_category": "Categoria BSR (Amazon)",
-            "amazon_demand_bucket": "Demanda (BSR)",
-            "amazon_brand": "Marca (Amazon)",
             "amazon_title": "Título (Amazon)",
-            "amazon_product_url": st.column_config.LinkColumn("Produto (Amazon)", display_text="Abrir"),
+            "amazon_price_num": st.column_config.NumberColumn("Preço (Amazon)", format="$%.2f"),
             "amazon_asin": "ASIN",
-            "prime_icon": "Prime Amazon",
+            "amazon_product_url": st.column_config.LinkColumn("Oferta na Amazon", display_text="Abrir"),
         },
     )
 
 
-# Botão principal: Buscar Amazon
+# -------------------------------------------------------
+# Botão principal: Buscar produtos na Amazon
+# -------------------------------------------------------
 st.markdown("### 🚀 Passo 1: Buscar produtos na Amazon")
+
+MAX_RESULTS = 500  # quantidade máxima de itens distintos na tabela
+
 if st.button("Buscar Amazon", key="run_amazon"):
     st.session_state["_stage"] = "running"
     st.session_state["_page_num"] = 1
-    st.session_state["_show_qty"] = False
+
     prog = st.progress(0.0, text="Buscando produtos na Amazon...")
 
-    def _update_amz(done: int, total: int, phase: str):
+    def _update_amz(done: int, total: int, phase: str) -> None:
         frac = done / max(1, total)
         txt = f"Buscando produtos na Amazon... {done}/{total}" if phase == "amazon" else "Processando..."
         prog.progress(frac, text=txt)
@@ -307,74 +244,80 @@ if st.button("Buscar Amazon", key="run_amazon"):
     try:
         am_items, stats = discover_amazon_products(
             kw=st.session_state.get("_kw", "") or None,
-            amazon_price_min=None,          # sem filtro de preço por enquanto
+            amazon_price_min=None,
             amazon_price_max=None,
-            amazon_offer_type="any",        # qualquer tipo de oferta
-            min_monthly_sales_est=0,        # 0 = NÃO filtra por vendas (BSR só informativo)
-            max_items=500,                  # limite duro: no máximo 500 ASINs distintos
+            amazon_offer_type="any",
+            min_monthly_sales_est=0,  # BSR NÃO influencia nada
+            max_items=MAX_RESULTS,
             progress_cb=_update_amz,
         )
         prog.empty()
-        am_df = pd.DataFrame(am_items)
-        st.session_state["_amazon_items_df"] = am_df.copy()
-        st.session_state["_results_df"] = pd.DataFrame()  # limpa final
-        st.session_state["_stage"] = "amazon"
+
+        am_df = pd.DataFrame(am_items or [])
+        st.session_state["_results_df"] = am_df.reset_index(drop=True)
+        st.session_state["_amazon_stats"] = stats
+        st.session_state["_page_num"] = 1
+        st.session_state["_stage"] = "results"
+
         if am_df.empty:
             st.warning(
                 f"Nenhum produto encontrado na Amazon. "
                 f"Catálogo visto: {stats.get('catalog_seen')}, "
                 f"com preço: {stats.get('with_price')}, "
-                f"sem preço: {stats.get('skipped_no_price')}, "
-                f"mantidos: {stats.get('kept')}, "
+                f"sem preço: {stats.get('without_price')}, "
                 f"erros de API: {stats.get('api_errors')}."
             )
         else:
             st.success(
-                f"{len(am_df)} produtos encontrados na Amazon "
+                f"{len(am_df)} produtos distintos encontrados na Amazon "
                 f"(catálogo visto: {stats.get('catalog_seen')}, "
                 f"com preço: {stats.get('with_price')}, "
-                f"sem preço: {stats.get('skipped_no_price')}, "
+                f"sem preço: {stats.get('without_price')}, "
                 f"mantidos: {stats.get('kept')}, "
                 f"erros de API: {stats.get('api_errors')}). "
-                "A tabela abaixo mostra todos os produtos encontrados na Amazon."
+                "A tabela abaixo mostra os produtos encontrados."
             )
-            st.session_state["_amazon_stats"] = stats
-            st.session_state["_results_df"] = am_df.reset_index(drop=True)
-            st.session_state["_results_source"] = "amazon_only"
-            st.session_state["_page_num"] = 1
-            st.session_state["_stage"] = "results"
+
     except Exception as e:
         prog.empty()
-        st.error(f"Falha na busca Amazon: {e}")
         st.session_state["_stage"] = "filters"
+        st.error(f"Falha na busca Amazon: {e}")
 
 st.markdown("---")
 
+# -------------------------------------------------------
 # Tabela + paginação
+# -------------------------------------------------------
 if "_results_df" in st.session_state and not st.session_state["_results_df"].empty:
     df = st.session_state["_results_df"]
+
     PAGE_SIZE = 50
     total_pages = max(1, math.ceil(len(df) / PAGE_SIZE))
     page = st.session_state.get("_page_num", 1)
 
     col_jump_back, col_prev, col_info, col_next, col_jump_forward = st.columns([0.1, 0.1, 0.6, 0.1, 0.1])
+
     with col_jump_back:
         if st.button("◀◀", use_container_width=True, disabled=(page <= 1), key="jump_back_10"):
             st.session_state["_page_num"] = max(1, page - 10)
             st.rerun()
+
     with col_prev:
         if st.button("◀", use_container_width=True, disabled=(page <= 1), key="prev_page"):
             st.session_state["_page_num"] = max(1, page - 1)
             st.rerun()
+
     with col_info:
         st.markdown(
             f"<div style='text-align:center; font-weight:700;'>Total: {len(df)} itens | Página {page}/{total_pages}</div>",
             unsafe_allow_html=True,
         )
+
     with col_next:
         if st.button("▶", use_container_width=True, disabled=(page >= total_pages), key="next_page"):
             st.session_state["_page_num"] = min(total_pages, page + 1)
             st.rerun()
+
     with col_jump_forward:
         if st.button("▶▶", use_container_width=True, disabled=(page >= total_pages), key="jump_forward_10"):
             st.session_state["_page_num"] = min(total_pages, page + 10)
@@ -383,36 +326,5 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
     start, end = (page - 1) * PAGE_SIZE, (page - 1) * PAGE_SIZE + PAGE_SIZE
     _render_table(df.iloc[start:end].copy())
     st.caption(f"Página {page}/{total_pages} - exibindo {len(df.iloc[start:end])} itens.")
-
-    # Bloco de estoque eBay só é mostrado se o DataFrame tiver coluna item_id (ou seja, após match com eBay)
-    if "item_id" in df.columns:
-        st.subheader("Quantidade mínima do produto em estoque eBay")
-        qty_after = st.number_input(
-            "Inserir quantidade mínima desejada (opcional)",
-            min_value=0,
-            value=0,
-            step=1,
-            help="Enriquece estoque no eBay e filtra pela quantidade desejada.",
-        )
-        if st.button("Ok!", use_container_width=False, disabled=df.empty):
-            if qty_after <= 0:
-                st.info("Informe uma quantidade mínima maior que zero para aplicar o filtro.")
-            else:
-                with st.spinner("Enriquecendo e filtrando por quantidade..."):
-                    filtered, enr_cnt, proc_cnt, qty_non_null = _enrich_and_filter_qty(df, int(qty_after), "Novo")
-                st.info(
-                    f"Detalhes consultados para {proc_cnt} itens (enriquecidos: {enr_cnt}). "
-                    f"Itens com quantidade conhecida: {qty_non_null}."
-                )
-                if filtered.empty:
-                    st.warning("Nenhum item com a quantidade mínima informada.")
-                else:
-                    st.success(f"Itens após filtro de quantidade: {len(filtered)}.")
-                    st.session_state["_results_df"] = filtered.reset_index(drop=True)
-                st.session_state["_results_source"] = "amazon_only"
-                st.session_state["_show_qty"] = True
-                st.session_state["_page_num"] = 1
-                st.session_state["_stage"] = "results"
-                st.rerun()
 
 st.markdown("</div>", unsafe_allow_html=True)

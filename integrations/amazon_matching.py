@@ -14,225 +14,24 @@ from integrations.amazon_spapi import (
 )
 from lib.ebay_search import search_items
 
+# -----------------------------------------------------------------------------
 # Caches em memória para evitar chamadas repetidas
+# -----------------------------------------------------------------------------
 _gtin_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 _asin_price_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 _title_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 
 # Limites padrão (podem ser sobrescritos por .env / st.secrets)
-DEFAULT_DISCOVERY_MAX_PAGES = int(os.getenv("AMAZON_DISCOVERY_MAX_PAGES", 150))
+# Para a fase atual, discovery mais leve e controlado.
+DEFAULT_DISCOVERY_MAX_PAGES = int(os.getenv("AMAZON_DISCOVERY_MAX_PAGES", 60))
 DEFAULT_DISCOVERY_PAGE_SIZE = int(os.getenv("AMAZON_DISCOVERY_PAGE_SIZE", 20))  # API aceita até ~20 por página
-# IMPORTANTE: queremos no máximo 500 produtos distintos na tabela
 DEFAULT_DISCOVERY_MAX_ITEMS = int(os.getenv("AMAZON_DISCOVERY_MAX_ITEMS", 500))
 
-# Cada tupla: (BSR, vendas_mensais_estimadas) - ancoras conservadoras por cluster
+# -----------------------------------------------------------------------------
+# Heurísticas de BSR (mantidas para uso futuro, mas NÃO usadas como filtro
+# quando min_monthly_sales_est = 0). Mantemos a estrutura para compatibilidade.
+# -----------------------------------------------------------------------------
 CATEGORY_BSR_ANCHORS: Dict[str, List[Tuple[int, int]]] = {
-    # Home & Kitchen (principal)
-    "home_kitchen": [
-        (5_000, 2_500),
-        (20_000, 900),
-        (50_000, 400),
-        (100_000, 180),
-        (300_000, 70),
-        (800_000, 20),
-        (2_000_000, 5),
-    ],
-    # Categorias mais "quentes" (escala 1.2)
-    "beauty_personal_care": [
-        (5_000, 3_000),
-        (20_000, 1_080),
-        (50_000, 480),
-        (100_000, 216),
-        (300_000, 84),
-        (800_000, 24),
-        (2_000_000, 6),
-    ],
-    "grocery": [
-        (5_000, 3_000),
-        (20_000, 1_080),
-        (50_000, 480),
-        (100_000, 216),
-        (300_000, 84),
-        (800_000, 24),
-        (2_000_000, 6),
-    ],
-    "clothing": [
-        (5_000, 3_000),
-        (20_000, 1_080),
-        (50_000, 480),
-        (100_000, 216),
-        (300_000, 84),
-        (800_000, 24),
-        (2_000_000, 6),
-    ],
-    # Categorias "quentes" padrão (escala 1.0)
-    "health_household": [
-        (5_000, 2_500),
-        (20_000, 900),
-        (50_000, 400),
-        (100_000, 180),
-        (300_000, 70),
-        (800_000, 20),
-        (2_000_000, 5),
-    ],
-    "baby": [
-        (5_000, 2_500),
-        (20_000, 900),
-        (50_000, 400),
-        (100_000, 180),
-        (300_000, 70),
-        (800_000, 20),
-        (2_000_000, 5),
-    ],
-    "shoes": [
-        (5_000, 2_500),
-        (20_000, 900),
-        (50_000, 400),
-        (100_000, 180),
-        (300_000, 70),
-        (800_000, 20),
-        (2_000_000, 5),
-    ],
-    "video_games": [
-        (5_000, 2_500),
-        (20_000, 900),
-        (50_000, 400),
-        (100_000, 180),
-        (300_000, 70),
-        (800_000, 20),
-        (2_000_000, 5),
-    ],
-    # Categorias "médias" (escala 0.7)
-    "toys_games": [
-        (5_000, 1_750),
-        (20_000, 630),
-        (50_000, 280),
-        (100_000, 126),
-        (300_000, 49),
-        (800_000, 14),
-        (2_000_000, 4),
-    ],
-    "sports_outdoors": [
-        (5_000, 1_750),
-        (20_000, 630),
-        (50_000, 280),
-        (100_000, 126),
-        (300_000, 49),
-        (800_000, 14),
-        (2_000_000, 4),
-    ],
-    "pet_supplies": [
-        (5_000, 1_750),
-        (20_000, 630),
-        (50_000, 280),
-        (100_000, 126),
-        (300_000, 49),
-        (800_000, 14),
-        (2_000_000, 4),
-    ],
-    "arts_crafts": [
-        (5_000, 1_750),
-        (20_000, 630),
-        (50_000, 280),
-        (100_000, 126),
-        (300_000, 49),
-        (800_000, 14),
-        (2_000_000, 4),
-    ],
-    "garden_outdoors": [
-        (5_000, 1_750),
-        (20_000, 630),
-        (50_000, 280),
-        (100_000, 126),
-        (300_000, 49),
-        (800_000, 14),
-        (2_000_000, 4),
-    ],
-    "office_products": [
-        (5_000, 1_750),
-        (20_000, 630),
-        (50_000, 280),
-        (100_000, 126),
-        (300_000, 49),
-        (800_000, 14),
-        (2_000_000, 4),
-    ],
-    "tools_home_improvement": [
-        (5_000, 1_750),
-        (20_000, 630),
-        (50_000, 280),
-        (100_000, 126),
-        (300_000, 49),
-        (800_000, 14),
-        (2_000_000, 4),
-    ],
-    "electronics": [
-        (5_000, 1_750),
-        (20_000, 630),
-        (50_000, 280),
-        (100_000, 126),
-        (300_000, 49),
-        (800_000, 14),
-        (2_000_000, 4),
-    ],
-    # Categorias mais "frias" (escala 0.5)
-    "automotive": [
-        (5_000, 1_250),
-        (20_000, 450),
-        (50_000, 200),
-        (100_000, 90),
-        (300_000, 35),
-        (800_000, 10),
-        (2_000_000, 2),
-    ],
-    "industrial_scientific": [
-        (5_000, 1_250),
-        (20_000, 450),
-        (50_000, 200),
-        (100_000, 90),
-        (300_000, 35),
-        (800_000, 10),
-        (2_000_000, 2),
-    ],
-    "musical_instruments": [
-        (5_000, 1_250),
-        (20_000, 450),
-        (50_000, 200),
-        (100_000, 90),
-        (300_000, 35),
-        (800_000, 10),
-        (2_000_000, 2),
-    ],
-    "luggage_travel": [
-        (5_000, 1_250),
-        (20_000, 450),
-        (50_000, 200),
-        (100_000, 90),
-        (300_000, 35),
-        (800_000, 10),
-        (2_000_000, 2),
-    ],
-    "jewelry": [
-        (5_000, 1_250),
-        (20_000, 450),
-        (50_000, 200),
-        (100_000, 90),
-        (300_000, 35),
-        (800_000, 10),
-        (2_000_000, 2),
-    ],
-    # Books separado
-    "books": [
-        (1_000, 8_000),
-        (5_000, 3_000),
-        (10_000, 1_000),
-        (50_000, 200),
-        (100_000, 80),
-        (300_000, 20),
-        (1_000_000, 5),
-        (2_000_000, 2),
-    ],
-    # Fallback genérico
     "default": [
         (5_000, 1_750),
         (20_000, 630),
@@ -248,61 +47,16 @@ CATEGORY_BSR_ANCHORS: Dict[str, List[Tuple[int, int]]] = {
 def _normalize_category_key(display_group: Optional[str]) -> str:
     if not display_group:
         return "default"
-    g = display_group.lower()
-    if "kitchen" in g or "home" in g:
-        return "home_kitchen"
-    if "beauty" in g or "personal care" in g:
-        return "beauty_personal_care"
-    if "health" in g or "household" in g:
-        return "health_household"
-    if "baby" in g:
-        return "baby"
-    if "toy" in g or "game" in g:
-        return "toys_games"
-    if "sport" in g or "outdoor" in g:
-        return "sports_outdoors"
-    if "pet" in g:
-        return "pet_supplies"
-    if "grocery" in g or "gourmet" in g:
-        return "grocery"
-    if "electronic" in g:
-        return "electronics"
-    if "office" in g:
-        return "office_products"
-    if "tool" in g or "home improvement" in g:
-        return "tools_home_improvement"
-    if "automotive" in g:
-        return "automotive"
-    if "garden" in g or "outdoor" in g or "patio" in g or "lawn" in g:
-        return "garden_outdoors"
-    if "arts" in g or "craft" in g or "sewing" in g:
-        return "arts_crafts"
-    if "musical" in g or "instrument" in g:
-        return "musical_instruments"
-    if "industrial" in g or "scientific" in g:
-        return "industrial_scientific"
-    if "video game" in g:
-        return "video_games"
-    if "book" in g:
-        return "books"
-    if "clothing" in g or "apparel" in g:
-        return "clothing"
-    if "shoe" in g:
-        return "shoes"
-    if "jewel" in g:
-        return "jewelry"
-    if "luggage" in g or "travel" in g:
-        return "luggage_travel"
     return "default"
 
 
-SALES_SCALE = 0.3  # fator conservador global (mais rígido)
+SALES_SCALE = 0.3  # fator conservador global (mantido, mas pouco relevante agora)
 
 
 def _estimate_monthly_sales_from_bsr(rank: Optional[int], display_group: Optional[str]) -> Optional[int]:
     """
-    Converte BSR em vendas/mês estimadas (conservador) via interpolação log-log em pontos de ancoragem.
-    Sempre faz clamp no menor/maior anchor; não zera acima de 300k.
+    Converte BSR em vendas/mês estimadas via interpolação log-log.
+    Mantido para compatibilidade, mas só é aplicado se min_monthly_sales_est > 0.
     """
     if rank is None or rank <= 0:
         return None
@@ -376,6 +130,9 @@ def _find_gtin_column(df: pd.DataFrame) -> Optional[str]:
     return None
 
 
+# -----------------------------------------------------------------------------
+# Fluxo legado eBay-first (mantido para compatibilidade, não é o foco agora)
+# -----------------------------------------------------------------------------
 def match_ebay_to_amazon(
     df_ebay: pd.DataFrame,
     amazon_price_min: Optional[float] = None,
@@ -387,6 +144,10 @@ def match_ebay_to_amazon(
     min_monthly_sales_est: Optional[int] = None,
     progress_cb: Optional[callable] = None,
 ) -> pd.DataFrame:
+    """
+    Fluxo legado eBay-first. Mantido para compatibilidade com outras telas.
+    NÃO é utilizado na tela Minerar atual.
+    """
     if df_ebay.empty:
         return df_ebay.iloc[0:0].copy()
 
@@ -409,6 +170,7 @@ def match_ebay_to_amazon(
         asin = None
         match_basis = None
 
+        # GTIN -> Amazon
         if gtin:
             if gtin in _gtin_cache:
                 am_item = _gtin_cache[gtin]
@@ -427,6 +189,7 @@ def match_ebay_to_amazon(
                 asin = am_item["asin"]
                 match_basis = "gtin"
 
+        # Título -> Amazon
         if (not asin) and title_val:
             if title_val in _title_cache:
                 am_item = _title_cache[title_val]
@@ -448,6 +211,7 @@ def match_ebay_to_amazon(
         if not asin or not am_item:
             continue
 
+        # Preço (buybox)
         if asin in _asin_price_cache:
             price_info = _asin_price_cache[asin]
         else:
@@ -469,11 +233,13 @@ def match_ebay_to_amazon(
         is_prime = bool(price_info.get("is_prime") or False)
         fulfillment_channel = (price_info.get("fulfillment_channel") or "").upper()
 
+        # Filtro de preço
         if amazon_price_min is not None and price < amazon_price_min:
             continue
         if amazon_price_max is not None and price > amazon_price_max:
             continue
 
+        # Filtro de oferta (Prime/FBA/FBM)
         if offer_type_norm in ("prime", "fba"):
             if not (is_prime or fulfillment_channel == "AMAZON"):
                 continue
@@ -481,10 +247,11 @@ def match_ebay_to_amazon(
             if fulfillment_channel == "AMAZON":
                 continue
 
+        # BSR -> vendas estimadas (usado só se min_monthly_sales_est > 0)
         rank = am_item.get("sales_rank")
         cat_display = am_item.get("sales_rank_category")
         est_monthly = _estimate_monthly_sales_from_bsr(rank, cat_display)
-        if min_monthly_sales_est is not None:
+        if min_monthly_sales_est is not None and min_monthly_sales_est > 0:
             if est_monthly is None or est_monthly < min_monthly_sales_est:
                 continue
         demand_bucket = _demand_bucket_from_sales(est_monthly)
@@ -524,10 +291,9 @@ def match_ebay_to_amazon(
     return pd.DataFrame(results)
 
 
-# ---------------------------------------------------------------------------
-# Fluxo Amazon-first: descobre na Amazon e busca fornecedores no eBay
-# ---------------------------------------------------------------------------
-
+# -----------------------------------------------------------------------------
+# Auxiliar: cache de preço para fluxo Amazon-first
+# -----------------------------------------------------------------------------
 def _get_buybox_price_cached(asin: str) -> Optional[Dict[str, Any]]:
     if asin in _asin_price_cache:
         return _asin_price_cache[asin]
@@ -539,6 +305,9 @@ def _get_buybox_price_cached(asin: str) -> Optional[Dict[str, Any]]:
     return price_info
 
 
+# -----------------------------------------------------------------------------
+# NOVO fluxo Amazon-first simples: descobrir N produtos "brutos" na Amazon
+# -----------------------------------------------------------------------------
 def _discover_amazon_products(
     kw: Optional[str],
     amazon_price_min: Optional[float],
@@ -551,54 +320,50 @@ def _discover_amazon_products(
     progress_cb: Optional[callable],
 ) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
     """
-    Descobre produtos na Amazon aplicando filtros de preço, oferta e (opcionalmente) vendas estimadas.
+    Descobre produtos na Amazon de forma "bruta":
 
-    Requisitos desta versão:
-      - NÃO usar BSR para ordenação (apenas informação).
-      - Aceitar itens mesmo sem preço (não descartar por ausência de buybox).
-      - Garantir que len(found) seja o número de ASINs distintos (sem repetição).
-      - Continuar paginando até atingir max_items mantidos ou acabar o catálogo.
-      - Tratar timeouts/erros de rede de search_catalog_items sem quebrar o app (stats["api_errors"]).
+      - Usa apenas a keyword (montada a partir de categoria/subcategoria + texto livre).
+      - NÃO ordena por BSR; mantém a ordem que a Amazon retorna.
+      - NÃO filtra por BSR se min_monthly_sales_est == 0.
+      - NÃO exige preço: itens sem preço também entram na lista (amazon_price = None).
+      - Garante no máximo `max_items` ASINs distintos (sem repetição).
     """
     if not kw:
-        kw = "a"
+        kw = "a"  # fallback bem amplo
 
     cfg = _load_config_from_env()
     marketplace_id = cfg.marketplace_id or "ATVPDKIKX0DER"
 
     offer_type_norm = (amazon_offer_type or "any").strip().lower()
 
-    # reforço de limite: máximo 500 itens
-    if max_items is None or max_items <= 0 or max_items > 500:
-        max_items = 500
-
     found: List[Dict[str, Any]] = []
     seen_asins: set[str] = set()
 
+    # só para barra de progresso
     estimated_total = max_items
     done = 0
 
     stats: Dict[str, int] = {
         "catalog_seen": 0,
         "with_price": 0,
-        "kept": 0,
+        "without_price": 0,
         "skipped_no_asin": 0,
         "skipped_duplicate_asin": 0,
-        "skipped_no_price": 0,
         "skipped_price_filter": 0,
         "skipped_offer": 0,
         "skipped_sales": 0,
-        "skipped_lang": 0,
+        "skipped_no_price": 0,  # mantido por compatibilidade com mensagens antigas
+        "kept": 0,
         "api_errors": 0,
     }
 
-    def _run_search(keyword: str):
+    def _run_search(keyword: str) -> None:
         nonlocal done
-        consecutive_errors = 0
 
         for page in range(1, max_pages + 1):
             if len(found) >= max_items:
                 break
+
             try:
                 items = search_catalog_items(
                     keywords=keyword,
@@ -608,12 +373,8 @@ def _discover_amazon_products(
                 )
             except Exception:
                 stats["api_errors"] += 1
-                consecutive_errors += 1
-                if consecutive_errors >= 3:
-                    break
-                continue
+                break
 
-            consecutive_errors = 0
             if not items:
                 break
 
@@ -633,42 +394,45 @@ def _discover_amazon_products(
                     stats["skipped_duplicate_asin"] += 1
                     continue
 
-                # Preço (pode estar ausente)
+                # Preço (opcional)
                 price_info = _get_buybox_price_cached(asin)
-                price = None
-                currency = None
-                is_prime = False
-                fulfillment_channel = ""
                 if price_info and price_info.get("price") is not None:
                     stats["with_price"] += 1
                     price = float(price_info["price"])
                     currency = price_info.get("currency") or ""
                     is_prime = bool(price_info.get("is_prime") or False)
                     fulfillment_channel = (price_info.get("fulfillment_channel") or "").upper()
+
+                    # Filtro de preço/oferta SÓ se o usuário preencheu algo
                     if amazon_price_min is not None and price < amazon_price_min:
                         stats["skipped_price_filter"] += 1
                         continue
                     if amazon_price_max is not None and price > amazon_price_max:
                         stats["skipped_price_filter"] += 1
                         continue
+
+                    if offer_type_norm in ("prime", "fba"):
+                        if not (is_prime or fulfillment_channel == "AMAZON"):
+                            stats["skipped_offer"] += 1
+                            continue
+                    elif offer_type_norm in ("fbm", "merchant", "mf"):
+                        if fulfillment_channel == "AMAZON":
+                            stats["skipped_offer"] += 1
+                            continue
                 else:
+                    # Sem preço de buybox: mantém o item na lista mesmo assim
+                    stats["without_price"] += 1
                     stats["skipped_no_price"] += 1
+                    price = None
+                    currency = None
+                    is_prime = False
+                    fulfillment_channel = ""
 
-                # Tipo de oferta
-                if offer_type_norm in ("prime", "fba"):
-                    if not (is_prime or fulfillment_channel == "AMAZON"):
-                        stats["skipped_offer"] += 1
-                        continue
-                elif offer_type_norm in ("fbm", "merchant", "mf"):
-                    if fulfillment_channel == "AMAZON":
-                        stats["skipped_offer"] += 1
-                        continue
-
+                # BSR -> vendas estimadas (opcional; não usado como filtro se min_monthly_sales_est == 0)
                 rank = extracted.get("sales_rank")
                 cat_display = extracted.get("sales_rank_category")
-                est_monthly = _estimate_monthly_sales_from_bsr(rank, cat_display)
-                if est_monthly is None:
-                    est_monthly = 0
+                est_monthly = _estimate_monthly_sales_from_bsr(rank, cat_display) or 0
+
                 if min_monthly_sales_est is not None and min_monthly_sales_est > 0:
                     if est_monthly < min_monthly_sales_est:
                         stats["skipped_sales"] += 1
@@ -702,15 +466,21 @@ def _discover_amazon_products(
                 seen_asins.add(asin)
                 stats["kept"] += 1
                 done += 1
+
                 if progress_cb:
                     progress_cb(done, estimated_total, "amazon")
 
+    # 1ª passada com a keyword montada a partir da UI
     _run_search(kw)
-    if len(found) < max_items and kw and kw.strip().lower() != "a":
+
+    # Se ainda não atingiu max_items e a keyword não for o fallback "a", tenta uma busca bem ampla
+    if len(found) < max_items and kw.strip().lower() != "a":
         _run_search("a")
 
-    # Não ordenar; manter ordem da API
-    return found, stats
+    # NÃO ordena por BSR: mantém a ordem natural dos resultados
+    return found[:max_items], stats
+
+
 def discover_amazon_products(
     kw: Optional[str],
     amazon_price_min: Optional[float],
@@ -723,14 +493,10 @@ def discover_amazon_products(
     progress_cb: Optional[callable] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
     """
-    Wrapper público para descoberta de produtos na Amazon, retornando itens e stats de debug.
-
-    max_items define o NÚMERO DE ITENS MANTIDOS (ASINs distintos com preço),
-    não apenas o número de itens vistos no catálogo.
+    Wrapper público para descoberta de produtos na Amazon.
+    Neste momento é usado apenas para minerar até `max_items` produtos
+    "brutos" (sem filtro de BSR) na tela Minerar.
     """
-    if max_items is None or max_items <= 0 or max_items > 500:
-        max_items = 500
-
     return _discover_amazon_products(
         kw=kw,
         amazon_price_min=amazon_price_min,
@@ -744,6 +510,9 @@ def discover_amazon_products(
     )
 
 
+# -----------------------------------------------------------------------------
+# Fluxo Amazon-first + eBay (mantido para uso futuro / outras telas)
+# -----------------------------------------------------------------------------
 def discover_amazon_and_match_ebay(
     kw: Optional[str],
     amazon_price_min: Optional[float],
@@ -757,8 +526,8 @@ def discover_amazon_and_match_ebay(
     progress_cb: Optional[callable] = None,
 ) -> pd.DataFrame:
     """
-    Fluxo Amazon-first: encontra produtos relevantes na Amazon, depois busca fornecedores no eBay.
-    Retorna DataFrame pronto para exibição, no mesmo formato geral usado hoje.
+    Fluxo Amazon-first completo (Amazon -> eBay).
+    Mantido para compatibilidade, NÃO usado na fase atual da tela Minerar.
     """
     max_pages = DEFAULT_DISCOVERY_MAX_PAGES
     page_size = DEFAULT_DISCOVERY_PAGE_SIZE
@@ -779,7 +548,7 @@ def discover_amazon_and_match_ebay(
     if not amazon_items:
         return pd.DataFrame()
 
-    # dedup Amazon por ASIN, mantendo os mais relevantes (já ordenados)
+    # dedup Amazon por ASIN, mantendo as primeiras ocorrências
     seen_asin = set()
     uniq_amazon: List[Dict[str, Any]] = []
     for it in amazon_items:
@@ -790,7 +559,6 @@ def discover_amazon_and_match_ebay(
 
     matches: List[Dict[str, Any]] = []
     total_amz = len(uniq_amazon)
-    offer_type_norm = (amazon_offer_type or "any").strip().lower()
 
     for idx, am in enumerate(uniq_amazon, start=1):
         search_term = _normalize_gtin_value(am.get("gtin")) or (am.get("amazon_title") or "")
@@ -870,15 +638,10 @@ def match_amazon_list_to_ebay(
 ) -> pd.DataFrame:
     """
     Usa uma lista já descoberta na Amazon para procurar fornecedores no eBay.
-    Mantém apenas o fornecedor mais barato por ASIN. Retorna DataFrame pronto.
+    Mantido para compatibilidade, não usado no fluxo simplificado atual.
     """
     if not amazon_items:
         return pd.DataFrame()
-
-    # Se foi passado um DataFrame convertido para dicts, preserva metadados de debug se existirem
-    debug_stats = None
-    if isinstance(amazon_items, dict) and "__stats" in amazon_items:
-        debug_stats = amazon_items.get("__stats")
 
     # dedup Amazon por ASIN
     uniq = []
