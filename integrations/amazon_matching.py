@@ -1,6 +1,5 @@
 import math
 import os
-import random
 from typing import Optional, Dict, Any, List, Tuple
 
 import pandas as pd
@@ -15,23 +14,22 @@ from integrations.amazon_spapi import (
 )
 from lib.ebay_search import search_items
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Caches em memória para evitar chamadas repetidas
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 _gtin_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 _asin_price_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 _title_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 
 # Limites padrão (podem ser sobrescritos por .env / st.secrets)
-# Para a fase atual, discovery mais leve e controlado.
 DEFAULT_DISCOVERY_MAX_PAGES = int(os.getenv("AMAZON_DISCOVERY_MAX_PAGES", 60))
 DEFAULT_DISCOVERY_PAGE_SIZE = int(os.getenv("AMAZON_DISCOVERY_PAGE_SIZE", 20))  # API aceita até ~20 por página
 DEFAULT_DISCOVERY_MAX_ITEMS = int(os.getenv("AMAZON_DISCOVERY_MAX_ITEMS", 500))
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Heurísticas de BSR (mantidas para uso futuro, mas NÃO usadas como filtro
-# quando min_monthly_sales_est = 0). Mantemos a estrutura para compatibilidade.
-# -----------------------------------------------------------------------------
+# quando min_monthly_sales_est = 0).
+# -----------------------------------------------------------------------------#
 CATEGORY_BSR_ANCHORS: Dict[str, List[Tuple[int, int]]] = {
     "default": [
         (5_000, 1_750),
@@ -131,9 +129,9 @@ def _find_gtin_column(df: pd.DataFrame) -> Optional[str]:
     return None
 
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Fluxo legado eBay-first (mantido para compatibilidade, não é o foco agora)
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 def match_ebay_to_amazon(
     df_ebay: pd.DataFrame,
     amazon_price_min: Optional[float] = None,
@@ -292,9 +290,9 @@ def match_ebay_to_amazon(
     return pd.DataFrame(results)
 
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Auxiliar: cache de preço para fluxo Amazon-first
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 def _get_buybox_price_cached(asin: str) -> Optional[Dict[str, Any]]:
     if asin in _asin_price_cache:
         return _asin_price_cache[asin]
@@ -306,15 +304,16 @@ def _get_buybox_price_cached(asin: str) -> Optional[Dict[str, Any]]:
     return price_info
 
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # NOVO fluxo Amazon-first simples: descobrir N produtos "brutos" na Amazon
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 def _discover_amazon_products(
     kw: Optional[str],
     amazon_price_min: Optional[float],
     amazon_price_max: Optional[float],
     amazon_offer_type: str,
     min_monthly_sales_est: Optional[int],
+    browse_node_id: Optional[int],
     max_pages: int,
     page_size: int,
     max_items: int,
@@ -325,6 +324,7 @@ def _discover_amazon_products(
 
     🔹 Agora só mantém itens que têm preço/oferta conhecido na Amazon.
     🔹 Tenta chegar em até max_items (ex.: 500) ASINs distintos com preço.
+    🔹 browse_node_id está pronto para uso futuro (hoje é ignorado).
     """
     # fallback genérico se vier vazio
     if not kw:
@@ -472,15 +472,12 @@ def _discover_amazon_products(
     # primeira tentativa com a keyword montada a partir da categoria/subcategoria
     _run_search(kw)
 
-    # se quiser, dá pra manter esse fallback genérico "a" aqui
-    # para casos onde a keyword da categoria venha muito estreita e não ache nada.
+    # fallback genérico "a" se a keyword for muito estreita e não achar nada
     if not found and kw.strip().lower() != "a":
         _run_search("a")
 
-    # NÃO reordena pela demanda/BSR – você disse que quer "bruto" mesmo.
-    # Apenas garante que não passamos de max_items.
+    # NÃO reordena pela demanda/BSR – você quer "bruto".
     return found[:max_items], stats
-
 
 
 def discover_amazon_products(
@@ -499,7 +496,7 @@ def discover_amazon_products(
     Wrapper público para descoberta de produtos na Amazon.
 
     Novos parâmetros:
-      - browse_node_id: ID da categoria/subcategoria Amazon (classificationId).
+      - browse_node_id: ID da categoria/subcategoria Amazon (classificationId) – ainda não usado.
       - max_items: número máximo de ASINs distintos desejados.
     """
     return _discover_amazon_products(
@@ -516,10 +513,9 @@ def discover_amazon_products(
     )
 
 
-
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Fluxo Amazon-first + eBay (mantido para uso futuro / outras telas)
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 def discover_amazon_and_match_ebay(
     kw: Optional[str],
     amazon_price_min: Optional[float],
@@ -546,6 +542,7 @@ def discover_amazon_and_match_ebay(
         amazon_price_max=amazon_price_max,
         amazon_offer_type=amazon_offer_type,
         min_monthly_sales_est=min_monthly_sales_est,
+        browse_node_id=None,
         max_pages=max_pages,
         page_size=page_size,
         max_items=max_items,
@@ -575,8 +572,8 @@ def discover_amazon_and_match_ebay(
             continue
 
         ebay_found: List[Dict[str, Any]] = []
-
         cat_ids = ebay_category_ids or [None]
+
         for cat_id in cat_ids:
             try:
                 items = search_items(

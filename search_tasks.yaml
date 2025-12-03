@@ -79,10 +79,7 @@ categories:
         category_id: 1063236                        
       - name: "Móveis"
         amazon_kw: "furniture"
-        category_id: 1063306                        
-      - name: "Decoração para Casa"
-        amazon_kw: "home decor"
-        category_id: 1063278          
+        category_id: 1063306                                 
       - name: "Quadros e Arte de Parede"
         amazon_kw: "wall art"
         category_id: 3736081       
