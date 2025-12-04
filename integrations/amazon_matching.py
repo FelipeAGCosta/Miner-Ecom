@@ -322,9 +322,10 @@ def _discover_amazon_products(
     """
     Descobre produtos na Amazon aplicando filtros de preço, oferta e (opcionalmente) vendas estimadas.
 
-    🔹 Agora só mantém itens que têm preço/oferta conhecido na Amazon.
+    🔹 Mantém apenas itens que têm preço/oferta conhecido na Amazon.
     🔹 Tenta chegar em até max_items (ex.: 500) ASINs distintos com preço.
-    🔹 browse_node_id está pronto para uso futuro (hoje é ignorado).
+    🔹 Se browse_node_id vier preenchido, filtra os resultados para manter apenas
+       itens cuja browse_node_id (classificationId) bate com esse valor (quando disponível).
     """
     # fallback genérico se vier vazio
     if not kw:
@@ -338,20 +339,30 @@ def _discover_amazon_products(
     found: List[Dict[str, Any]] = []
     seen_asins: set[str] = set()
 
+    # filtro por browse_node_id (classificationId)
+    node_filter: Optional[str] = None
+    if browse_node_id is not None:
+        try:
+            node_filter = str(int(browse_node_id))
+        except (TypeError, ValueError):
+            node_filter = str(browse_node_id)
+
     # para feedback visual
     estimated_total = max_items
     done = 0
 
-    stats = {
-        "catalog_seen": 0,          # quantos itens brutos vieram da SP-API
-        "with_price": 0,            # quantos tinham preço
-        "kept": 0,                  # quantos foram mantidos na lista final
-        "skipped_price_filter": 0,  # descartados por faixa de preço min/max
-        "skipped_offer": 0,         # descartados por tipo de oferta (Prime/FBA/FBM)
-        "skipped_sales": 0,         # descartados por min_monthly_sales_est (se usar)
-        "skipped_no_price": 0,      # sem preço conhecido (sem oferta / sem pricing)
-        "dup_asins": 0,             # ASINs duplicados ignorados
-        "errors_api": 0,            # erros ao chamar a SP-API
+    stats: Dict[str, Any] = {
+        "catalog_seen": 0,            # quantos itens brutos vieram da SP-API
+        "with_price": 0,              # quantos tinham preço
+        "kept": 0,                    # quantos foram mantidos na lista final
+        "skipped_price_filter": 0,    # descartados por faixa de preço min/max
+        "skipped_offer": 0,           # descartados por tipo de oferta (Prime/FBA/FBM)
+        "skipped_sales": 0,           # descartados por min_monthly_sales_est (se usar)
+        "skipped_no_price": 0,        # sem preço conhecido (sem oferta / sem pricing)
+        "skipped_other_node": 0,      # filtrados por não baterem o browse_node_id
+        "dup_asins": 0,               # ASINs duplicados ignorados
+        "errors_api": 0,              # erros ao chamar a SP-API
+        "last_error": "",             # texto do último erro de API (se houver)
     }
 
     def _run_search(keyword: str):
@@ -363,14 +374,17 @@ def _discover_amazon_products(
                 break
 
             try:
+                # IMPORTANTE: aqui continuamos usando a função search_catalog_items
+                # do jeito original (keywords + page), que já sabemos que funciona
                 items = search_catalog_items(
                     keywords=keyword,
                     page_size=page_size,
                     page=page,
                     included_data="summaries,identifiers,salesRanks",
                 )
-            except Exception:
+            except Exception as e:
                 stats["errors_api"] += 1
+                stats["last_error"] = str(e)
                 break
 
             if not items:
@@ -388,6 +402,13 @@ def _discover_amazon_products(
                 if not asin:
                     continue
 
+                # filtro por browse_node_id (classificationId) – se a Amazon informar
+                if node_filter:
+                    bn = extracted.get("browse_node_id")
+                    if bn is not None and str(bn) != node_filter:
+                        stats["skipped_other_node"] += 1
+                        continue
+
                 # evita repetir o mesmo produto
                 if asin in seen_asins:
                     stats["dup_asins"] += 1
@@ -396,7 +417,7 @@ def _discover_amazon_products(
                 # tenta pegar preço (BuyBox ou Lowest)
                 price_info = _get_buybox_price_cached(asin)
                 if not price_info or price_info.get("price") is None:
-                    # AGORA realmente descartamos itens sem preço
+                    # agora descartamos itens sem preço conhecido
                     stats["skipped_no_price"] += 1
                     continue
 
@@ -472,12 +493,13 @@ def _discover_amazon_products(
     # primeira tentativa com a keyword montada a partir da categoria/subcategoria
     _run_search(kw)
 
-    # fallback genérico "a" se a keyword for muito estreita e não achar nada
+    # fallback: se nada for encontrado com a keyword da categoria, tenta algo bem amplo
     if not found and kw.strip().lower() != "a":
         _run_search("a")
 
-    # NÃO reordena pela demanda/BSR – você quer "bruto".
+    # não reordena pela demanda/BSR – você quer "bruto" mesmo.
     return found[:max_items], stats
+
 
 
 def discover_amazon_products(
@@ -495,9 +517,10 @@ def discover_amazon_products(
     """
     Wrapper público para descoberta de produtos na Amazon.
 
-    Novos parâmetros:
-      - browse_node_id: ID da categoria/subcategoria Amazon (classificationId) – ainda não usado.
-      - max_items: número máximo de ASINs distintos desejados.
+    Parâmetros:
+      - kw: keyword final (user_kw + amazon_kw da categoria/subcategoria).
+      - browse_node_id: classificationId da categoria/subcategoria, se existir.
+      - max_items: número máximo de ASINs distintos desejados (ex.: 500).
     """
     return _discover_amazon_products(
         kw=kw,
@@ -511,6 +534,7 @@ def discover_amazon_products(
         max_items=max_items,
         progress_cb=progress_cb,
     )
+
 
 
 # -----------------------------------------------------------------------------#
@@ -537,17 +561,18 @@ def discover_amazon_and_match_ebay(
     max_items = DEFAULT_DISCOVERY_MAX_ITEMS
 
     amazon_items, _ = _discover_amazon_products(
-        kw=kw,
-        amazon_price_min=amazon_price_min,
-        amazon_price_max=amazon_price_max,
-        amazon_offer_type=amazon_offer_type,
-        min_monthly_sales_est=min_monthly_sales_est,
-        browse_node_id=None,
-        max_pages=max_pages,
-        page_size=page_size,
-        max_items=max_items,
-        progress_cb=progress_cb,
-    )
+    kw=kw,
+    amazon_price_min=amazon_price_min,
+    amazon_price_max=amazon_price_max,
+    amazon_offer_type=amazon_offer_type,
+    min_monthly_sales_est=min_monthly_sales_est,
+    browse_node_id=None,  # fluxo Amazon->eBay ainda não filtra por categoria Amazon
+    max_pages=max_pages,
+    page_size=page_size,
+    max_items=max_items,
+    progress_cb=progress_cb,
+)
+
 
     if not amazon_items:
         return pd.DataFrame()
