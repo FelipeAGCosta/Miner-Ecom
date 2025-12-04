@@ -305,7 +305,7 @@ def _get_buybox_price_cached(asin: str) -> Optional[Dict[str, Any]]:
 
 
 # -----------------------------------------------------------------------------#
-# NOVO fluxo Amazon-first simples: descobrir N produtos "brutos" na Amazon
+# NOVO fluxo Amazon-first: descobrir N produtos "brutos" na Amazon
 # -----------------------------------------------------------------------------#
 def _discover_amazon_products(
     kw: Optional[str],
@@ -374,8 +374,6 @@ def _discover_amazon_products(
                 break
 
             try:
-                # IMPORTANTE: aqui continuamos usando a função search_catalog_items
-                # do jeito original (keywords + page), que já sabemos que funciona
                 items = search_catalog_items(
                     keywords=keyword,
                     page_size=page_size,
@@ -417,7 +415,6 @@ def _discover_amazon_products(
                 # tenta pegar preço (BuyBox ou Lowest)
                 price_info = _get_buybox_price_cached(asin)
                 if not price_info or price_info.get("price") is None:
-                    # agora descartamos itens sem preço conhecido
                     stats["skipped_no_price"] += 1
                     continue
 
@@ -501,7 +498,6 @@ def _discover_amazon_products(
     return found[:max_items], stats
 
 
-
 def discover_amazon_products(
     kw: Optional[str],
     amazon_price_min: Optional[float],
@@ -536,7 +532,6 @@ def discover_amazon_products(
     )
 
 
-
 # -----------------------------------------------------------------------------#
 # Fluxo Amazon-first + eBay (mantido para uso futuro / outras telas)
 # -----------------------------------------------------------------------------#
@@ -561,18 +556,17 @@ def discover_amazon_and_match_ebay(
     max_items = DEFAULT_DISCOVERY_MAX_ITEMS
 
     amazon_items, _ = _discover_amazon_products(
-    kw=kw,
-    amazon_price_min=amazon_price_min,
-    amazon_price_max=amazon_price_max,
-    amazon_offer_type=amazon_offer_type,
-    min_monthly_sales_est=min_monthly_sales_est,
-    browse_node_id=None,  # fluxo Amazon->eBay ainda não filtra por categoria Amazon
-    max_pages=max_pages,
-    page_size=page_size,
-    max_items=max_items,
-    progress_cb=progress_cb,
-)
-
+        kw=kw,
+        amazon_price_min=amazon_price_min,
+        amazon_price_max=amazon_price_max,
+        amazon_offer_type=amazon_offer_type,
+        min_monthly_sales_est=min_monthly_sales_est,
+        browse_node_id=None,  # fluxo Amazon->eBay ainda não filtra por categoria Amazon
+        max_pages=max_pages,
+        page_size=page_size,
+        max_items=max_items,
+        progress_cb=progress_cb,
+    )
 
     if not amazon_items:
         return pd.DataFrame()
@@ -673,8 +667,8 @@ def match_amazon_list_to_ebay(
         return pd.DataFrame()
 
     # dedup Amazon por ASIN
-    uniq = []
-    seen = set()
+    uniq: List[Dict[str, Any]] = []
+    seen: set[str] = set()
     for it in amazon_items:
         asin = it.get("amazon_asin")
         if asin and asin not in seen:

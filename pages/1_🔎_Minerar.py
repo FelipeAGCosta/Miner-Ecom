@@ -1,7 +1,6 @@
 import math
 import os
 import urllib.parse as _url
-from datetime import timedelta
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
@@ -154,7 +153,7 @@ elif selected_parent:
 kw = " ".join(p for p in kw_parts if p).strip() or "a"
 st.session_state["_kw"] = kw
 
-# *** NOVO: resolve browse_node_id a partir do category_id da subcategoria/categoria ***
+# Resolve browse_node_id a partir do category_id da subcategoria/categoria
 browse_node_id: Optional[int] = None
 if selected_child and selected_child.get("category_id") is not None:
     try:
@@ -162,7 +161,6 @@ if selected_child and selected_child.get("category_id") is not None:
     except (TypeError, ValueError):
         browse_node_id = None
 elif selected_parent and selected_parent.get("category_id") is not None:
-    # se nenhuma subcat foi escolhida, pode usar o node da categoria mãe (se quiser)
     try:
         browse_node_id = int(selected_parent["category_id"])
     except (TypeError, ValueError):
@@ -216,11 +214,18 @@ def _enrich_and_filter_qty(df: pd.DataFrame, qmin: int, cond_pt: str) -> tuple[p
     """
     Enriquecimento tardio: busca detalhes no eBay para preencher estoque e filtra por quantidade mínima.
     Mantido aqui para uso futuro. Não interfere na fase Amazon-only.
+
+    Se o DataFrame não tiver 'item_id', simplesmente devolve o próprio DF e contadores zerados.
     """
     if qmin <= 0 or df.empty:
         return df.copy(), 0, 0, 0
 
     base = df.copy()
+
+    # Sem item_id não tem como enriquecer via eBay → não faz nada
+    if "item_id" not in base.columns:
+        return df.copy(), 0, 0, 0
+
     if "available_qty" in base.columns:
         no_qty_mask = pd.isna(base["available_qty"])
     else:
@@ -372,7 +377,7 @@ if st.button("Buscar Amazon", key="run_amazon"):
             amazon_offer_type="any",
             min_monthly_sales_est=0,
             browse_node_id=st.session_state.get("_browse_node_id"),
-            max_items=500,  # garante o alvo de 500 distintos
+            max_items=500,  # alvo de 500 ASINs distintos com preço
             progress_cb=_update_amz,
         )
         prog.empty()
@@ -383,7 +388,7 @@ if st.button("Buscar Amazon", key="run_amazon"):
         st.session_state["_stage"] = "amazon"
 
         if am_df.empty:
-            st.warning(
+            msg = (
                 f"Nenhum produto encontrado na Amazon. "
                 f"Catálogo visto: {stats.get('catalog_seen')}, "
                 f"com preço conhecido: {stats.get('with_price')}, "
@@ -392,8 +397,14 @@ if st.button("Buscar Amazon", key="run_amazon"):
                 f"duplicados ignorados: {stats.get('dup_asins')}, "
                 f"erros de API: {stats.get('errors_api')}."
             )
+            st.warning(msg)
+
+            # Detalhe técnico do último erro de API, se existir
+            last_err = stats.get("last_error") or ""
+            if stats.get("errors_api") and last_err:
+                st.error(f"Detalhe técnico do último erro de API: {last_err}")
         else:
-            st.success(
+            msg = (
                 f"{len(am_df)} produtos distintos encontrados na Amazon "
                 f"(catálogo visto: {stats.get('catalog_seen')}, "
                 f"com preço: {stats.get('with_price')}, "
@@ -403,6 +414,16 @@ if st.button("Buscar Amazon", key="run_amazon"):
                 f"erros de API: {stats.get('errors_api')}). "
                 "A tabela abaixo mostra os produtos encontrados."
             )
+            st.success(msg)
+
+            if stats.get("errors_api"):
+                last_err = stats.get("last_error") or ""
+                if last_err:
+                    st.info(
+                        "Atenção: a SP-API retornou alguns erros durante a mineração. "
+                        f"Último erro: {last_err}"
+                    )
+
             st.session_state["_amazon_stats"] = stats
             st.session_state["_results_df"] = am_df.reset_index(drop=True)
             st.session_state["_results_source"] = "amazon_only"
@@ -456,7 +477,7 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
     _render_table(df.iloc[start:end].copy())
     st.caption(f"Página {page}/{total_pages} - exibindo {len(df.iloc[start:end])} itens.")
 
-    # Bloco de quantidade eBay (mantido, mas opcional)
+    # Bloco de quantidade eBay (mantido, mas opcional / futuro)
     st.subheader("Quantidade mínima do produto em estoque eBay (opcional, fluxo futuro)")
     qty_after = st.number_input(
         "Inserir quantidade mínima desejada (opcional)",
