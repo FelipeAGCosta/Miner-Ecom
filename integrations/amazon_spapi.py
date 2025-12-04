@@ -299,7 +299,6 @@ def _extract_catalog_item(
     marketplace_id: str,
     fallback_gtin: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Extrai campos principais de um item bruto da Catalog Items API."""
     asin = item.get("asin")
 
     summaries = item.get("summaries") or []
@@ -429,11 +428,7 @@ def search_by_gtin(gtin: str) -> Optional[Dict[str, Any]]:
     return _extract_catalog_item(item, cfg.marketplace_id, fallback_gtin=gtin_clean)
 
 
-def search_by_title(
-    title: str,
-    original_title: Optional[str] = None,
-    page_size: int = 3,
-) -> Optional[Dict[str, Any]]:
+def search_by_title(title: str, original_title: Optional[str] = None, page_size: int = 3) -> Optional[Dict[str, Any]]:
     """
     Fallback: busca item de catalogo por titulo/keywords.
     Retorna o item com melhor similaridade de titulo (se original_title fornecido).
@@ -476,40 +471,30 @@ def search_by_title(
 
 
 def search_catalog_items(
-    keywords: Optional[str] = None,
-    classification_ids: Optional[List[str]] = None,
+    keywords: str,
     page_size: int = 20,
-    page_token: Optional[str] = None,
+    page: int = 1,
     included_data: str = "summaries,identifiers,salesRanks",
-) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+) -> List[Dict[str, Any]]:
     """
-    Busca itens no Catalog Items API por palavra-chave e/ou classificationIds.
+    Busca itens no Catalog Items API por palavra-chave, retornando a lista bruta de itens.
+    Útil para descoberta Amazon-first. Limita page_size entre 1 e 20.
 
-    Retorna (lista_de_itens_brutos, proximo_pageToken_ou_None).
+    OBS: aqui usamos paginação simples por número de página (`page`), que é o
+    que o fluxo `amazon_matching._discover_amazon_products` espera.
     """
     cfg = _load_config_from_env()
-
-    if not keywords and not classification_ids:
-        # A API exige pelo menos um criterio de busca
-        return [], None
+    if not keywords:
+        return []
 
     page_size = max(1, min(int(page_size), 20))
-
-    params: Dict[str, Any] = {
+    params = {
         "marketplaceIds": cfg.marketplace_id,
+        "keywords": keywords[:200],
         "includedData": included_data,
         "pageSize": page_size,
+        "page": max(1, int(page)),
     }
-
-    if keywords:
-        params["keywords"] = keywords[:200]
-
-    if classification_ids:
-        # classificationIds aceita lista, enviar como CSV
-        params["classificationIds"] = ",".join(str(cid) for cid in classification_ids if cid)
-
-    if page_token:
-        params["pageToken"] = page_token
 
     data = _request_sp_api(
         cfg=cfg,
@@ -518,10 +503,7 @@ def search_catalog_items(
         params=params,
     )
 
-    items = data.get("items") or []
-    pagination = data.get("pagination") or {}
-    next_token = pagination.get("nextToken")
-    return items, next_token
+    return data.get("items") or []
 
 
 # ---------------------------------------------------------------------------
