@@ -308,41 +308,44 @@ def _get_buybox_price_cached(asin: str) -> Optional[Dict[str, Any]]:
 # -----------------------------------------------------------------------------#
 # Helper para gerar variações de keyword (multi-seed)
 # -----------------------------------------------------------------------------#
-def _build_keyword_variants(base_kw: Optional[str], max_variants: int = 30) -> List[str]:
+def _build_keyword_variants(base_kw: Optional[str], max_variants: int = 50) -> List[str]:
     """
-    Gera várias variações da keyword de base para tentar cobrir mais produtos
+    Gera variações inteligentes de keyword para ampliar o alcance de produtos distintos
     dentro da mesma categoria/subcategoria.
-
-    Exemplo: se base_kw = "kitchen & dining", gera:
-      - "kitchen & dining"
-      - "kitchen & dining a"
-      - "kitchen & dining e"
-      - "kitchen & dining pro"
-      - ...
-      - "a", "e", "i", "o", "u"
     """
     base_kw = (base_kw or "").strip()
     variants: List[str] = []
 
-    # Sufixos simples que mudam um pouco a busca dentro da mesma categoria
-    suffixes = ["", " a", " e", " i", " o", " u", " pro", " kit", " set", " new"]
+    prefixes = ["best", "cheap", "top", "new", "sale", "deal"]
+    suffixes = [
+        "", " a", " e", " i", " o", " u",
+        " kit", " set", " bundle", " pro",
+        " with", " for", " from", " 2024",
+        " top rated", " offer", " usa", " brand"
+    ]
+    generic_seeds = ["a", "e", "i", "o", "u"]
 
     if base_kw:
-        for suf in suffixes:
-            v = (base_kw + suf).strip()
-            if v and v not in variants:
+        # prefixos (ex: "best kitchen tools")
+        for pre in prefixes:
+            v = f"{pre} {base_kw}".strip()
+            if v not in variants:
                 variants.append(v)
 
-    # Seeds totalmente genéricas para puxar mais coisas da categoria
-    generic_seeds = ["a", "e", "i", "o", "u"]
+        # sufixos (ex: "kitchen tools kit")
+        for suf in suffixes:
+            v = f"{base_kw}{suf}".strip()
+            if v not in variants:
+                variants.append(v)
+
+    # seeds totalmente genéricas
     for g in generic_seeds:
         if g not in variants:
             variants.append(g)
 
-    # Shuffle para deixar a busca mais "aleatória"
     random.shuffle(variants)
-
     return variants[:max_variants]
+
 
 
 # -----------------------------------------------------------------------------#
