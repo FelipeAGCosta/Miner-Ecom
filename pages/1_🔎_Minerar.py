@@ -11,6 +11,8 @@ import streamlit as st
 from integrations.amazon_matching import discover_amazon_products
 from lib.tasks import flatten_categories, load_categories_tree
 from ebay_client import get_item_detail  # ainda usado no filtro de quantidade eBay
+from lib.amazon_store import upsert_amazon_products  # <-- novo
+from lib.db import upsert_amazon_products
 
 # ---------------------------------------------------------------------------
 # CSS global
@@ -154,7 +156,7 @@ elif selected_parent:
 kw = " ".join(p for p in kw_parts if p).strip() or "a"
 st.session_state["_kw"] = kw
 
-# resolve browse_node_id a partir do category_id da subcategoria/categoria
+# *** resolve browse_node_id a partir do category_id da subcategoria/categoria ***
 browse_node_id: Optional[int] = None
 if selected_child and selected_child.get("category_id") is not None:
     try:
@@ -172,7 +174,7 @@ st.session_state["_browse_node_id"] = browse_node_id
 st.markdown("</div>", unsafe_allow_html=True)
 st.caption(
     "Quanto mais ampla a busca, maior o tempo. "
-    "Por enquanto focamos em trazer produtos \"brutos\" com preço na Amazon.com."
+    "Por enquanto focamos em trazer produtos 'brutos' com preço na Amazon.com."
 )
 
 # ---------------------------------------------------------------------------
@@ -273,72 +275,51 @@ def _make_search_url(row) -> Optional[str]:
 
 
 def _render_table(df: pd.DataFrame):
-    # Preço numérico
+    """
+    Renderiza a tabela principal da mineração Amazon-first.
+
+    Foco:
+      - Preço (BuyBox / Lowest da Amazon)
+      - BSR (sales_rank)
+      - Título
+      - ASIN
+      - GTIN/UPC
+      - Tipo de oferta (FBA/FBM)
+      - Prime
+      - Link Amazon
+    """
     if "amazon_price" in df.columns:
         df["amazon_price_num"] = pd.to_numeric(df["amazon_price"], errors="coerce")
-
-    # BSR numérico (inteiro)
     if "amazon_sales_rank" in df.columns:
-        df["amazon_sales_rank"] = pd.to_numeric(
-            df["amazon_sales_rank"], errors="coerce"
-        ).round(0)
+        df["amazon_sales_rank"] = pd.to_numeric(df["amazon_sales_rank"], errors="coerce").round(0)
 
-    show_qty = bool(st.session_state.get("_show_qty", False))
-    if show_qty and "available_qty" in df.columns:
-        df["available_qty_disp"] = df["available_qty"].apply(
-            lambda x: int(x) if pd.notna(x) else "+10"
-        )
+    # FBA vs FBM (fulfillment_channel)
+    if "amazon_fulfillment_channel" in df.columns:
+        def _fc_label(v: Any) -> str:
+            v_str = str(v or "").upper()
+            if v_str == "AMAZON":
+                return "FBA"
+            if v_str:
+                return "FBM"
+            return ""
+        df["fc_display"] = df["amazon_fulfillment_channel"].apply(_fc_label)
 
-    # Ícone de Prime
+    # Prime (só ícone)
     if "amazon_is_prime" in df.columns:
-        df["prime_icon"] = df["amazon_is_prime"].apply(
-            lambda x: "✅" if bool(x) else "❌"
-        )
+        df["prime_icon"] = df["amazon_is_prime"].apply(lambda x: "✅" if bool(x) else "❌")
     else:
         df["prime_icon"] = "❌"
 
-    # Canal FBA / FBM (a partir de amazon_fulfillment_channel)
-    if "amazon_fulfillment_channel" in df.columns:
-        def _fmt_channel(ch: Any) -> str:
-            ch_str = (str(ch) if ch is not None else "").upper()
-            if ch_str == "AMAZON":
-                return "FBA"
-            if not ch_str:
-                return ""
-            return "FBM"
-
-        df["amazon_fulfillment_disp"] = df["amazon_fulfillment_channel"].apply(
-            _fmt_channel
-        )
-
-    # UPC: só quando o tipo de GTIN for realmente UPC
-    if "gtin" in df.columns:
-        def _extract_upc(row):
-            t = str(row.get("gtin_type") or "").upper()
-            v = str(row.get("gtin") or "").strip()
-            if t == "UPC" and v:
-                return v
-            return ""
-
-        df["amazon_upc"] = df.apply(_extract_upc, axis=1)
-
-    # Colunas a exibir – foco 100% Amazon-first
     show_cols = [
-        "amazon_price_num",          # Preço (Amazon)
-        "amazon_sales_rank",         # BSR numérico
-        "amazon_sales_rank_category",# Texto da categoria do BSR
-        "amazon_brand",              # Marca
-        "amazon_title",              # Título Amazon
-        "amazon_product_url",        # Link Amazon
-        "amazon_asin",               # ASIN
-        "amazon_upc",                # UPC (se existir)
-        "amazon_fulfillment_disp",   # FBA / FBM
-        "prime_icon",                # Prime ✅/❌
+        "amazon_price_num",
+        "amazon_sales_rank",
+        "amazon_title",
+        "amazon_product_url",
+        "amazon_asin",
+        "gtin",
+        "fc_display",
+        "prime_icon",
     ]
-
-    if show_qty and "available_qty_disp" in df.columns:
-        # se um dia você usar estoque do eBay junto
-        show_cols.insert(3, "available_qty_disp")
 
     exist = [c for c in show_cols if c in df.columns]
     if not exist:
@@ -352,13 +333,7 @@ def _render_table(df: pd.DataFrame):
         .set_table_styles(
             [
                 {"selector": "th", "props": [("text-align", "center")]},
-                {
-                    "selector": "td",
-                    "props": [
-                        ("text-align", "center"),
-                        ("vertical-align", "middle"),
-                    ],
-                },
+                {"selector": "td", "props": [("text-align", "center"), ("vertical-align", "middle")]},
             ]
         )
     )
@@ -371,31 +346,16 @@ def _render_table(df: pd.DataFrame):
         hide_index=True,
         height=500,
         column_config={
-            "amazon_price_num": st.column_config.NumberColumn(
-                "Preço (Amazon)", format="$%.2f"
-            ),
-            "amazon_sales_rank": st.column_config.NumberColumn(
-                "BSR Amazon", format="%d"
-            ),
-            "amazon_sales_rank_category": "Categoria BSR (Amazon)",
-            "amazon_brand": "Marca (Amazon)",
+            "amazon_price_num": st.column_config.NumberColumn("Preço (Amazon)", format="$%.2f"),
+            "amazon_sales_rank": st.column_config.NumberColumn("BSR Amazon", format="%d"),
             "amazon_title": "Título (Amazon)",
-            "amazon_product_url": st.column_config.LinkColumn(
-                "Produto (Amazon)", display_text="Abrir"
-            ),
+            "amazon_product_url": st.column_config.LinkColumn("Produto (Amazon)", display_text="Abrir"),
             "amazon_asin": "ASIN",
-            "amazon_upc": "UPC (se houver)",
-            "amazon_fulfillment_disp": "Canal (FBA/FBM)",
+            "gtin": "UPC / EAN / GTIN",
+            "fc_display": "Oferta Amazon (FBA/FBM)",
             "prime_icon": "Prime Amazon",
-            **(
-                {"available_qty_disp": "Qtd (estim.) eBay"}
-                if show_qty and "available_qty_disp" in df.columns
-                else {}
-            ),
         },
     )
-
-
 
 # ---------------------------------------------------------------------------
 # Botão principal: Buscar Amazon
@@ -421,18 +381,18 @@ if st.button("Buscar Amazon", key="run_amazon"):
             amazon_offer_type="any",
             min_monthly_sales_est=0,
             browse_node_id=st.session_state.get("_browse_node_id"),
-            max_items=500,  # alvo de 500 distintos com preço
+            max_items=500,  # alvo de 500 distintos
             progress_cb=_update_amz,
         )
         prog.empty()
         am_df = pd.DataFrame(am_items)
 
         st.session_state["_amazon_items_df"] = am_df.copy()
-        st.session_state["_results_df"] = pd.DataFrame()
+        st.session_state["_results_df"] = pd.DataFrame()  # limpa final
         st.session_state["_stage"] = "amazon"
 
         if am_df.empty:
-            msg = (
+            st.warning(
                 f"Nenhum produto encontrado na Amazon. "
                 f"Catálogo visto: {stats.get('catalog_seen')}, "
                 f"com preço conhecido: {stats.get('with_price')}, "
@@ -441,12 +401,18 @@ if st.button("Buscar Amazon", key="run_amazon"):
                 f"duplicados ignorados: {stats.get('dup_asins')}, "
                 f"erros de API: {stats.get('errors_api')}."
             )
-            last_err = stats.get("last_error")
-            if last_err:
-                msg += f"<br><br><small>Detalhe técnico do último erro de API: {last_err}</small>"
-            st.warning(msg, icon="⚠️")
         else:
-            msg = (
+            # Salva / atualiza no banco
+            saved = 0
+            try:
+                saved = upsert_amazon_products(am_df)
+            except Exception as e:
+                st.info(
+                    f"Obs.: falha ao salvar no banco (não impede o uso da tabela na tela): {e}"
+                )
+
+            msg_extra = f" Produtos salvos/atualizados no banco: {saved}." if saved else ""
+            st.success(
                 f"{len(am_df)} produtos distintos encontrados na Amazon "
                 f"(catálogo visto: {stats.get('catalog_seen')}, "
                 f"com preço: {stats.get('with_price')}, "
@@ -454,13 +420,8 @@ if st.button("Buscar Amazon", key="run_amazon"):
                 f"mantidos: {stats.get('kept')}, "
                 f"duplicados ignorados: {stats.get('dup_asins')}, "
                 f"erros de API: {stats.get('errors_api')}). "
-                "A tabela abaixo mostra os produtos encontrados."
+                f"A tabela abaixo mostra os produtos encontrados.{msg_extra}"
             )
-            last_err = stats.get("last_error")
-            if last_err:
-                msg += f"<br><br><small>Detalhe técnico do último erro de API: {last_err}</small>"
-
-            st.success(msg)
             st.session_state["_amazon_stats"] = stats
             st.session_state["_results_df"] = am_df.reset_index(drop=True)
             st.session_state["_results_source"] = "amazon_only"
@@ -514,7 +475,7 @@ if "_results_df" in st.session_state and not st.session_state["_results_df"].emp
     _render_table(df.iloc[start:end].copy())
     st.caption(f"Página {page}/{total_pages} - exibindo {len(df.iloc[start:end])} itens.")
 
-    # Bloco de quantidade eBay (mantido, mas opcional / futuro)
+    # Bloco de quantidade eBay (mantido, mas opcional)
     st.subheader("Quantidade mínima do produto em estoque eBay (opcional, fluxo futuro)")
     qty_after = st.number_input(
         "Inserir quantidade mínima desejada (opcional)",
