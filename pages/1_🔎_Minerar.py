@@ -273,67 +273,78 @@ def _make_search_url(row) -> Optional[str]:
 
 
 def _render_table(df: pd.DataFrame):
-    """
-    Renderiza a tabela 100% Amazon-first, com foco em:
-      - Título
-      - Preço (BuyBox/Lowest)
-      - Sales Rank
-      - Categoria do BSR
-      - Tipo de oferta (FBA/FBM)
-      - Prime?
-      - ASIN
-      - UPC (se conhecido)
-      - Link Amazon
-    """
+    # Preço numérico
     if "amazon_price" in df.columns:
         df["amazon_price_num"] = pd.to_numeric(df["amazon_price"], errors="coerce")
 
+    # BSR numérico (inteiro)
     if "amazon_sales_rank" in df.columns:
-        df["amazon_sales_rank"] = pd.to_numeric(df["amazon_sales_rank"], errors="coerce").round(0)
+        df["amazon_sales_rank"] = pd.to_numeric(
+            df["amazon_sales_rank"], errors="coerce"
+        ).round(0)
 
-    # Prime icon
+    show_qty = bool(st.session_state.get("_show_qty", False))
+    if show_qty and "available_qty" in df.columns:
+        df["available_qty_disp"] = df["available_qty"].apply(
+            lambda x: int(x) if pd.notna(x) else "+10"
+        )
+
+    # Ícone de Prime
     if "amazon_is_prime" in df.columns:
-        df["prime_icon"] = df["amazon_is_prime"].apply(lambda x: "✅" if bool(x) else "❌")
+        df["prime_icon"] = df["amazon_is_prime"].apply(
+            lambda x: "✅" if bool(x) else "❌"
+        )
     else:
         df["prime_icon"] = "❌"
 
-    # Modo de fulfillment: FBA/FBM/? baseado em amazon_fulfillment_channel
-    def _mode(row):
-        ch = str(row.get("amazon_fulfillment_channel") or "").upper()
-        if ch == "AMAZON":
-            return "FBA"
-        if ch:
-            return "FBM"
-        return "?"
-
+    # Canal FBA / FBM (a partir de amazon_fulfillment_channel)
     if "amazon_fulfillment_channel" in df.columns:
-        df["amazon_fulfillment_mode"] = df.apply(_mode, axis=1)
-    else:
-        df["amazon_fulfillment_mode"] = ""
+        def _fmt_channel(ch: Any) -> str:
+            ch_str = (str(ch) if ch is not None else "").upper()
+            if ch_str == "AMAZON":
+                return "FBA"
+            if not ch_str:
+                return ""
+            return "FBM"
 
-    # Garante colunas básicas
-    if "upc" not in df.columns:
-        df["upc"] = ""
+        df["amazon_fulfillment_disp"] = df["amazon_fulfillment_channel"].apply(
+            _fmt_channel
+        )
 
+    # UPC: só quando o tipo de GTIN for realmente UPC
+    if "gtin" in df.columns:
+        def _extract_upc(row):
+            t = str(row.get("gtin_type") or "").upper()
+            v = str(row.get("gtin") or "").strip()
+            if t == "UPC" and v:
+                return v
+            return ""
+
+        df["amazon_upc"] = df.apply(_extract_upc, axis=1)
+
+    # Colunas a exibir – foco 100% Amazon-first
     show_cols = [
-        "amazon_title",
-        "amazon_price_num",
-        "amazon_sales_rank",
-        "amazon_sales_rank_category",
-        "amazon_fulfillment_mode",
-        "prime_icon",
-        "amazon_asin",
-        "upc",
-        "amazon_product_url",
+        "amazon_price_num",          # Preço (Amazon)
+        "amazon_sales_rank",         # BSR numérico
+        "amazon_sales_rank_category",# Texto da categoria do BSR
+        "amazon_brand",              # Marca
+        "amazon_title",              # Título Amazon
+        "amazon_product_url",        # Link Amazon
+        "amazon_asin",               # ASIN
+        "amazon_upc",                # UPC (se existir)
+        "amazon_fulfillment_disp",   # FBA / FBM
+        "prime_icon",                # Prime ✅/❌
     ]
+
+    if show_qty and "available_qty_disp" in df.columns:
+        # se um dia você usar estoque do eBay junto
+        show_cols.insert(3, "available_qty_disp")
 
     exist = [c for c in show_cols if c in df.columns]
     if not exist:
         return
 
     display_df = df[exist].copy().fillna("")
-
-    # Estilo: título alinhado à esquerda, resto centralizado
     left_cols = [c for c in ["amazon_title"] if c in display_df.columns]
 
     styler = (
@@ -341,7 +352,13 @@ def _render_table(df: pd.DataFrame):
         .set_table_styles(
             [
                 {"selector": "th", "props": [("text-align", "center")]},
-                {"selector": "td", "props": [("text-align", "center"), ("vertical-align", "middle")]},
+                {
+                    "selector": "td",
+                    "props": [
+                        ("text-align", "center"),
+                        ("vertical-align", "middle"),
+                    ],
+                },
             ]
         )
     )
@@ -354,17 +371,30 @@ def _render_table(df: pd.DataFrame):
         hide_index=True,
         height=500,
         column_config={
-            "amazon_title": "Título (Amazon)",
-            "amazon_price_num": st.column_config.NumberColumn("Preço (Amazon)", format="$%.2f"),
-            "amazon_sales_rank": st.column_config.NumberColumn("BSR Amazon", format="%d"),
+            "amazon_price_num": st.column_config.NumberColumn(
+                "Preço (Amazon)", format="$%.2f"
+            ),
+            "amazon_sales_rank": st.column_config.NumberColumn(
+                "BSR Amazon", format="%d"
+            ),
             "amazon_sales_rank_category": "Categoria BSR (Amazon)",
-            "amazon_fulfillment_mode": "Oferta (FBA/FBM)",
-            "prime_icon": "Prime Amazon",
+            "amazon_brand": "Marca (Amazon)",
+            "amazon_title": "Título (Amazon)",
+            "amazon_product_url": st.column_config.LinkColumn(
+                "Produto (Amazon)", display_text="Abrir"
+            ),
             "amazon_asin": "ASIN",
-            "upc": "UPC",
-            "amazon_product_url": st.column_config.LinkColumn("Produto (Amazon)", display_text="Abrir"),
+            "amazon_upc": "UPC (se houver)",
+            "amazon_fulfillment_disp": "Canal (FBA/FBM)",
+            "prime_icon": "Prime Amazon",
+            **(
+                {"available_qty_disp": "Qtd (estim.) eBay"}
+                if show_qty and "available_qty_disp" in df.columns
+                else {}
+            ),
         },
     )
+
 
 
 # ---------------------------------------------------------------------------
