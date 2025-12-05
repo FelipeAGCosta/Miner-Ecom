@@ -11,7 +11,7 @@ import streamlit as st
 from integrations.amazon_matching import discover_amazon_products
 from lib.tasks import flatten_categories, load_categories_tree
 from ebay_client import get_item_detail  # ainda usado no filtro de quantidade eBay
-from lib.amazon_store import upsert_amazon_products  # <-- novo
+from lib.config import make_engine
 from lib.db import upsert_amazon_products
 
 # ---------------------------------------------------------------------------
@@ -156,7 +156,7 @@ elif selected_parent:
 kw = " ".join(p for p in kw_parts if p).strip() or "a"
 st.session_state["_kw"] = kw
 
-# *** resolve browse_node_id a partir do category_id da subcategoria/categoria ***
+# resolve browse_node_id a partir do category_id da subcategoria/categoria (se vier a usar)
 browse_node_id: Optional[int] = None
 if selected_child and selected_child.get("category_id") is not None:
     try:
@@ -171,10 +171,16 @@ elif selected_parent and selected_parent.get("category_id") is not None:
 
 st.session_state["_browse_node_id"] = browse_node_id
 
+# contexto da busca em PT (pra salvar no banco)
+source_root_name = sel_root if sel_root != "Todas as categorias" else None
+source_child_name = sel_child if sel_child != "Todas as subcategorias" else None
+st.session_state["_source_root_name"] = source_root_name
+st.session_state["_source_child_name"] = source_child_name
+
 st.markdown("</div>", unsafe_allow_html=True)
 st.caption(
     "Quanto mais ampla a busca, maior o tempo. "
-    "Por enquanto focamos em trazer produtos 'brutos' com preço na Amazon.com."
+    "Por enquanto focamos em trazer produtos \"brutos\" com preço na Amazon.com."
 )
 
 # ---------------------------------------------------------------------------
@@ -275,36 +281,15 @@ def _make_search_url(row) -> Optional[str]:
 
 
 def _render_table(df: pd.DataFrame):
-    """
-    Renderiza a tabela principal da mineração Amazon-first.
-
-    Foco:
-      - Preço (BuyBox / Lowest da Amazon)
-      - BSR (sales_rank)
-      - Título
-      - ASIN
-      - GTIN/UPC
-      - Tipo de oferta (FBA/FBM)
-      - Prime
-      - Link Amazon
-    """
     if "amazon_price" in df.columns:
         df["amazon_price_num"] = pd.to_numeric(df["amazon_price"], errors="coerce")
     if "amazon_sales_rank" in df.columns:
         df["amazon_sales_rank"] = pd.to_numeric(df["amazon_sales_rank"], errors="coerce").round(0)
 
-    # FBA vs FBM (fulfillment_channel)
-    if "amazon_fulfillment_channel" in df.columns:
-        def _fc_label(v: Any) -> str:
-            v_str = str(v or "").upper()
-            if v_str == "AMAZON":
-                return "FBA"
-            if v_str:
-                return "FBM"
-            return ""
-        df["fc_display"] = df["amazon_fulfillment_channel"].apply(_fc_label)
+    show_qty = bool(st.session_state.get("_show_qty", False))
+    if show_qty and "available_qty" in df.columns:
+        df["available_qty_disp"] = df["available_qty"].apply(lambda x: int(x) if pd.notna(x) else "+10")
 
-    # Prime (só ícone)
     if "amazon_is_prime" in df.columns:
         df["prime_icon"] = df["amazon_is_prime"].apply(lambda x: "✅" if bool(x) else "❌")
     else:
@@ -313,13 +298,19 @@ def _render_table(df: pd.DataFrame):
     show_cols = [
         "amazon_price_num",
         "amazon_sales_rank",
+        "amazon_sales_rank_category",
+        "amazon_brand",
         "amazon_title",
         "amazon_product_url",
         "amazon_asin",
-        "gtin",
-        "fc_display",
         "prime_icon",
     ]
+    if "amazon_est_monthly_sales" in df.columns:
+        show_cols.insert(1, "amazon_est_monthly_sales")
+    if "amazon_demand_bucket" in df.columns:
+        show_cols.insert(2, "amazon_demand_bucket")
+    if show_qty and "available_qty_disp" in df.columns:
+        show_cols.insert(3, "available_qty_disp")
 
     exist = [c for c in show_cols if c in df.columns]
     if not exist:
@@ -347,13 +338,22 @@ def _render_table(df: pd.DataFrame):
         height=500,
         column_config={
             "amazon_price_num": st.column_config.NumberColumn("Preço (Amazon)", format="$%.2f"),
+            "amazon_est_monthly_sales": st.column_config.NumberColumn(
+                "Vendas aproximadas (último mês)", format="%d"
+            ),
             "amazon_sales_rank": st.column_config.NumberColumn("BSR Amazon", format="%d"),
+            "amazon_sales_rank_category": "Categoria BSR (Amazon)",
+            "amazon_demand_bucket": "Demanda (BSR)",
+            "amazon_brand": "Marca (Amazon)",
             "amazon_title": "Título (Amazon)",
             "amazon_product_url": st.column_config.LinkColumn("Produto (Amazon)", display_text="Abrir"),
             "amazon_asin": "ASIN",
-            "gtin": "UPC / EAN / GTIN",
-            "fc_display": "Oferta Amazon (FBA/FBM)",
             "prime_icon": "Prime Amazon",
+            **(
+                {"available_qty_disp": "Qtd (estim.) eBay"}
+                if show_qty and "available_qty_disp" in df.columns
+                else {}
+            ),
         },
     )
 
@@ -402,16 +402,40 @@ if st.button("Buscar Amazon", key="run_amazon"):
                 f"erros de API: {stats.get('errors_api')}."
             )
         else:
-            # Salva / atualiza no banco
-            saved = 0
+            # tenta salvar no banco (amazon_products)
             try:
-                saved = upsert_amazon_products(am_df)
+                engine = make_engine()
+                src_root = st.session_state.get("_source_root_name")
+                src_child = st.session_state.get("_source_child_name")
+                kw_used = st.session_state.get("_kw", "")
+
+                df_to_save = pd.DataFrame(
+                    {
+                        "asin": am_df.get("amazon_asin"),
+                        "marketplace_id": None,
+                        "title": am_df.get("amazon_title"),
+                        "brand": am_df.get("amazon_brand"),
+                        "browse_node_id": am_df.get("amazon_browse_node_id"),
+                        "browse_node_name": am_df.get("amazon_browse_node_name"),
+                        "gtin": am_df.get("gtin"),
+                        "gtin_type": am_df.get("gtin_type"),
+                        "sales_rank": am_df.get("amazon_sales_rank"),
+                        "sales_rank_category": am_df.get("amazon_sales_rank_category"),
+                        "price": am_df.get("amazon_price"),
+                        "currency": am_df.get("amazon_currency"),
+                        "is_prime": am_df.get("amazon_is_prime"),
+                        "fulfillment_channel": am_df.get("amazon_fulfillment_channel"),
+                        "source_root_name": src_root,
+                        "source_child_name": src_child,
+                        "search_kw": kw_used,
+                    }
+                )
+                upsert_amazon_products(engine, df_to_save)
             except Exception as e:
                 st.info(
                     f"Obs.: falha ao salvar no banco (não impede o uso da tabela na tela): {e}"
                 )
 
-            msg_extra = f" Produtos salvos/atualizados no banco: {saved}." if saved else ""
             st.success(
                 f"{len(am_df)} produtos distintos encontrados na Amazon "
                 f"(catálogo visto: {stats.get('catalog_seen')}, "
@@ -420,7 +444,7 @@ if st.button("Buscar Amazon", key="run_amazon"):
                 f"mantidos: {stats.get('kept')}, "
                 f"duplicados ignorados: {stats.get('dup_asins')}, "
                 f"erros de API: {stats.get('errors_api')}). "
-                f"A tabela abaixo mostra os produtos encontrados.{msg_extra}"
+                "A tabela abaixo mostra os produtos encontrados."
             )
             st.session_state["_amazon_stats"] = stats
             st.session_state["_results_df"] = am_df.reset_index(drop=True)
