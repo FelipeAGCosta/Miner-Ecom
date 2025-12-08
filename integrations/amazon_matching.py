@@ -538,10 +538,10 @@ def discover_amazon_products(
     amazon_offer_type: str,
     min_monthly_sales_est: Optional[int],
     browse_node_id: Optional[int] = None,
-    max_pages: int = DEFAULT_DISCOVERY_MAX_PAGES,
-    page_size: int = DEFAULT_DISCOVERY_PAGE_SIZE,
-    max_items: int = DEFAULT_DISCOVERY_MAX_ITEMS,
-    max_price_lookups: int = DEFAULT_DISCOVERY_MAX_PRICE_LOOKUPS,
+    max_pages: Optional[int] = None,
+    page_size: Optional[int] = None,
+    max_items: Optional[int] = None,
+    max_price_lookups: Optional[int] = None,
     progress_cb: Optional[callable] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
     """
@@ -553,6 +553,16 @@ def discover_amazon_products(
       - max_items: número máximo de ASINs distintos desejados (ex.: 500).
       - max_price_lookups: limite de chamadas ao endpoint de preço, para evitar travar.
     """
+    # Se vierem None ou <= 0, caímos nos defaults globais
+    if not max_pages or max_pages <= 0:
+        max_pages = DEFAULT_DISCOVERY_MAX_PAGES
+    if not page_size or page_size <= 0:
+        page_size = DEFAULT_DISCOVERY_MAX_PAGE_SIZE if False else DEFAULT_DISCOVERY_PAGE_SIZE  # só pra manter legível
+    if not max_items or max_items <= 0:
+        max_items = DEFAULT_DISCOVERY_MAX_ITEMS
+    if not max_price_lookups or max_price_lookups <= 0:
+        max_price_lookups = DEFAULT_DISCOVERY_MAX_PRICE_LOOKUPS
+
     return _discover_amazon_products(
         kw=kw,
         amazon_price_min=amazon_price_min,
