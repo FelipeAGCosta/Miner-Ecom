@@ -1,18 +1,17 @@
-"""
-crawler_amazon_batch.py
-
-Crawler em lote para mineração Amazon-first.
-
-- Lê a árvore de categorias do search_tasks.yaml (via load_categories_tree).
-- Gera uma lista de tarefas (root_name, child_name, amazon_kw_base).
-- Para cada tarefa, chama discover_amazon_products e salva em amazon_products.
-- Respeita limites simples: número máximo de tarefas por execução,
-  max_items por tarefa e um sleep entre chamadas para não estourar a quota.
-"""
+#!/usr/bin/env python
+# crawler_amazon_batch.py
+#
+# Varre várias categorias/subcategorias do search_tasks.yaml,
+# chama discover_amazon_products para cada uma e salva / atualiza
+# na tabela amazon_products.
+#
+# Uso típico:
+#   python crawler_amazon_batch.py --root-filter "Pet Shop" --max-items 50 --max-tasks 2
 
 import argparse
+import sys
 import time
-from typing import List, Dict, Any, Iterable, Tuple, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -22,202 +21,231 @@ from integrations.amazon_matching import discover_amazon_products
 from lib.db import upsert_amazon_products
 
 
-# ---------------------------------------------------------------------------
-# Geração de tarefas a partir do search_tasks.yaml
-# ---------------------------------------------------------------------------
-
-def _iter_tasks_from_tree(tree: List[Dict[str, Any]]) -> Iterable[Tuple[str, Optional[str], str]]:
+# ----------------------------------------------------------------------
+# Monta a lista de "tarefas" (root + child + kw) a partir do YAML
+# ----------------------------------------------------------------------
+def build_tasks(
+    root_filter: Optional[str] = None,
+    child_filter: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     """
-    Gera tuplas (root_name, child_name, amazon_kw_base) a partir da
-    estrutura de categorias do search_tasks.yaml.
+    Lê a árvore de categorias do search_tasks.yaml e retorna uma lista de tarefas:
 
-    Regra:
-      - Se tiver children: gera uma tarefa por subcategoria.
-      - Se NÃO tiver children: gera tarefa só com a categoria raiz.
+      {
+        "root_name": "Pet Shop",
+        "child_name": "Cachorros",
+        "kw": "dogs"  # amazon_kw da subcategoria (ou da raiz se não tiver filhos)
+      }
+
+    root_filter / child_filter são comparações EXATAS pelo campo "name" em PT.
     """
+    tree = load_categories_tree()
+    tasks: List[Dict[str, Any]] = []
+
     for root in tree:
         root_name = root.get("name")
+        if not root_name:
+            continue
+
+        # aplica filtro de root, se informado
+        if root_filter and root_name != root_filter:
+            continue
+
         children = root.get("children") or []
+        root_kw = (root.get("amazon_kw") or root_name).strip()
 
-        # preferimos usar amazon_kw se existir; senão, o próprio name
-        root_kw = (root.get("amazon_kw") or root_name or "").strip()
+        if not children:
+            # categoria sem filhos → vira uma tarefa sozinha
+            if child_filter:
+                # usuário pediu subcategoria específica, mas não existe aqui
+                continue
+            tasks.append(
+                {
+                    "root_name": root_name,
+                    "child_name": None,
+                    "kw": root_kw,
+                }
+            )
+            continue
 
-        if children:
-            for ch in children:
-                child_name = ch.get("name")
-                child_kw = (ch.get("amazon_kw") or child_name or root_kw).strip()
-                yield root_name, child_name, child_kw
-        else:
-            # categoria sem filhos: ainda assim vale como uma tarefa
-            yield root_name, None, root_kw
+        # com filhos → cada child gera uma tarefa
+        for ch in children:
+            child_name = ch.get("name")
+            if not child_name:
+                continue
+
+            if child_filter and child_name != child_filter:
+                continue
+
+            child_kw = (ch.get("amazon_kw") or child_name).strip()
+
+            tasks.append(
+                {
+                    "root_name": root_name,
+                    "child_name": child_name,
+                    "kw": child_kw,
+                }
+            )
+
+    # ordena só pra ficar previsível no log
+    tasks.sort(key=lambda t: (t["root_name"] or "", t["child_name"] or ""))
+    return tasks
 
 
-def _parse_root_filter(root_filter: Optional[str]) -> Optional[set]:
-    """
-    Converte "--root-filter 'Pet Shop,Casa & Cozinha'" em um set de nomes.
-    Se None ou string vazia, retorna None.
-    """
-    if not root_filter:
-        return None
-    parts = [p.strip() for p in root_filter.split(",") if p.strip()]
-    return set(parts) if parts else None
-
-
-# ---------------------------------------------------------------------------
-# Execução principal (batch)
-# ---------------------------------------------------------------------------
-
+# ----------------------------------------------------------------------
+# Execução principal do batch
+# ----------------------------------------------------------------------
 def run_batch(
+    root_filter: Optional[str],
+    child_filter: Optional[str],
     max_items: int,
     max_tasks: int,
     sleep_seconds: float,
-    root_filter: Optional[str],
-    start_from: int,
 ) -> None:
-    """
-    Executa o crawler em lote:
-
-    - max_items: máximo de itens por tarefa (por categoria/subcategoria).
-    - max_tasks: máximo de tarefas (root+child) nesta execução.
-    - sleep_seconds: pausa entre tarefas para aliviar a quota da API.
-    - root_filter: opcional, filtra pelo nome da categoria raiz (ou várias, separadas por vírgulas).
-    - start_from: índice inicial na lista de tarefas, para "continuar de onde parou".
-    """
-    print("🔧 Iniciando crawler em lote (Amazon-first)...")
-
     engine = make_engine()
-    tree = load_categories_tree()
 
-    all_tasks = list(_iter_tasks_from_tree(tree))
-    print(f"📋 Total de combinações (root/subcat) encontradas no YAML: {len(all_tasks)}")
-
-    roots_set = _parse_root_filter(root_filter)
-    if roots_set:
-        all_tasks = [t for t in all_tasks if t[0] in roots_set]
-        print(f"📂 Após filtro de root ({', '.join(roots_set)}): {len(all_tasks)} tarefas.")
-
-    if start_from < 0:
-        start_from = 0
-    if start_from >= len(all_tasks):
-        print(f"⚠️ start_from={start_from} está além da lista de tarefas ({len(all_tasks)}). Nada a fazer.")
+    tasks = build_tasks(root_filter=root_filter, child_filter=child_filter)
+    if not tasks:
+        print("Nenhuma tarefa encontrada para os filtros informados.")
         return
 
-    if max_tasks <= 0:
-        # se max_tasks <= 0, roda tudo a partir de start_from
-        tasks_slice = all_tasks[start_from:]
-    else:
-        tasks_slice = all_tasks[start_from:start_from + max_tasks]
+    if max_tasks <= 0 or max_tasks > len(tasks):
+        max_tasks = len(tasks)
 
-    if not tasks_slice:
-        print("⚠️ Nenhuma tarefa selecionada após aplicar filtros/limites.")
-        return
+    print(
+        f"\n📦 Iniciando batch Amazon-first "
+        f"({max_tasks} tarefa(s), até {max_items} itens por tarefa)...\n"
+    )
 
-    print(f"🚀 Rodando {len(tasks_slice)} tarefas nesta execução "
-          f"(start_from={start_from}, max_tasks={max_tasks})")
+    for idx, task in enumerate(tasks[:max_tasks], start=1):
+        root_name = task["root_name"]
+        child_name = task["child_name"]
+        kw_base = task["kw"]
 
-    for idx, (root_name, child_name, kw_base) in enumerate(tasks_slice, start=1):
-        label = child_name or "(sem subcategoria)"
-        print(f"\n[{idx}/{len(tasks_slice)}] 🔎 Categoria: {root_name} | Subcategoria: {label}")
+        print(
+            f"[{idx}/{max_tasks}] 🔎 Categoria: {root_name}"
+            f" | Subcategoria: {child_name or '(nenhuma)'}"
+        )
         print(f"   - amazon_kw base: '{kw_base}'")
         print(f"   - max_items para esta tarefa: {max_items}")
 
+        # Chamada principal à Amazon (catalog + pricing)
         try:
-            items, stats = discover_amazon_products(
+            am_items, stats = discover_amazon_products(
                 kw=kw_base,
                 amazon_price_min=None,
                 amazon_price_max=None,
                 amazon_offer_type="any",
                 min_monthly_sales_est=0,
-                browse_node_id=None,      # para o crawler, deixamos sem filtro de browse_node
+                browse_node_id=None,  # se quiser, pode plugar category_id aqui depois
                 max_items=max_items,
-                progress_cb=None,        # sem barra de progresso (modo CLI)
+                progress_cb=None,  # batch de linha de comando, sem barra de progresso
             )
         except Exception as e:
-            print(f"   ⚠️ Erro na discover_amazon_products: {e}")
-            continue
+            print(f"   ❌ Erro fatal em discover_amazon_products: {e}")
+            break
 
-        kept = len(items)
+        kept = stats.get("kept", len(am_items))
+        catalog_seen = stats.get("catalog_seen", 0)
+        with_price = stats.get("with_price", 0)
+        errors_api = stats.get("errors_api", 0)
+        last_error = stats.get("last_error") or ""
+
         print(
-            f"   → Resultado: kept={kept} | "
-            f"catalog_seen={stats.get('catalog_seen')} | "
-            f"with_price={stats.get('with_price')} | "
-            f"errors_api={stats.get('errors_api')}"
+            f"   → Resultado: kept={kept} | catalog_seen={catalog_seen} "
+            f"| with_price={with_price} | errors_api={errors_api}"
         )
-        last_error = stats.get("last_error")
         if last_error:
             print(f"     Último erro de API observado: {last_error}")
 
-        if not items:
-            # nada pra salvar, vai pra próxima tarefa
-            continue
+        # Se não veio nada, só pula pro próximo
+        if not am_items:
+            print("   (Nenhum item retornado pela Amazon para esta tarefa.)")
+        else:
+            df = pd.DataFrame(am_items)
+            try:
+                rows_ok = upsert_amazon_products(
+                    engine,
+                    df,
+                    source_root_name=root_name,
+                    source_child_name=child_name,
+                    search_kw=kw_base,
+                )
+                print(f"   ✅ upsert_amazon_products OK - linhas processadas: {rows_ok}")
+            except Exception as e:
+                print(
+                    "   ⚠️ Falha ao salvar no banco (mas a mineração em si funcionou): "
+                    f"{e}"
+                )
 
-        df = pd.DataFrame(items)
-
-        try:
-            n = upsert_amazon_products(
-                engine,
-                df,
-                source_root_name=root_name,
-                source_child_name=child_name,
-                search_kw=kw_base,
+        # Se a Amazon deu QUOTAEXCEEDED, encerramos o batch de forma elegante
+        if errors_api and "QUOTAEXCEEDED" in last_error.upper():
+            print(
+                "\n⚠️ A Amazon sinalizou QUOTAEXCEEDED (cota de API atingida). "
+                "Encerrando este batch para não ficar batendo à toa.\n"
             )
-            print(f"   ✅ upsert_amazon_products OK - linhas processadas: {n}")
-        except Exception as e:
-            print(f"   ⚠️ Falha ao salvar no banco (mas a mineração em si funcionou): {e}")
+            break
 
-        # pequena pausa entre tarefas pra aliviar a quota da API
-        if idx < len(tasks_slice) and sleep_seconds > 0:
-            print(f"   ⏸ Aguardando {sleep_seconds:.1f} segundos antes da próxima tarefa...")
-            time.sleep(sleep_seconds)
+        # Pausa entre tarefas, se houver mais pela frente
+        if idx < max_tasks and sleep_seconds > 0:
+            print(
+                f"   ⏸ Aguardando {sleep_seconds:.1f} segundos antes da próxima chamada...\n"
+            )
+            try:
+                time.sleep(sleep_seconds)
+            except KeyboardInterrupt:
+                print("\nInterrompido manualmente pelo usuário.")
+                break
 
-    print("\n🏁 Crawler em lote finalizado.")
+    print("\n✅ Batch finalizado.\n")
 
 
-# ---------------------------------------------------------------------------
+# ----------------------------------------------------------------------
 # CLI
-# ---------------------------------------------------------------------------
-
-def main():
-    parser = argparse.ArgumentParser(description="Crawler em lote Amazon-first (usa search_tasks.yaml).")
-    parser.add_argument(
-        "--max-items",
-        type=int,
-        default=100,
-        help="Máximo de itens distintos por tarefa (categoria/subcategoria). Default = 100.",
-    )
-    parser.add_argument(
-        "--max-tasks",
-        type=int,
-        default=5,
-        help="Máximo de tarefas (root+child) nesta execução. Se 0 ou negativo, roda todas a partir de start_from.",
-    )
-    parser.add_argument(
-        "--sleep-seconds",
-        type=float,
-        default=2.0,
-        help="Pausa (em segundos) entre tarefas, para aliviar a quota da SP-API. Default = 2.0.",
+# ----------------------------------------------------------------------
+def main(argv: Optional[List[str]] = None) -> None:
+    parser = argparse.ArgumentParser(
+        description="Batch de mineração Amazon-first (usa search_tasks.yaml)."
     )
     parser.add_argument(
         "--root-filter",
         type=str,
         default=None,
-        help="Opcional: filtra pelo(s) nome(s) da categoria raiz, separados por vírgula. "
-             'Ex.: --root-filter "Pet Shop,Casa & Cozinha"',
+        help='Filtra pelo nome da categoria raiz (exato, em PT, ex.: "Pet Shop").',
     )
     parser.add_argument(
-        "--start-from",
+        "--child-filter",
+        type=str,
+        default=None,
+        help='Filtra pelo nome da subcategoria (exato, em PT, ex.: "Cachorros").',
+    )
+    parser.add_argument(
+        "--max-items",
         type=int,
-        default=0,
-        help="Índice inicial na lista de tarefas (para continuar de onde parou em execuções anteriores).",
+        default=50,
+        help="Número máximo de itens distintos (com preço) por tarefa (default: 50).",
+    )
+    parser.add_argument(
+        "--max-tasks",
+        type=int,
+        default=10,
+        help="Número máximo de tarefas a executar nesse batch (default: 10).",
+    )
+    parser.add_argument(
+        "--sleep-seconds",
+        type=float,
+        default=2.0,
+        help="Pausa em segundos entre uma tarefa e outra (default: 2.0).",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+
     run_batch(
+        root_filter=args.root_filter,
+        child_filter=args.child_filter,
         max_items=args.max_items,
         max_tasks=args.max_tasks,
         sleep_seconds=args.sleep_seconds,
-        root_filter=args.root_filter,
-        start_from=args.start_from,
     )
 
 
