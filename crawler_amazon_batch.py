@@ -1,259 +1,271 @@
+# crawler_amazon_batch.py
+"""
+Batch de mineração Amazon-first.
+
+- Lê as categorias/subcategorias do search_tasks.yaml
+- Usa discover_amazon_products(...) para buscar produtos na Amazon
+- Salva/atualiza na tabela amazon_products (via upsert_amazon_products)
+- Mantém um "estado" simples em .crawler_amazon_state.json para
+  continuar de onde parou entre execuções.
+"""
+
+from __future__ import annotations
+
 import argparse
 import json
-import time
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
+import yaml
 
 from lib.config import make_engine
-from lib.tasks import load_categories_tree, flatten_categories
 from lib.db import upsert_amazon_products
 from integrations.amazon_matching import discover_amazon_products
-from integrations.amazon_spapi import _load_config_from_env
 
-# ---------------------------------------------------------------------------
-# Arquivo de estado para rotação das tasks
-# ---------------------------------------------------------------------------
-
-STATE_FILE = Path(__file__).resolve().parent / "crawler_amazon_state.json"
+BASE_DIR = Path(__file__).resolve().parent
+TASKS_YAML = BASE_DIR / "search_tasks.yaml"
+STATE_PATH = BASE_DIR / ".crawler_amazon_state.json"
 
 
 # ---------------------------------------------------------------------------
-# Carregar lista de tasks (categoria/subcategoria) a partir do YAML
+# Carregar tasks a partir do search_tasks.yaml
 # ---------------------------------------------------------------------------
+
+
+def _iter_root_nodes(raw: Any) -> List[Any]:
+    """
+    Deixa o carregamento bem tolerante ao formato do YAML.
+    Tenta achar uma lista de "roots" em várias chaves comuns.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, dict):
+        # tenta algumas chaves comuns
+        for key in ("roots", "tasks", "categories", "items"):
+            val = raw.get(key)
+            if isinstance(val, list):
+                return val
+        # fallback: considera o próprio dict como um único root
+        return [raw]
+    return []
+
 
 def _load_tasks(root_filter: Optional[str] = None) -> List[Dict[str, Any]]:
     """
-    Carrega tasks a partir do search_tasks.yaml usando load_categories_tree + flatten_categories.
+    Lê o search_tasks.yaml e produz uma lista "achatada" de tasks:
 
-    Cada task é um dicionário com:
-      - root_name: nome da categoria mãe (ex.: "Pet Shop")
-      - child_name: nome da subcategoria (ex.: "Cachorros") ou "" se não houver
-      - amazon_kw: keyword base para a Amazon (ex.: "dogs")
-      - browse_node_id: classificationId da Amazon (se houver no YAML)
+    [
+      {
+        "root_name": "Pet Shop",
+        "child_name": "Cachorros",
+        "amazon_kw": "dogs",
+        "browse_node_id": <opcional>,
+      },
+      ...
+    ]
     """
-    tree = load_categories_tree()
-    flat = flatten_categories(tree)
+    if not TASKS_YAML.exists():
+        print(f"[BATCH] Arquivo {TASKS_YAML} não encontrado.")
+        return []
 
+    with TASKS_YAML.open("r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+
+    roots = _iter_root_nodes(data)
     tasks: List[Dict[str, Any]] = []
 
-    for node in flat:
-        root_name = node.get("root_name") or node.get("name") or ""
-        child_name = node.get("child_name") or ""
-        amazon_kw = (node.get("amazon_kw") or "").strip()
-        browse_node_id = node.get("amazon_browse_node_id")
+    for node in roots:
+        # Root pode ser string ("Eletrônicos") ou dict
+        if isinstance(node, str):
+            root_name = node
+            root_kw = node
+            children = []
+        elif isinstance(node, dict):
+            root_name = (
+                node.get("root_name")
+                or node.get("name")
+                or node.get("label")
+                or ""
+            )
+            if not root_name:
+                root_name = "Categoria"
+            root_kw = (
+                node.get("amazon_kw")
+                or node.get("amazon_keyword")
+                or node.get("kw")
+            )
+            children = node.get("children") or node.get("subcategories") or []
+        else:
+            continue
 
-        tasks.append(
-            {
-                "root_name": root_name,
-                "child_name": child_name,
-                "amazon_kw": amazon_kw,
-                "browse_node_id": browse_node_id,
-            }
-        )
+        # Filtro por nome da categoria-mãe, se solicitado
+        if root_filter and root_filter.lower() not in root_name.lower():
+            continue
 
-    if root_filter:
-        rf = root_filter.lower()
-        tasks = [t for t in tasks if rf in (t["root_name"] or "").lower()]
+        if children:
+            # Cada filho é uma subcategoria / tarefa
+            for ch in children:
+                if isinstance(ch, str):
+                    child_name = ch
+                    child_kw: Optional[str] = root_kw or ch
+                    browse_node_id = None
+                elif isinstance(ch, dict):
+                    child_name = (
+                        ch.get("child_name")
+                        or ch.get("name")
+                        or ch.get("label")
+                        or "-"
+                    )
+                    child_kw = (
+                        ch.get("amazon_kw")
+                        or ch.get("amazon_keyword")
+                        or ch.get("kw")
+                        or root_kw
+                    )
+                    browse_node_id = ch.get("browse_node_id")
+                else:
+                    continue
+
+                if not child_kw:
+                    child_kw = child_name
+
+                tasks.append(
+                    {
+                        "root_name": root_name,
+                        "child_name": child_name,
+                        "amazon_kw": child_kw,
+                        "browse_node_id": browse_node_id,
+                    }
+                )
+        else:
+            # Categoria sem filhos explícitos → vira uma task sozinha
+            kw = root_kw or root_name
+            tasks.append(
+                {
+                    "root_name": root_name,
+                    "child_name": "-",
+                    "amazon_kw": kw,
+                    "browse_node_id": None,
+                }
+            )
 
     return tasks
 
 
 # ---------------------------------------------------------------------------
-# Estado de rotação das tasks
+# Estado simples em JSON (.crawler_amazon_state.json)
 # ---------------------------------------------------------------------------
 
-def _load_state(total_tasks: int) -> Dict[str, Any]:
-    """
-    Lê o arquivo de estado. Se estiver ausente ou inválido, começa do zero.
-    """
-    default_state = {
-        "last_task_index": -1,
-        "total_tasks": total_tasks,
-        "last_run_at": None,
-    }
 
-    if not STATE_FILE.exists():
-        return default_state
-
+def _load_state() -> Dict[str, Any]:
+    if not STATE_PATH.exists():
+        return {"last_task_index": -1}
     try:
-        raw = STATE_FILE.read_text(encoding="utf-8")
-        data = json.loads(raw)
-        if not isinstance(data, dict):
-            return default_state
+        with STATE_PATH.open("r", encoding="utf-8") as f:
+            state = json.load(f)
+        if "last_task_index" not in state:
+            state["last_task_index"] = -1
+        return state
     except Exception:
-        return default_state
-
-    # Se o número de tasks mudou desde a última gravação, zera o índice
-    if data.get("total_tasks") != total_tasks:
-        data["last_task_index"] = -1
-        data["total_tasks"] = total_tasks
-
-    if "last_run_at" not in data:
-        data["last_run_at"] = None
-
-    return data
+        return {"last_task_index": -1}
 
 
 def _save_state(state: Dict[str, Any]) -> None:
-    """
-    Salva o estado em disco.
-    """
-    STATE_FILE.write_text(
-        json.dumps(state, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-
-
-# ---------------------------------------------------------------------------
-# Preparar DataFrame com as colunas esperadas pela tabela amazon_products
-# ---------------------------------------------------------------------------
-
-def _prepare_amazon_df(
-    items: List[Dict[str, Any]],
-    root_name: str,
-    child_name: str,
-    search_kw: str,
-    marketplace_id: str,
-) -> pd.DataFrame:
-    """
-    Converte a lista de itens retornada por discover_amazon_products no formato
-    esperado pelo upsert_amazon_products / tabela amazon_products.
-    """
-    if not items:
-        cols = [
-            "asin",
-            "marketplace_id",
-            "title",
-            "brand",
-            "browse_node_id",
-            "browse_node_name",
-            "gtin",
-            "gtin_type",
-            "sales_rank",
-            "sales_rank_category",
-            "price",
-            "currency",
-            "is_prime",
-            "fulfillment_channel",
-            "source_root_name",
-            "source_child_name",
-            "search_kw",
-        ]
-        return pd.DataFrame(columns=cols)
-
-    df = pd.DataFrame(items)
-
-    out = pd.DataFrame()
-    out["asin"] = df.get("amazon_asin")
-    out["marketplace_id"] = marketplace_id
-    out["title"] = df.get("amazon_title")
-    out["brand"] = df.get("amazon_brand")
-    out["browse_node_id"] = df.get("amazon_browse_node_id")
-    out["browse_node_name"] = df.get("amazon_browse_node_name")
-    out["gtin"] = df.get("gtin")
-    out["gtin_type"] = df.get("gtin_type")
-    out["sales_rank"] = df.get("amazon_sales_rank")
-    out["sales_rank_category"] = df.get("amazon_sales_rank_category")
-    out["price"] = df.get("amazon_price")
-    out["currency"] = df.get("amazon_currency")
-    out["is_prime"] = df.get("amazon_is_prime")
-    out["fulfillment_channel"] = df.get("amazon_fulfillment_channel")
-    out["source_root_name"] = root_name
-    out["source_child_name"] = child_name or ""
-    out["search_kw"] = search_kw
-
-    # Remove linhas sem ASIN para evitar erro de NOT NULL no banco
-    out = out[out["asin"].notna()].copy()
-
-    return out
+    try:
+        with STATE_PATH.open("w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[WARN] Falha ao salvar estado: {e}")
 
 
 # ---------------------------------------------------------------------------
 # Execução do batch
 # ---------------------------------------------------------------------------
 
+
 def run_batch(
+    root_filter: Optional[str],
     max_items: int,
     max_tasks: int,
-    root_filter: Optional[str] = None,
-    reset_state_flag: bool = False,
+    reset_state_flag: bool,
     dry_run: bool = False,
 ) -> None:
-    """
-    Executa um batch de mineração Amazon-first, rodando até max_tasks tasks
-    na sequência, respeitando o estado salvo em disco.
-    """
     tasks = _load_tasks(root_filter=root_filter)
-    total_tasks = len(tasks)
-
-    if total_tasks == 0:
-        print("[BATCH] Nenhuma task encontrada (verifique seu search_tasks.yaml e root_filter).")
+    if not tasks:
+        print(
+            "[BATCH] Nenhuma task encontrada (verifique search_tasks.yaml "
+            "e o parâmetro --root-filter, se usado)."
+        )
         return
 
-    max_tasks = max(1, min(max_tasks, total_tasks))
+    total_tasks = len(tasks)
+
+    if reset_state_flag:
+        state = {"last_task_index": -1}
+    else:
+        state = _load_state()
+
+    last_task_index = int(state.get("last_task_index", -1))
+
+    # Define quantas tasks este run vai executar
+    tasks_to_run = min(max_tasks, total_tasks)
+    if tasks_to_run <= 0:
+        print("[BATCH] max_tasks <= 0, nada a fazer.")
+        return
+
+    # Calcula o índice inicial (com wrap)
+    start_index = (last_task_index + 1) % total_tasks
 
     print(
         f"[BATCH] Iniciando batch Amazon-first "
-        f"({total_tasks} task(s) disponíveis, até {max_tasks} task(s) neste run, "
+        f"({total_tasks} task(s) disponíveis, até {tasks_to_run} task(s) neste run, "
         f"máx {max_items} itens por task)...\n"
     )
 
-    state = _load_state(total_tasks=total_tasks)
-
-    if reset_state_flag:
-        last_idx = -1
-    else:
-        try:
-            last_idx = int(state.get("last_task_index", -1))
-        except (TypeError, ValueError):
-            last_idx = -1
-
-    if last_idx >= total_tasks:
-        last_idx = -1
-
-    n_to_run = max_tasks
-    start_idx = (last_idx + 1) % total_tasks
-    indices: List[int] = [(start_idx + i) % total_tasks for i in range(n_to_run)]
-
     print(
-        f"[STATE] Estado atual: last_task_index={last_idx}, total_tasks={total_tasks}. "
-        f"Este run vai executar as tasks de índice {indices[0]} até {indices[-1]} "
-        f"(com wrap se necessário).\n"
+        f"[STATE] Estado atual: last_task_index={last_task_index}, "
+        f"total_tasks={total_tasks}. Este run vai executar as tasks de "
+        f"índice {start_index} até "
+        f"{(start_index + tasks_to_run - 1) % total_tasks} (com wrap se necessário).\n"
     )
 
     engine = make_engine()
-    cfg = _load_config_from_env()
-    marketplace_id = cfg.marketplace_id or "ATVPDKIKX0DER"
+    marketplace_id = os.getenv("SPAPI_MARKETPLACE_ID", "ATVPDKIKX0DER")
 
-    last_idx_for_state = last_idx
-    quota_exceeded = False
+    stop_reason: Optional[str] = None
+    last_executed_index = last_task_index
 
-    def _progress(done: int, total: int, stage: str) -> None:
-        if total <= 0:
-            return
-        if done == total or done % 10 == 0:
-            print(f"      [{stage}] {done}/{total}")
+    def _progress(done: int, total: int, source: str) -> None:
+        # Apenas um print simples para acompanhar o progresso
+        print(f"      [{source}] {done}/{total}")
 
-    for pos, idx in enumerate(indices):
+    for offset in range(tasks_to_run):
+        idx = (start_index + offset) % total_tasks
         task = tasks[idx]
-        root_name = task.get("root_name") or ""
-        child_name = task.get("child_name") or ""
+
+        root_name = task.get("root_name") or "?"
+        child_name = task.get("child_name") or "-"
         amazon_kw = (task.get("amazon_kw") or "").strip()
         browse_node_id = task.get("browse_node_id")
 
         print(
-            f"[{pos + 1}/{n_to_run}] [TASK] Categoria: {root_name} | "
-            f"Subcategoria: {child_name or '-'}"
+            f"[{offset + 1}/{tasks_to_run}] [TASK] Categoria: {root_name} "
+            f"| Subcategoria: {child_name}"
         )
-        print(f"   - amazon_kw base: '{amazon_kw or '(vazio)'}'")
+        print(f"   - amazon_kw base: '{amazon_kw}'")
         print(f"   - max_items para esta tarefa: {max_items}")
 
-        am_items: List[Dict[str, Any]]
-        stats: Dict[str, Any]
+        if dry_run:
+            print("   [DRY-RUN] Não chamando API nem salvando no banco.\n")
+            last_executed_index = idx
+            continue
 
+        # Chama a descoberta Amazon-first
         try:
             am_items, stats = discover_amazon_products(
                 kw=amazon_kw,
@@ -266,17 +278,56 @@ def run_batch(
                 progress_cb=_progress,
             )
         except Exception as e:
-            print(f"   [WARN] Erro ao chamar discover_amazon_products: {e}")
-            am_items = []
-            stats = {
-                "catalog_seen": 0,
-                "with_price": 0,
-                "kept": 0,
-                "errors_api": 1,
-                "last_error": str(e),
-            }
+            print(f"   [ERRO] Falha ao chamar discover_amazon_products: {e}\n")
+            stop_reason = "EXCEPTION"
+            last_executed_index = idx
+            break
 
-        kept = stats.get("kept", len(am_items))
+        if not am_items:
+            print("   -> Nenhum produto encontrado para esta tarefa.\n")
+            last_executed_index = idx
+            continue
+
+        # Transforma em DataFrame e ajusta colunas para o schema do banco
+        df = pd.DataFrame(am_items)
+
+        rename_map = {
+            "amazon_asin": "asin",
+            "amazon_title": "title",
+            "amazon_brand": "brand",
+            "amazon_browse_node_id": "browse_node_id",
+            "amazon_browse_node_name": "browse_node_name",
+            "amazon_sales_rank": "sales_rank",
+            "amazon_sales_rank_category": "sales_rank_category",
+            "amazon_price": "price",
+            "amazon_currency": "currency",
+            "amazon_is_prime": "is_prime",
+            "amazon_fulfillment_channel": "fulfillment_channel",
+        }
+        df = df.rename(columns=rename_map)
+
+        # marketplace_id para todos
+        df["marketplace_id"] = marketplace_id
+
+        # >>> AQUI: adicionamos as colunas de origem da tarefa <<<
+        df["source_root_name"] = root_name
+        df["source_child_name"] = child_name
+        df["search_kw"] = amazon_kw
+
+        # Salva no banco
+        try:
+            n_rows = upsert_amazon_products(engine, df)
+            print(
+                f"   [OK] upsert_amazon_products OK - linhas processadas: {n_rows}"
+            )
+        except Exception as e:
+            print(
+                "   [WARN] Falha ao salvar no banco (mas a mineração em si "
+                f"funcionou): {e}"
+            )
+
+        # Log de estatísticas
+        kept = stats.get("kept", len(df))
         catalog_seen = stats.get("catalog_seen", 0)
         with_price = stats.get("with_price", 0)
         errors_api = stats.get("errors_api", 0)
@@ -290,95 +341,80 @@ def run_batch(
         if errors_api and last_error:
             print(f"   [INFO] Último erro de API observado: {last_error}")
 
-        if am_items and not dry_run:
-            df = _prepare_amazon_df(
-                items=am_items,
-                root_name=root_name,
-                child_name=child_name,
-                search_kw=amazon_kw,
-                marketplace_id=marketplace_id,
-            )
-            if df.empty:
-                print("   [INFO] Lista de itens retornada, mas nenhum ASIN válido para salvar.")
-            else:
-                try:
-                    rows = upsert_amazon_products(engine, df)
-                    print(f"   [OK] upsert_amazon_products OK - linhas processadas: {rows}")
-                except Exception as e:
-                    print(
-                        "   [WARN] Falha ao salvar no banco "
-                        "(mas a mineração em si funcionou): "
-                        f"{e}"
-                    )
-        elif not am_items:
-            print("   [INFO] Nenhum item retornado para esta tarefa (lista vazia).")
-
-        last_idx_for_state = idx
-
+        # Se bater QUOTAEXCEEDED, paramos o batch educadamente
         if "QuotaExceeded" in (last_error or ""):
             print(
-                "\n[WARN] A Amazon sinalizou QUOTAEXCEEDED (cota de API atingida). "
-                "Encerrando este batch para não ultrapassar a cota.\n"
+                "\n[WARN] A Amazon sinalizou QUOTAEXCEEDED (cota de API "
+                "atingida). Encerrando este batch para não ultrapassar a cota.\n"
             )
-            quota_exceeded = True
+            stop_reason = "QUOTAEXCEEDED"
+            last_executed_index = idx
             break
 
-        # Pequeno intervalo entre tasks (só para não bombardear nada em sequência)
-        time.sleep(2.0)
+        print()  # linha em branco para separar tasks
+        last_executed_index = idx
 
-    state["last_task_index"] = last_idx_for_state
-    state["total_tasks"] = total_tasks
-    state["last_run_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    # Atualiza estado
+    state["last_task_index"] = int(last_executed_index)
+    state["last_run_at"] = (
+        datetime.now(timezone.utc).isoformat(timespec="seconds")
+    )
+    if stop_reason:
+        state["last_stop_reason"] = stop_reason
+
     _save_state(state)
 
-    print("\n[OK] Batch finalizado.")
-    if quota_exceeded:
-        print("[INFO] Motivo da parada: QUOTAEXCEEDED detectado.")
+    print("[OK] Batch finalizado.")
+    if stop_reason:
+        print(f"[INFO] Motivo da parada: {stop_reason}.")
+    else:
+        print("[INFO] Motivo da parada: fim das tasks configuradas para este run.")
 
 
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Crawler Amazon-first: popula a tabela amazon_products a partir das tasks do search_tasks.yaml."
+        description="Batch de mineração Amazon-first para popular amazon_products."
     )
     parser.add_argument(
         "--root-filter",
         type=str,
         default=None,
-        help="Filtra tasks pelo nome da categoria raiz (case-insensitive). Ex.: --root-filter \"Pet Shop\"",
+        help="Filtra apenas categorias-mãe cujo nome contenha este texto.",
     )
     parser.add_argument(
         "--max-items",
         type=int,
         default=50,
-        help="Máximo de itens (ASINs distintos com preço) por task.",
+        help="Máximo de itens por task (ASINs distintos com preço).",
     )
     parser.add_argument(
         "--max-tasks",
         type=int,
         default=20,
-        help="Quantidade máxima de tasks a rodar neste batch.",
+        help="Máximo de tasks (categoria/subcategoria) por execução.",
     )
     parser.add_argument(
         "--reset-state",
         action="store_true",
-        help="Ignora o estado salvo e recomeça a rotação das tasks do início.",
+        help="Ignora o estado anterior e recomeça das primeiras tasks.",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Não grava no banco, apenas mostra resumos.",
+        help="Não chama a API nem grava no banco (apenas mostra quais tasks rodariam).",
     )
 
     args = parser.parse_args()
 
     run_batch(
+        root_filter=args.root_filter,
         max_items=args.max_items,
         max_tasks=args.max_tasks,
-        root_filter=args.root_filter,
         reset_state_flag=args.reset_state,
         dry_run=args.dry_run,
     )
