@@ -24,16 +24,18 @@ if ENV_PATH.exists():
 
 
 # ---------------------------------------------------------------------------
-# Excecoes e configuracao
+# Exceções e configuração
 # ---------------------------------------------------------------------------
 
 
 class SellingPartnerAPIError(Exception):
-    """Erro generico da Selling Partner API."""
+    """Erro genérico da Selling Partner API."""
+    pass
 
 
 class SellingPartnerAuthError(SellingPartnerAPIError):
     """Erro ao obter token de acesso da LWA."""
+    pass
 
 
 @dataclass
@@ -51,12 +53,12 @@ class SPAPIConfig:
 
     @property
     def endpoint_host(self) -> str:
-        # Endpoints oficiais por regiao
+        # Endpoints oficiais por região
         return f"sellingpartnerapi-{self.region}.amazon.com"
 
     @property
     def aws_region(self) -> str:
-        # Mapeia a regiao logica da SP-API para a regiao AWS usada na assinatura
+        # Mapeia a região lógica da SP-API para a região AWS usada na assinatura
         if self.region == "na":
             return "us-east-1"
         if self.region == "eu":
@@ -67,7 +69,7 @@ class SPAPIConfig:
 
 
 def _load_config_from_env() -> SPAPIConfig:
-    """Carrega configuracao da SP-API a partir das variaveis de ambiente (.env)."""
+    """Carrega configuração da SP-API a partir das variáveis de ambiente (.env)."""
     missing: List[str] = []
 
     def getenv(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -88,13 +90,13 @@ def _load_config_from_env() -> SPAPIConfig:
     )
 
     if missing:
-        raise RuntimeError(f"Variaveis SP-API ausentes no .env: {', '.join(missing)}")
+        raise RuntimeError(f"Variáveis SP-API ausentes no .env: {', '.join(missing)}")
 
     return cfg
 
 
 # ---------------------------------------------------------------------------
-# LWA access token (Login With Amazon)
+# Cache de access token LWA + controls de rate
 # ---------------------------------------------------------------------------
 
 _access_token_cache: Dict[str, Any] = {
@@ -102,10 +104,16 @@ _access_token_cache: Dict[str, Any] = {
     "expires_at": 0.0,
 }
 
+# timestamp da última chamada de PRICING (para impor delay mínimo)
+_last_pricing_call_ts: float = 0.0
+
+# intervalo mínimo entre chamadas de pricing (segundos) - configurável via .env
+PRICING_MIN_INTERVAL = float(os.getenv("SPAPI_PRICING_MIN_INTERVAL", "2.2"))
+
 
 def _get_lwa_access_token(cfg: SPAPIConfig) -> str:
     """
-    Obtem (ou reutiliza, se ainda valido) um access token da Login With Amazon (LWA),
+    Obtém (ou reutiliza, se ainda válido) um access token da Login With Amazon (LWA),
     usando o refresh_token. O token costuma valer ~3600s.
     """
     now = time.time()
@@ -140,7 +148,7 @@ def _get_lwa_access_token(cfg: SPAPIConfig) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Assinatura AWS SigV4 e chamada generica
+# Assinatura AWS SigV4 e chamada genérica
 # ---------------------------------------------------------------------------
 
 def _sign_sp_api_request(
@@ -152,7 +160,7 @@ def _sign_sp_api_request(
     access_token: str,
 ) -> Dict[str, str]:
     """
-    Monta cabecalhos de assinatura AWS Signature V4 para a SP-API.
+    Monta cabeçalhos de assinatura AWS Signature V4 para a SP-API.
     Service: execute-api
     """
     service = "execute-api"
@@ -247,8 +255,8 @@ def _request_sp_api(
     timeout: int = 30,
 ) -> Dict[str, Any]:
     """
-    Faz uma chamada generica a SP-API (autenticando e assinando).
-    Retorna o JSON da resposta ou lanca SellingPartnerAPIError.
+    Faz uma chamada genérica à SP-API (autenticando e assinando).
+    Retorna o JSON da resposta ou lança SellingPartnerAPIError.
     """
     access_token = _get_lwa_access_token(cfg)
 
@@ -286,7 +294,7 @@ def _request_sp_api(
         return resp.json()
     except json.JSONDecodeError:
         raise SellingPartnerAPIError(
-            f"Resposta SP-API nao eh JSON para {path}: {resp.text[:200]}"
+            f"Resposta SP-API não é JSON para {path}: {resp.text[:200]}"
         )
 
 
@@ -301,6 +309,7 @@ def _extract_catalog_item(
 ) -> Dict[str, Any]:
     asin = item.get("asin")
 
+    # summary para o marketplace desejado
     summaries = item.get("summaries") or []
     summary = None
     for s in summaries:
@@ -320,6 +329,7 @@ def _extract_catalog_item(
         browse_node_id = bc.get("classificationId")
         browse_node_name = bc.get("displayName")
 
+    # GTIN / identifiers
     gtin_value = None
     gtin_type = None
     identifiers = item.get("identifiers") or []
@@ -341,6 +351,7 @@ def _extract_catalog_item(
         gtin_value = chosen_identifier.get("identifier")
         gtin_type = chosen_identifier.get("identifierType")
 
+    # Sales rank (melhor rank da classificação principal)
     sales_rank = None
     sales_rank_category = None
     sales = item.get("salesRanks") or []
@@ -379,7 +390,7 @@ def _extract_catalog_item(
 
 def search_by_gtin(gtin: str) -> Optional[Dict[str, Any]]:
     """
-    Busca item de catalogo por GTIN (UPC/EAN/ISBN) usando /catalog/2022-04-01/items.
+    Busca item de catálogo por GTIN (UPC/EAN/ISBN) usando /catalog/2022-04-01/items.
     """
     cfg = _load_config_from_env()
     gtin_clean = gtin.strip()
@@ -414,6 +425,7 @@ def search_by_gtin(gtin: str) -> Optional[Dict[str, Any]]:
         except SellingPartnerAPIError as e:
             msg = str(e)
             if "404" in msg or "NOT_FOUND" in msg:
+                # tenta o próximo tipo de identificador
                 continue
             raise
 
@@ -428,10 +440,14 @@ def search_by_gtin(gtin: str) -> Optional[Dict[str, Any]]:
     return _extract_catalog_item(item, cfg.marketplace_id, fallback_gtin=gtin_clean)
 
 
-def search_by_title(title: str, original_title: Optional[str] = None, page_size: int = 3) -> Optional[Dict[str, Any]]:
+def search_by_title(
+    title: str,
+    original_title: Optional[str] = None,
+    page_size: int = 3,
+) -> Optional[Dict[str, Any]]:
     """
-    Fallback: busca item de catalogo por titulo/keywords.
-    Retorna o item com melhor similaridade de titulo (se original_title fornecido).
+    Fallback: busca item de catálogo por título/keywords.
+    Retorna o item com melhor similaridade de título (se original_title fornecido).
     """
     cfg = _load_config_from_env()
     title_clean = (title or "").strip()
@@ -457,12 +473,14 @@ def search_by_title(title: str, original_title: Optional[str] = None, page_size:
         return None
 
     if original_title:
-        # escolhe o item com maior similaridade de titulo
+        # escolhe o item com maior similaridade de título
         scores: List[Tuple[int, Dict[str, Any]]] = []
         for it in items:
             summary = (it.get("summaries") or [{}])[0]
             cand_title = summary.get("itemName") or ""
-            score = fuzz.token_sort_ratio(original_title.lower(), str(cand_title).lower())
+            score = fuzz.token_sort_ratio(
+                original_title.lower(), str(cand_title).lower()
+            )
             scores.append((score, it))
         best = max(scores, key=lambda x: x[0])[1] if scores else items[0]
         return _extract_catalog_item(best, cfg.marketplace_id)
@@ -480,8 +498,7 @@ def search_catalog_items(
     Busca itens no Catalog Items API por palavra-chave, retornando a lista bruta de itens.
     Útil para descoberta Amazon-first. Limita page_size entre 1 e 20.
 
-    OBS: aqui usamos paginação simples por número de página (`page`), que é o
-    que o fluxo `amazon_matching._discover_amazon_products` espera.
+    OBS: aqui usamos paginação simples por número de página (`page`).
     """
     cfg = _load_config_from_env()
     if not keywords:
@@ -507,13 +524,13 @@ def search_catalog_items(
 
 
 # ---------------------------------------------------------------------------
-# Funcoes de alto nivel - Catalog existentes
+# Funções de alto nível - Catalog existentes
 # ---------------------------------------------------------------------------
 
 def get_catalog_item(asin: str) -> Dict[str, Any]:
     """
-    Consulta de catalogo para um ASIN, usando a versao 2022-04-01
-    do Catalog Items API, ja trazendo identifiers e salesRanks.
+    Consulta de catálogo para um ASIN, usando a versão 2022-04-01
+    do Catalog Items API, já trazendo identifiers e salesRanks.
     """
     cfg = _load_config_from_env()
     path = f"/catalog/2022-04-01/items/{asin}"
@@ -532,9 +549,9 @@ def get_catalog_item(asin: str) -> Dict[str, Any]:
 
 def debug_ping() -> Dict[str, Any]:
     """
-    Chamada simples a SP-API para teste.
+    Chamada simples à SP-API para teste.
     Usa /sellers/v1/marketplaceParticipations para verificar se a conta
-    esta correta e se o seller participa do marketplace.
+    está correta e se o seller participa do marketplace.
     """
     cfg = _load_config_from_env()
     path = "/sellers/v1/marketplaceParticipations"
@@ -548,15 +565,21 @@ def debug_ping() -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Product Pricing - BuyBox / Lowest price
+# Product Pricing - BuyBox / Lowest price (com delay + retry)
 # ---------------------------------------------------------------------------
 
 def get_buybox_price(asin: str, item_condition: str = "New") -> Optional[Dict[str, Any]]:
     """
     Usa /products/pricing/v0/items/{asin}/offers para tentar obter:
-    - preco da BuyBox (se existir)
-    - fallback para LowestPrices se nao houver BuyBox
+    - preço da BuyBox (se existir)
+    - fallback para LowestPrices se não houver BuyBox
+
+    Respeita:
+      - intervalo mínimo entre chamadas (PRICING_MIN_INTERVAL, configurável via .env)
+      - retry em caso de QuotaExceeded
     """
+    global _last_pricing_call_ts
+
     cfg = _load_config_from_env()
     path = f"/products/pricing/v0/items/{asin}/offers"
     params = {
@@ -565,12 +588,38 @@ def get_buybox_price(asin: str, item_condition: str = "New") -> Optional[Dict[st
         "CustomerType": "Consumer",
     }
 
-    data = _request_sp_api(
-        cfg=cfg,
-        method="GET",
-        path=path,
-        params=params,
-    )
+    # 1) Respeita intervalo mínimo entre chamadas
+    min_interval = PRICING_MIN_INTERVAL
+    now = time.time()
+    delta = now - _last_pricing_call_ts
+    if delta < min_interval:
+        time.sleep(min_interval - delta)
+
+    # 2) Retry simples em caso de QuotaExceeded
+    max_attempts = 3
+    data: Optional[Dict[str, Any]] = None
+
+    for attempt in range(max_attempts):
+        try:
+            data = _request_sp_api(
+                cfg=cfg,
+                method="GET",
+                path=path,
+                params=params,
+            )
+            _last_pricing_call_ts = time.time()
+            break
+        except SellingPartnerAPIError as e:
+            msg = str(e)
+            if "QuotaExceeded" in msg and attempt < max_attempts - 1:
+                # espera um pouco e tenta de novo
+                time.sleep(3.0)
+                continue
+            # outros erros ou última tentativa → propaga
+            raise
+
+    if data is None:
+        return None
 
     payload = data.get("payload", data)
 
