@@ -14,12 +14,11 @@ Uso típico (a partir da raiz do projeto):
 Ou para rodar em todas as categorias do YAML (cuidado com a cota da SP-API):
 
   python crawler_amazon.py --max-items 200
-
 """
 
 import argparse
 import time
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List
 
 import pandas as pd
 
@@ -143,7 +142,10 @@ def run_crawl(
                 print(f"      Último erro de API observado: {last_err}")
 
             if not items:
-                print("    - Nenhum item mantido para essa keyword. Indo para a próxima keyword/categoria.")
+                print(
+                    "    - Nenhum item mantido para essa keyword. "
+                    "Indo para a próxima keyword/categoria."
+                )
                 # mesmo assim, pequena pausa para não spammar a API
                 time.sleep(sleep_between_calls)
                 continue
@@ -158,18 +160,27 @@ def run_crawl(
                 inserted = upsert_amazon_products(engine, df)
                 print(f"    ✅ upsert_amazon_products OK - linhas processadas: {inserted}")
             except Exception as e:
-                print(f"    ⚠️ Falha ao salvar no banco (mas a mineração em si funcionou): {e}")
+                print(
+                    "    ⚠️ Falha ao salvar no banco "
+                    "(mas a mineração em si funcionou): "
+                    f"{e}"
+                )
 
             # Pausa entre chamadas para respeitar a cota da SP-API
             if sleep_between_calls > 0:
-                print(f"    ⏸ Aguardando {sleep_between_calls} segundos antes da próxima chamada...")
+                print(
+                    f"    ⏸ Aguardando {sleep_between_calls} segundos "
+                    "antes da próxima chamada..."
+                )
                 time.sleep(sleep_between_calls)
 
         print()  # linha em branco entre categorias
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Crawler Amazon-first para preencher amazon_products.")
+    parser = argparse.ArgumentParser(
+        description="Crawler Amazon-first para preencher amazon_products."
+    )
     parser.add_argument(
         "--root",
         dest="root",
@@ -198,8 +209,10 @@ def main():
         "--all-variants",
         dest="all_variants",
         action="store_true",
-        help="Usa várias variantes de keyword (base, base+' a', base+' e', ...). "
-             "CUIDADO: aumenta o consumo de cota da SP-API.",
+        help=(
+            "Usa várias variantes de keyword (base, base+' a', base+' e', ...). "
+            "CUIDADO: aumenta o consumo de cota da SP-API."
+        ),
     )
 
     args = parser.parse_args()

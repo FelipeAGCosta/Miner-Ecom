@@ -1,4 +1,3 @@
-# crawler_amazon_batch.py
 """
 Batch de mineração Amazon-first.
 
@@ -314,7 +313,7 @@ def _build_amazon_df_for_db(
     )
     out["marketplace_id"] = marketplace_id
 
-    # Reordena colunas principais (o sql_safe_amazon_frame ainda garante o resto, se existir)
+    # Reordena colunas principais
     cols_order = [
         "asin",
         "marketplace_id",
