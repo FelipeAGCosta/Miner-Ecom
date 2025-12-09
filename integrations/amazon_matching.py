@@ -1,6 +1,6 @@
 import math
 import os
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List, Tuple, Set
 
 import pandas as pd
 
@@ -25,7 +25,7 @@ _title_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 DEFAULT_DISCOVERY_MAX_PAGES = int(os.getenv("AMAZON_DISCOVERY_MAX_PAGES", 10))
 DEFAULT_DISCOVERY_PAGE_SIZE = int(os.getenv("AMAZON_DISCOVERY_PAGE_SIZE", 20))  # API aceita até ~20 por página
 DEFAULT_DISCOVERY_MAX_ITEMS = int(os.getenv("AMAZON_DISCOVERY_MAX_ITEMS", 60))
-# NOVO: limite de chamadas ao endpoint de preço (offers) para não travar
+# Limite de chamadas ao endpoint de preço (offers) para não travar
 DEFAULT_DISCOVERY_MAX_PRICE_LOOKUPS = int(os.getenv("AMAZON_DISCOVERY_MAX_PRICE_LOOKUPS", 200))
 
 # -----------------------------------------------------------------------------
@@ -51,13 +51,16 @@ def _normalize_category_key(display_group: Optional[str]) -> str:
     return "default"
 
 
-SALES_SCALE = 0.3  # fator conservador global (mantido, mas pouco relevante agora)
+SALES_SCALE = 0.3  # fator conservador global
 
 
-def _estimate_monthly_sales_from_bsr(rank: Optional[int], display_group: Optional[str]) -> Optional[int]:
+def _estimate_monthly_sales_from_bsr(
+    rank: Optional[int],
+    display_group: Optional[str],
+) -> Optional[int]:
     """
     Converte BSR em vendas/mês estimadas via interpolação log-log.
-    Mantido para compatibilidade, mas só é aplicado se min_monthly_sales_est > 0.
+    Só é aplicado se min_monthly_sales_est > 0.
     """
     if rank is None or rank <= 0:
         return None
@@ -255,6 +258,7 @@ def match_ebay_to_amazon(
         if min_monthly_sales_est is not None and min_monthly_sales_est > 0:
             if est_monthly is None or est_monthly < min_monthly_sales_est:
                 continue
+
         demand_bucket = _demand_bucket_from_sales(est_monthly)
         cat_key = _normalize_category_key(cat_display)
 
@@ -293,7 +297,7 @@ def match_ebay_to_amazon(
 
 
 # -----------------------------------------------------------------------------
-# Auxiliar: cache de preço para fluxo Amazon-first
+# Auxiliar: cache de preço para fluxo Amazon-first (se quiser reaproveitar)
 # -----------------------------------------------------------------------------
 def _get_buybox_price_cached(asin: str) -> Optional[Dict[str, Any]]:
     if asin in _asin_price_cache:
@@ -321,18 +325,18 @@ def _discover_amazon_products(
     max_items: int,
     max_price_lookups: int,
     progress_cb: Optional[callable],
-) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
     Descobre produtos na Amazon aplicando filtros de preço, oferta e (opcionalmente) vendas estimadas.
 
     🔹 Mantém apenas itens que têm preço/oferta conhecido na Amazon.
-    🔹 Tenta chegar em até max_items (ex.: 500) ASINs distintos com preço.
+    🔹 Tenta chegar em até max_items ASINs distintos com preço.
     🔹 Usa múltiplas "seeds" de keyword para aumentar variedade, mas respeita
        um limite global de chamadas ao endpoint de preço (max_price_lookups)
-       para não ficar travado 10+ minutos.
+       para não ficar travado.
     🔹 browse_node_id por enquanto NÃO filtra nada – só armazenamos o que vier
-       no summary (browseClassification). O filtro duro por categoria a gente
-       deixa para o Crawler + banco depois.
+       no summary (browseClassification). O filtro duro por categoria fica
+       para o Crawler + banco (amazon_products).
     """
     # fallback genérico se vier vazio
     if not kw or not kw.strip():
@@ -344,7 +348,7 @@ def _discover_amazon_products(
     offer_type_norm = (amazon_offer_type or "any").strip().lower()
 
     found: List[Dict[str, Any]] = []
-    seen_asins: set[str] = set()
+    seen_asins: Set[str] = set()
 
     # contador global de chamadas de preço (BuyBox/offers)
     price_lookups = 0
@@ -354,16 +358,16 @@ def _discover_amazon_products(
     done = 0
 
     stats: Dict[str, Any] = {
-        "catalog_seen": 0,            # quantos itens brutos vieram da SP-API
-        "with_price": 0,              # quantos tinham preço
-        "kept": 0,                    # quantos foram mantidos na lista final
-        "skipped_price_filter": 0,    # descartados por faixa de preço min/max
-        "skipped_offer": 0,           # descartados por tipo de oferta (Prime/FBA/FBM)
-        "skipped_sales": 0,           # descartados por min_monthly_sales_est (se usar)
-        "skipped_no_price": 0,        # sem preço conhecido (sem oferta / sem pricing)
-        "dup_asins": 0,               # ASINs duplicados ignorados
-        "errors_api": 0,              # erros ao chamar a SP-API
-        "last_error": "",             # texto do último erro de API (se houver)
+        "catalog_seen": 0,          # quantos itens brutos vieram da SP-API
+        "with_price": 0,            # quantos tinham preço
+        "kept": 0,                  # quantos foram mantidos na lista final
+        "skipped_price_filter": 0,  # descartados por faixa de preço min/max
+        "skipped_offer": 0,         # descartados por tipo de oferta (Prime/FBA/FBM)
+        "skipped_sales": 0,         # descartados por min_monthly_sales_est (se usar)
+        "skipped_no_price": 0,      # sem preço conhecido (sem oferta / sem pricing)
+        "dup_asins": 0,             # ASINs duplicados ignorados
+        "errors_api": 0,            # erros ao chamar a SP-API
+        "last_error": "",           # texto do último erro de API (se houver)
     }
 
     # -------------------------------------------------------------------------
@@ -389,9 +393,9 @@ def _discover_amazon_products(
         seed_keywords = ["a"]
 
     # -------------------------------------------------------------------------
-    # Laço principal de busca
+    # Laço principal de busca (rotação de páginas por seed)
     # -------------------------------------------------------------------------
-    def _run_search(keyword: str):
+    def _run_search(keyword: str) -> None:
         nonlocal done, price_lookups
 
         for page in range(1, max_pages + 1):
@@ -405,6 +409,7 @@ def _discover_amazon_products(
                     page_size=page_size,
                     page=page,
                     included_data="summaries,identifiers,salesRanks",
+                    # browse_node_id/ classificationId propositalmente não usado aqui
                 )
             except Exception as e:
                 stats["errors_api"] += 1
@@ -463,7 +468,7 @@ def _discover_amazon_products(
                     stats["skipped_price_filter"] += 1
                     continue
 
-                # filtro por tipo de oferta (Prime/FBA/FBM) – hoje estamos usando "any"
+                # filtro por tipo de oferta (Prime/FBA/FBM)
                 if offer_type_norm in ("prime", "fba"):
                     if not (is_prime or fulfillment_channel == "AMAZON"):
                         stats["skipped_offer"] += 1
@@ -473,7 +478,7 @@ def _discover_amazon_products(
                         stats["skipped_offer"] += 1
                         continue
 
-                # BSR → estimativa de vendas (fica pronto pro futuro, mas hoje não filtra)
+                # BSR → estimativa de vendas (só filtra se min_monthly_sales_est > 0)
                 rank = extracted.get("sales_rank")
                 cat_display = extracted.get("sales_rank_category")
                 est_monthly = _estimate_monthly_sales_from_bsr(rank, cat_display)
@@ -543,21 +548,24 @@ def discover_amazon_products(
     max_items: Optional[int] = None,
     max_price_lookups: Optional[int] = None,
     progress_cb: Optional[callable] = None,
-) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
     Wrapper público para descoberta de produtos na Amazon.
 
     Parâmetros:
       - kw: keyword final (user_kw + amazon_kw da categoria/subcategoria).
-      - browse_node_id: classificationId da categoria/subcategoria, se existir (HOJE não filtra nada).
-      - max_items: número máximo de ASINs distintos desejados (ex.: 500).
+      - browse_node_id: classificationId da categoria/subcategoria, se existir
+                        (HOJE não filtra nada).
+      - max_pages: quantas páginas do SearchCatalogItems varrer por keyword.
+      - page_size: tamanho da página do SearchCatalogItems.
+      - max_items: número máximo de ASINs distintos desejados.
       - max_price_lookups: limite de chamadas ao endpoint de preço, para evitar travar.
     """
     # Se vierem None ou <= 0, caímos nos defaults globais
     if not max_pages or max_pages <= 0:
         max_pages = DEFAULT_DISCOVERY_MAX_PAGES
     if not page_size or page_size <= 0:
-        page_size = DEFAULT_DISCOVERY_MAX_PAGE_SIZE if False else DEFAULT_DISCOVERY_PAGE_SIZE  # só pra manter legível
+        page_size = DEFAULT_DISCOVERY_PAGE_SIZE
     if not max_items or max_items <= 0:
         max_items = DEFAULT_DISCOVERY_MAX_ITEMS
     if not max_price_lookups or max_price_lookups <= 0:
@@ -620,7 +628,7 @@ def discover_amazon_and_match_ebay(
         return pd.DataFrame()
 
     # dedup Amazon por ASIN, mantendo as primeiras ocorrências
-    seen_asin = set()
+    seen_asin: Set[str] = set()
     uniq_amazon: List[Dict[str, Any]] = []
     for it in amazon_items:
         asin = it.get("amazon_asin")
@@ -715,8 +723,8 @@ def match_amazon_list_to_ebay(
         return pd.DataFrame()
 
     # dedup Amazon por ASIN
-    uniq = []
-    seen = set()
+    uniq: List[Dict[str, Any]] = []
+    seen: Set[str] = set()
     for it in amazon_items:
         asin = it.get("amazon_asin")
         if asin and asin not in seen:
