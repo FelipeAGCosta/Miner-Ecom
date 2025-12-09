@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -62,7 +63,7 @@ def error(msg: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Localização do search_tasks.yaml
+# Arquivo de tasks (search_tasks.yaml)
 # ---------------------------------------------------------------------------
 
 
@@ -84,49 +85,63 @@ def _find_search_tasks_file() -> Path:
     )
 
 
-# ---------------------------------------------------------------------------
-# Carregamento de tasks a partir do search_tasks.yaml
-# ---------------------------------------------------------------------------
-
-
 def _load_tasks(root_filter: Optional[str] = None) -> List[Task]:
     """
-    Lê o search_tasks.yaml e retorna uma lista achatada de Task(root, child, amazon_kw).
+    Lê o search_tasks.yaml e retorna uma lista achatada de Task(...) com base em:
 
-    Suporta vários formatos de YAML:
-    - {"roots": [ {...}, {...} ]}
-    - {"roots": { "slug": {...}, "slug2": {...} }}
-    - [ {...}, {...} ]
-    - { "qualquer_nome": {...}, "outro": {...} }  (cada value é um root)
+    - Um array de categorias em `categories: [...]` (formato atual)
+    - Opcionalmente um array extra em `tasks: [...]` para tasks avulsas
+    - Suporte parcial a formato antigo `roots: [...]`
+
+    Cada categoria gera:
+      - Uma Task para a categoria-mãe (se tiver amazon_kw)
+      - Uma Task para cada child em children:[...]
     """
     path = _find_search_tasks_file()
-    info(f"Usando arquivo de tasks: {path}")
+    print(f"[INFO] Usando arquivo de tasks: {path}")
 
     with path.open("r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
+        data: Any = yaml.safe_load(f) or {}
 
     tasks: List[Task] = []
-
-    # normaliza filtro
     root_filter_norm = (root_filter or "").strip().lower()
 
-    def add_root(root: Dict[str, Any]) -> None:
-        """Adiciona root + seus filhos à lista de tasks."""
-        if not isinstance(root, dict):
-            return
+    # -------------------------------
+    # 1) Carrega blocos de categorias
+    # -------------------------------
+    categories: List[Dict[str, Any]] = []
 
-        root_name = str(root.get("root_name") or root.get("name") or "").strip()
-        if not root_name:
-            root_name = "-"
+    if isinstance(data, dict):
+        if isinstance(data.get("categories"), list):
+            categories = data["categories"]
+        elif isinstance(data.get("roots"), list):
+            # compat com formato antigo
+            categories = data["roots"]
+        else:
+            # fallback: dict onde cada value é um root
+            if data and all(isinstance(v, dict) for v in data.values()):
+                categories = list(data.values())
+    elif isinstance(data, list):
+        # raro, mas permite array raiz já ser a lista de categorias
+        categories = [c for c in data if isinstance(c, dict)]
 
-        # aplica filtro, se houver
+    for cat in categories:
+        if not isinstance(cat, dict):
+            continue
+
+        root_name = str(cat.get("root_name") or cat.get("name") or "").strip() or "-"
         if root_filter_norm and root_filter_norm not in root_name.lower():
-            return
+            # se tiver filtro e não bater no nome da categoria-mãe, pula
+            continue
 
-        root_kw = str(root.get("amazon_kw") or "").strip()
-        root_browse = root.get("amazon_browse_node_id") or root.get("browse_node_id")
+        root_kw = str(cat.get("amazon_kw") or "").strip()
+        root_browse = (
+            cat.get("amazon_browse_node_id")
+            or cat.get("browse_node_id")
+            or cat.get("category_id")
+        )
 
-        # Task da categoria-mãe (se tiver amazon_kw próprio)
+        # Task da categoria-mãe
         if root_kw:
             tasks.append(
                 Task(
@@ -138,9 +153,8 @@ def _load_tasks(root_filter: Optional[str] = None) -> List[Task]:
             )
 
         # filhos / subcategorias
-        children = root.get("children") or []
+        children = cat.get("children") or []
         if isinstance(children, dict):
-            # suporta formato children: {slug: {...}, ...}
             children = list(children.values())
 
         for child in children:
@@ -148,17 +162,17 @@ def _load_tasks(root_filter: Optional[str] = None) -> List[Task]:
                 continue
 
             child_name = str(child.get("name") or "").strip() or "-"
-            # se o filho não tiver amazon_kw próprio, herda o do root
+            # se o filho não tiver amazon_kw, herda da root
             child_kw = str(child.get("amazon_kw") or root_kw or "").strip()
+            if not child_kw:
+                continue
+
             child_browse = (
                 child.get("amazon_browse_node_id")
                 or child.get("browse_node_id")
+                or child.get("category_id")
                 or root_browse
             )
-
-            if not child_kw:
-                # sem keyword -> não tem o que buscar
-                continue
 
             tasks.append(
                 Task(
@@ -169,31 +183,36 @@ def _load_tasks(root_filter: Optional[str] = None) -> List[Task]:
                 )
             )
 
-    # Detecta formato e preenche as roots
-    if isinstance(data, list):
-        # Raiz já é uma lista de roots
-        for root in data:
-            if isinstance(root, dict):
-                add_root(root)
-    elif isinstance(data, dict):
-        if "roots" in data:
-            raw = data["roots"]
-            if isinstance(raw, dict):
-                roots_iter = list(raw.values())
-            else:
-                roots_iter = raw or []
-            for root in roots_iter:
-                if isinstance(root, dict):
-                    add_root(root)
-        else:
-            # Pode ser um único root...
-            if "root_name" in data or "children" in data or "amazon_kw" in data:
-                add_root(data)
-            else:
-                # ...ou um dicionário onde cada value é um root
-                for v in data.values():
-                    if isinstance(v, dict):
-                        add_root(v)
+    # -------------------------------
+    # 2) Bloco extra `tasks:` (opcional)
+    # -------------------------------
+    if isinstance(data, dict) and data.get("tasks"):
+        extra = data["tasks"]
+        if isinstance(extra, dict):
+            extra = list(extra.values())
+        if isinstance(extra, list):
+            for node in extra:
+                if not isinstance(node, dict):
+                    continue
+                name = str(node.get("name") or "").strip() or "-"
+                if root_filter_norm and root_filter_norm not in name.lower():
+                    continue
+                kw = str(node.get("amazon_kw") or "").strip()
+                if not kw:
+                    continue
+                browse = (
+                    node.get("amazon_browse_node_id")
+                    or node.get("browse_node_id")
+                    or node.get("category_id")
+                )
+                tasks.append(
+                    Task(
+                        root_name=name,
+                        child_name="-",
+                        amazon_kw=kw,
+                        browse_node_id=browse,
+                    )
+                )
 
     return tasks
 
@@ -205,8 +224,8 @@ def _load_tasks(root_filter: Optional[str] = None) -> List[Task]:
 
 def _load_state() -> Dict[str, Any]:
     """
-    Carrega o arquivo de estado (crawler_state.json).
-    Se não existir ou estiver corrompido, volta estado inicial.
+    Lê o arquivo de estado (crawler_state.json). Se não existir ou estiver inválido,
+    retorna um estado default.
     """
     if not STATE_FILE.exists():
         return {"last_task_index": -1, "last_run_at": None}
@@ -214,7 +233,7 @@ def _load_state() -> Dict[str, Any]:
         with STATE_FILE.open("r", encoding="utf-8") as f:
             state = json.load(f)
         if not isinstance(state, dict):
-            raise ValueError("estado inválido")
+            raise ValueError("state não é um dict")
         return state
     except Exception:
         return {"last_task_index": -1, "last_run_at": None}
@@ -244,6 +263,7 @@ def _build_amazon_df_for_db(
     """
     Recebe a lista de dicts retornada por discover_amazon_products (chaves amazon_*)
     e converte para um DataFrame com as colunas esperadas por amazon_products.
+    Garante que marketplace_id nunca seja NULL.
     """
     if not items:
         return pd.DataFrame()
@@ -286,10 +306,15 @@ def _build_amazon_df_for_db(
     out["source_child_name"] = child_name
     out["search_kw"] = search_kw
 
-    # marketplace_id deixamos como None aqui; lib.db preenche a partir do .env
-    out["marketplace_id"] = None
+    # marketplace_id: pega do .env ou usa default US se não tiver nada
+    marketplace_id = (
+        os.getenv("SPAPI_MARKETPLACE_ID")
+        or os.getenv("DEFAULT_MARKETPLACE_ID")
+        or "ATVPDKIKX0DER"
+    )
+    out["marketplace_id"] = marketplace_id
 
-    # Reordena colunas principais (o sql_safe_amazon_frame ainda garante o resto)
+    # Reordena colunas principais (o sql_safe_amazon_frame ainda garante o resto, se existir)
     cols_order = [
         "asin",
         "marketplace_id",
