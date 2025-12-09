@@ -22,11 +22,11 @@ _asin_price_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 _title_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 
 # Limites padrão (podem ser sobrescritos por .env / st.secrets)
-DEFAULT_DISCOVERY_MAX_PAGES = int(os.getenv("AMAZON_DISCOVERY_MAX_PAGES", 60))
+DEFAULT_DISCOVERY_MAX_PAGES = int(os.getenv("AMAZON_DISCOVERY_MAX_PAGES", 10))
 DEFAULT_DISCOVERY_PAGE_SIZE = int(os.getenv("AMAZON_DISCOVERY_PAGE_SIZE", 20))  # API aceita até ~20 por página
-DEFAULT_DISCOVERY_MAX_ITEMS = int(os.getenv("AMAZON_DISCOVERY_MAX_ITEMS", 500))
+DEFAULT_DISCOVERY_MAX_ITEMS = int(os.getenv("AMAZON_DISCOVERY_MAX_ITEMS", 60))
 # NOVO: limite de chamadas ao endpoint de preço (offers) para não travar
-DEFAULT_DISCOVERY_MAX_PRICE_LOOKUPS = int(os.getenv("AMAZON_DISCOVERY_MAX_PRICE_LOOKUPS", 800))
+DEFAULT_DISCOVERY_MAX_PRICE_LOOKUPS = int(os.getenv("AMAZON_DISCOVERY_MAX_PRICE_LOOKUPS", 200))
 
 # -----------------------------------------------------------------------------
 # Heurísticas de BSR (mantidas para uso futuro, mas NÃO usadas como filtro
