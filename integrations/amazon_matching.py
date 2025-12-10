@@ -4,7 +4,7 @@ from typing import Optional, Dict, Any, List, Tuple, Callable
 
 import pandas as pd
 
-from integrations.amazon_spapi import (
+from lib.amazon_spapi import (
     search_by_gtin,
     search_by_title,
     get_buybox_price,

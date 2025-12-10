@@ -12,7 +12,7 @@ set DATA=%date:~-4%-%date:~3,2%-%date:~0,2%
 
 REM 4) Rodar o crawler usando o Python do venv
 "C:\Users\felip\Documents\miner-ecom\.venv\Scripts\python.exe" ^
-  crawler_amazon_batch.py --max-items 30 --max-tasks 15 ^
+  crawler_amazon_batch.py --max-items 40 --max-tasks 30 ^
   >> "logs\crawler_%DATA%.log" 2>&1
 
 endlocal
