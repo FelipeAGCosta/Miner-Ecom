@@ -4,7 +4,7 @@ from lib.tasks import load_tasks
 
 # --- Configuração global da página ---
 st.set_page_config(
-    page_title="Miner Ecom - Arbitragem eBay -> Amazon",
+    page_title="Miner Ecom - Exploração de produtos Amazon/eBay",
     page_icon="🏠",
     layout="wide",
     initial_sidebar_state="expanded",

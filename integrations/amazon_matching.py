@@ -46,7 +46,6 @@ CATEGORY_BSR_ANCHORS: Dict[str, List[Tuple[int, int]]] = {
     ],
 }
 
-
 def _normalize_category_key(display_group: Optional[str]) -> str:
     if not display_group:
         return "default"
@@ -55,7 +54,6 @@ def _normalize_category_key(display_group: Optional[str]) -> str:
 
 
 SALES_SCALE = 0.3  # fator conservador global
-
 
 def _estimate_monthly_sales_from_bsr(
     rank: Optional[int],

@@ -1,0 +1,54 @@
+# search_tasks.example.yaml
+#
+# Exemplo de configuração de categorias e tarefas de mineração.
+# Copie este arquivo para "search_tasks.yaml" e ajuste nomes / IDs / keywords
+# conforme o seu nicho antes de rodar o app ou o crawler.
+
+categories:
+  - name: "Eletrônicos"
+    amazon_kw: "electronics"
+    category_id: 493964
+    children:
+      - name: "Fones de Ouvido"
+        amazon_kw: "headphones"
+        category_id: 172541
+      - name: "Celulares e Acessórios"
+        amazon_kw: "cell phones & accessories"
+        category_id: 2811119011
+
+  - name: "Casa & Cozinha"
+    amazon_kw: "home & kitchen"
+    category_id: 1063498
+    children:
+      - name: "Cozinha & Jantar"
+        amazon_kw: "kitchen & dining"
+        category_id: 284507
+      - name: "Organização e Armazenamento"
+        amazon_kw: "storage & organization"
+        category_id: 3610841
+
+  - name: "Pet Shop"
+    amazon_kw: "pet supplies"
+    category_id: 2619534011
+    children:
+      - name: "Cachorros"
+        amazon_kw: "dogs"
+        category_id: 2975312011
+      - name: "Gatos"
+        amazon_kw: "cats"
+        category_id: 2975241011
+
+tasks:
+  # "tasks" são buscas específicas que o crawler pode usar em modo Amazon-first.
+  # Use amazon_kw em EN e, opcionalmente, um category_id da Amazon.
+  - name: "Fones Bluetooth"
+    amazon_kw: "bluetooth headphones"
+    category_id: 172541
+
+  - name: "Panelas antiaderentes"
+    amazon_kw: "nonstick frying pan"
+    category_id: 284507
+
+  - name: "Brinquedos para cachorro"
+    amazon_kw: "dog toys"
+    category_id: 2975312011
