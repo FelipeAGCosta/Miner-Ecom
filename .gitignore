@@ -186,3 +186,7 @@ integrations/
 
 # Dependências específicas deste ambiente (não versionar por enquanto)
 requirements.txt
+
+# Heurísticas privadas (não versionar)
+lib/bsr_heuristics_private.py
+
