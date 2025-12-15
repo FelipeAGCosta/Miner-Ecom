@@ -1,4 +1,13 @@
 # lib/ebay_search.py
+"""
+Busca de itens na eBay Browse API (item_summary/search), usada no fluxo de mineração.
+
+- Suporta busca por category_ids e/ou palavra-chave (q).
+- Aplica filtros de faixa de preço e condição via filter=.
+- Usa sessão HTTP com retry/backoff.
+- Retorna lista "achatada" de itens, compatível com o restante do app.
+"""
+
 import os
 import time
 from typing import Any, Dict, List, Optional
@@ -16,6 +25,7 @@ MARKETPLACE_ID = os.getenv("EBAY_MARKETPLACE_ID", "EBAY_US")
 CONNECT_TIMEOUT = float(os.getenv("HTTP_CONNECT_TIMEOUT", 5))
 READ_TIMEOUT = float(os.getenv("HTTP_READ_TIMEOUT", 30))
 
+# Sessão HTTP compartilhada com retry/backoff para chamadas GET
 _retry = Retry(
     total=5,
     connect=5,
@@ -31,16 +41,28 @@ _session.mount("http://", HTTPAdapter(max_retries=_retry))
 
 
 def _auth_headers() -> Dict[str, str]:
+    """
+    Monta cabeçalhos de autenticação e contexto para Browse API.
+    Token é obtido via get_app_token (com cache/Redis).
+    """
     token = get_app_token()
     return {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
         "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
-        "X-EBAY-C-ENDUSERCTX": f"contextualLocation=country=US,zip=00000;siteid={SITE_ID}",
+        "X-EBAY-C-ENDUSERCTX": (
+            f"contextualLocation=country=US,zip=00000;siteid={SITE_ID}"
+        ),
     }
 
 
 def _price_filter(min_v: Optional[float], max_v: Optional[float]) -> Optional[str]:
+    """
+    Constrói o trecho de filter= para faixa de preço:
+    - price:[MIN..MAX]
+    - price:[MIN..]
+    - price:[..MAX]
+    """
     if min_v is None and max_v is None:
         return None
     if min_v is not None and max_v is not None:
@@ -51,9 +73,13 @@ def _price_filter(min_v: Optional[float], max_v: Optional[float]) -> Optional[st
 
 
 def _flatten_item(s: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normaliza um itemSummary da Browse API em um dict "achatado".
+    """
     price = s.get("price") or {}
     seller = s.get("seller") or {}
     currency = price.get("currency") or "USD"
+
     try:
         price_val = float(price.get("value")) if price.get("value") is not None else None
     except Exception:
@@ -99,18 +125,20 @@ def search_items(
     Retorna lista achatada de itens (dicts).
     """
     if not category_id and not (keyword and keyword.strip()):
-        raise ValueError("search_items requer pelo menos um category_id ou uma palavra-chave (q).")
+        raise ValueError(
+            "search_items requer pelo menos um category_id ou uma palavra-chave (q)."
+        )
 
     headers = _auth_headers()
 
-    filters = []
+    filters: List[str] = []
     pf = _price_filter(price_min, price_max)
     if pf:
         filters.append(pf)
     if condition:
         filters.append(f"conditions:{{{condition}}}")
 
-    # sanitiza limit uma vez e usa sempre o mesmo valor
+    # Sanitiza limit uma vez e usa sempre o mesmo valor
     limit = min(200, max(1, int(limit_per_page)))
 
     params: Dict[str, Any] = {
@@ -131,6 +159,7 @@ def search_items(
 
     for _ in range(max_pages):
         params["offset"] = offset
+
         resp = _session.get(
             f"{BASE}/item_summary/search",
             headers=headers,
