@@ -8,11 +8,12 @@ Centraliza a conversão de DataFrame (pandas) em linhas prontas para INSERT/UPDA
 via SQLAlchemy, garantindo tipos e valores padrão coerentes.
 """
 
-from typing import Any
+from typing import Any, Iterable, Optional, Set
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import text
+from sqlalchemy import text, bindparam
 
 
 # ---------------------------------------------------------------------------
@@ -286,3 +287,97 @@ def upsert_amazon_products(engine: Any, df: pd.DataFrame) -> int:
         conn.execute(sql, rows.to_dict(orient="records"))
 
     return len(rows)
+
+
+# ---------------------------------------------------------------------------
+# Amazon: helpers para o crawler (evitar update dentro de X dias)
+# ---------------------------------------------------------------------------
+
+
+def _normalize_asins(asins: Iterable[str]) -> list[str]:
+    out: list[str] = []
+    for a in asins:
+        s = str(a).strip()
+        if s:
+            out.append(s)
+    # dedupe mantendo ordem
+    return list(dict.fromkeys(out))
+
+
+def get_existing_amazon_asins(
+    engine: Any,
+    asins: Iterable[str],
+    marketplace_id: Optional[str],
+) -> Set[str]:
+    """
+    Retorna o conjunto de ASINs que já existem no banco (para o marketplace_id informado).
+    """
+    asins_list = _normalize_asins(asins)
+    if not asins_list:
+        return set()
+
+    if marketplace_id:
+        sql = text(
+            """
+            SELECT asin
+            FROM amazon_products
+            WHERE marketplace_id = :marketplace_id
+              AND asin IN :asins
+            """
+        ).bindparams(bindparam("asins", expanding=True))
+        params = {"marketplace_id": marketplace_id, "asins": asins_list}
+    else:
+        sql = text(
+            """
+            SELECT asin
+            FROM amazon_products
+            WHERE asin IN :asins
+            """
+        ).bindparams(bindparam("asins", expanding=True))
+        params = {"asins": asins_list}
+
+    with engine.begin() as conn:
+        rows = conn.execute(sql, params).fetchall()
+
+    return {str(r[0]) for r in rows if r and r[0] is not None}
+
+
+def get_recent_amazon_asins(
+    engine: Any,
+    asins: Iterable[str],
+    marketplace_id: Optional[str],
+    cutoff: datetime,
+) -> Set[str]:
+    """
+    Retorna o conjunto de ASINs cujo fetched_at é >= cutoff (ou seja, "recentes" e NÃO devem ser atualizados).
+    """
+    asins_list = _normalize_asins(asins)
+    if not asins_list:
+        return set()
+
+    if marketplace_id:
+        sql = text(
+            """
+            SELECT asin
+            FROM amazon_products
+            WHERE marketplace_id = :marketplace_id
+              AND asin IN :asins
+              AND fetched_at >= :cutoff
+            """
+        ).bindparams(bindparam("asins", expanding=True))
+        params = {"marketplace_id": marketplace_id, "asins": asins_list, "cutoff": cutoff}
+    else:
+        sql = text(
+            """
+            SELECT asin
+            FROM amazon_products
+            WHERE asin IN :asins
+              AND fetched_at >= :cutoff
+            """
+        ).bindparams(bindparam("asins", expanding=True))
+        params = {"asins": asins_list, "cutoff": cutoff}
+
+    with engine.begin() as conn:
+        rows = conn.execute(sql, params).fetchall()
+
+    return {str(r[0]) for r in rows if r and r[0] is not None}
