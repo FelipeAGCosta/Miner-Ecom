@@ -44,7 +44,6 @@ ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 if ENV_PATH.exists():
     load_dotenv(ENV_PATH)
 
-
 # ---------------------------------------------------------------------------
 # Exceções e configuração
 # ---------------------------------------------------------------------------
@@ -71,12 +70,11 @@ class SPAPIConfig:
 
     region: str          # "na", "eu", "fe"
     marketplace_id: str  # e.g. "ATVPDKIKX0DER"
-    seller_id: str       # ex: "AQIH56OJ0KSYJ"
+    seller_id: Optional[str] = None  # não é obrigatório para os endpoints que usamos
 
     @property
     def endpoint_host(self) -> str:
         """Host da SP-API para a região lógica (na, eu, fe)."""
-        # Endpoints oficiais por região
         return f"sellingpartnerapi-{self.region}.amazon.com"
 
     @property
@@ -99,21 +97,24 @@ def _load_config_from_env() -> SPAPIConfig:
     """
     missing: List[str] = []
 
-    def getenv(name: str, default: Optional[str] = None) -> Optional[str]:
-        value = os.getenv(name, default)
-        if value is None or value == "":
+    def required(name: str) -> str:
+        v = os.getenv(name, "")
+        if not v:
             missing.append(name)
-        return value
+        return v
+
+    def optional(name: str, default: str = "") -> str:
+        return os.getenv(name, default) or default
 
     cfg = SPAPIConfig(
-        lwa_client_id=getenv("SPAPI_CLIENT_ID") or "",
-        lwa_client_secret=getenv("SPAPI_CLIENT_SECRET") or "",
-        refresh_token=getenv("SPAPI_REFRESH_TOKEN") or "",
-        aws_access_key=getenv("SPAPI_AWS_ACCESS_KEY_ID") or "",
-        aws_secret_key=getenv("SPAPI_AWS_SECRET_ACCESS_KEY") or "",
-        region=getenv("SPAPI_REGION", "na") or "na",
-        marketplace_id=getenv("SPAPI_MARKETPLACE_ID", "ATVPDKIKX0DER") or "ATVPDKIKX0DER",
-        seller_id=getenv("SPAPI_SELLER_ID") or "",
+        lwa_client_id=required("SPAPI_CLIENT_ID"),
+        lwa_client_secret=required("SPAPI_CLIENT_SECRET"),
+        refresh_token=required("SPAPI_REFRESH_TOKEN"),
+        aws_access_key=required("SPAPI_AWS_ACCESS_KEY_ID"),
+        aws_secret_key=required("SPAPI_AWS_SECRET_ACCESS_KEY"),
+        region=optional("SPAPI_REGION", "na"),
+        marketplace_id=optional("SPAPI_MARKETPLACE_ID", "ATVPDKIKX0DER"),
+        seller_id=os.getenv("SPAPI_SELLER_ID") or None,
     )
 
     if missing:
@@ -126,10 +127,7 @@ def _load_config_from_env() -> SPAPIConfig:
 # Cache de access token LWA + controls de rate
 # ---------------------------------------------------------------------------
 
-_access_token_cache: Dict[str, Any] = {
-    "token": None,
-    "expires_at": 0.0,
-}
+_access_token_cache: Dict[str, Any] = {"token": None, "expires_at": 0.0}
 
 # timestamp da última chamada de PRICING (para impor delay mínimo)
 _last_pricing_call_ts: float = 0.0
@@ -137,12 +135,20 @@ _last_pricing_call_ts: float = 0.0
 # intervalo mínimo entre chamadas de pricing (segundos) - configurável via .env
 PRICING_MIN_INTERVAL = float(os.getenv("SPAPI_PRICING_MIN_INTERVAL", "2.2"))
 
+# Session HTTP (reuso de conexões)
+_SESSION = requests.Session()
+
+# Cache simples de paginação do Catalog Items:
+# chave -> dict com:
+#   page_items: {page:int -> items:list}
+#   page_tokens: {page:int -> token:str|None}  (token usado para buscar aquela página)
+# Observação: page_tokens[1] é sempre None
+_catalog_pagination_cache: Dict[Tuple[str, int, str, Optional[int], str], Dict[str, Any]] = {}
+
 
 def _get_lwa_access_token(cfg: SPAPIConfig) -> str:
     """
     Obtém (ou reutiliza, se ainda válido) um access token da Login With Amazon (LWA).
-
-    O token costuma valer ~3600s. Mantemos um cache em memória com margem de segurança.
     """
     now = time.time()
     if _access_token_cache["token"] and now < _access_token_cache["expires_at"]:
@@ -156,7 +162,7 @@ def _get_lwa_access_token(cfg: SPAPIConfig) -> str:
         "client_secret": cfg.lwa_client_secret,
     }
 
-    resp = requests.post(url, data=data, timeout=15)
+    resp = _SESSION.post(url, data=data, timeout=15)
     if resp.status_code != 200:
         raise SellingPartnerAuthError(
             f"Falha ao obter LWA access token ({resp.status_code}): {resp.text}"
@@ -179,6 +185,29 @@ def _get_lwa_access_token(cfg: SPAPIConfig) -> str:
 # Assinatura AWS SigV4 e chamada genérica
 # ---------------------------------------------------------------------------
 
+def _normalize_query_params(params: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    """
+    Garante que params sejam strings (e listas sejam CSV),
+    para manter coerência entre:
+      - canonical querystring (assinatura)
+      - params passados ao requests
+    """
+    if not params:
+        return {}
+    out: Dict[str, str] = {}
+    for k, v in params.items():
+        if v is None:
+            continue
+        if isinstance(v, (list, tuple, set)):
+            vals = [str(x).strip() for x in v if x is not None and str(x).strip() != ""]
+            if not vals:
+                continue
+            out[k] = ",".join(vals)
+        else:
+            out[k] = str(v)
+    return out
+
+
 def _sign_sp_api_request(
     cfg: SPAPIConfig,
     method: str,
@@ -198,13 +227,13 @@ def _sign_sp_api_request(
     if not path.startswith("/"):
         path = "/" + path
 
+    qp = _normalize_query_params(query_params)
+
     # Query string canônica (chaves ordenadas, encoding RFC 3986)
-    if query_params:
+    if qp:
         qp_items: List[str] = []
-        for key in sorted(query_params.keys()):
-            value = query_params[key]
-            if value is None:
-                continue
+        for key in sorted(qp.keys()):
+            value = qp[key]
             qp_items.append(
                 f"{quote(str(key), safe='-_.~')}={quote(str(value), safe='-_.~')}"
             )
@@ -228,24 +257,13 @@ def _sign_sp_api_request(
     signed_headers = "host;x-amz-date;x-amz-access-token"
 
     canonical_request = "\n".join(
-        [
-            method,
-            path,
-            canonical_querystring,
-            canonical_headers,
-            signed_headers,
-            payload_hash,
-        ]
+        [method, path, canonical_querystring, canonical_headers, signed_headers, payload_hash]
     )
-    canonical_request_hash = hashlib.sha256(
-        canonical_request.encode("utf-8")
-    ).hexdigest()
+    canonical_request_hash = hashlib.sha256(canonical_request.encode("utf-8")).hexdigest()
 
     algorithm = "AWS4-HMAC-SHA256"
     credential_scope = f"{datestamp}/{aws_region}/{service}/aws4_request"
-    string_to_sign = "\n".join(
-        [algorithm, amzdate, credential_scope, canonical_request_hash]
-    )
+    string_to_sign = "\n".join([algorithm, amzdate, credential_scope, canonical_request_hash])
 
     def _sign(key: bytes, msg: str) -> bytes:
         return hmac.new(key, msg.encode("utf-8"), hashlib.sha256).digest()
@@ -254,9 +272,7 @@ def _sign_sp_api_request(
     k_region = _sign(k_date, aws_region)
     k_service = _sign(k_region, service)
     k_signing = _sign(k_service, "aws4_request")
-    signature = hmac.new(
-        k_signing, string_to_sign.encode("utf-8"), hashlib.sha256
-    ).hexdigest()
+    signature = hmac.new(k_signing, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
 
     authorization_header = (
         f"{algorithm} "
@@ -265,14 +281,14 @@ def _sign_sp_api_request(
         f"Signature={signature}"
     )
 
-    headers = {
+    return {
         "host": host,
         "x-amz-date": amzdate,
         "x-amz-access-token": access_token,
         "Authorization": authorization_header,
         "content-type": "application/json",
+        "user-agent": "miner-ecom/1.0",
     }
-    return headers
 
 
 def _request_sp_api(
@@ -290,31 +306,33 @@ def _request_sp_api(
     access_token = _get_lwa_access_token(cfg)
 
     body_str = json.dumps(json_body) if json_body is not None else ""
+    params_norm = _normalize_query_params(params)
+
     headers = _sign_sp_api_request(
         cfg=cfg,
         method=method,
         path=path,
-        query_params=params,
+        query_params=params_norm,
         body=body_str,
         access_token=access_token,
     )
 
-    base_url = f"https://{cfg.endpoint_host}"
-    url = base_url + path
+    url = f"https://{cfg.endpoint_host}{path}"
 
-    resp = requests.request(
+    resp = _SESSION.request(
         method=method,
         url=url,
-        params=params,
+        params=params_norm if params_norm else None,
         data=body_str if body_str else None,
         headers=headers,
         timeout=timeout,
     )
 
     if resp.status_code >= 400:
-        raise SellingPartnerAPIError(
-            f"Erro SP-API {resp.status_code} para {path}: {resp.text}"
-        )
+        # tenta enriquecer um pouco a msg, mas sem depender de formato
+        req_id = resp.headers.get("x-amzn-RequestId") or resp.headers.get("x-amz-request-id") or ""
+        suffix = f" | requestId={req_id}" if req_id else ""
+        raise SellingPartnerAPIError(f"Erro SP-API {resp.status_code} para {path}: {resp.text}{suffix}")
 
     if not resp.text:
         return {}
@@ -322,9 +340,7 @@ def _request_sp_api(
     try:
         return resp.json()
     except json.JSONDecodeError:
-        raise SellingPartnerAPIError(
-            f"Resposta SP-API não é JSON para {path}: {resp.text[:200]}"
-        )
+        raise SellingPartnerAPIError(f"Resposta SP-API não é JSON para {path}: {resp.text[:200]}")
 
 
 # ---------------------------------------------------------------------------
@@ -362,32 +378,47 @@ def _extract_catalog_item(
         browse_node_id = bc.get("classificationId")
         browse_node_name = bc.get("displayName")
 
-    # GTIN / identifiers
+    # GTIN / identifiers (prioridade por tipo)
     gtin_value = None
     gtin_type = None
-    identifiers = item.get("identifiers") or []
-    chosen_identifier = None
 
+    identifiers = item.get("identifiers") or []
+    ids_list: List[Dict[str, Any]] = []
+
+    # pega o bloco do marketplace, senão cai no primeiro
+    chosen_block = None
     for ident in identifiers:
         if ident.get("marketplaceId") == marketplace_id:
-            ids_list = ident.get("identifiers") or []
-            if ids_list:
-                chosen_identifier = ids_list[0]
-                break
+            chosen_block = ident
+            break
+    if chosen_block is None and identifiers:
+        chosen_block = identifiers[0]
 
-    if chosen_identifier is None and identifiers:
-        ids_list = identifiers[0].get("identifiers") or []
-        if ids_list:
-            chosen_identifier = ids_list[0]
+    if chosen_block:
+        ids_list = chosen_block.get("identifiers") or []
+
+    # escolhe o melhor identifier disponível
+    preferred = ("GTIN", "EAN", "UPC", "ISBN")
+    chosen_identifier = None
+    for pref in preferred:
+        for x in ids_list:
+            if x.get("identifierType") == pref and x.get("identifier"):
+                chosen_identifier = x
+                break
+        if chosen_identifier:
+            break
+    if chosen_identifier is None and ids_list:
+        chosen_identifier = ids_list[0]
 
     if chosen_identifier:
         gtin_value = chosen_identifier.get("identifier")
         gtin_type = chosen_identifier.get("identifierType")
 
-    # Sales rank (melhor rank da classificação principal)
+    # Sales rank (melhor rank do marketplace)
     sales_rank = None
     sales_rank_category = None
     sales = item.get("salesRanks") or []
+
     best_rank = None
     best_title = None
 
@@ -449,16 +480,10 @@ def search_by_gtin(gtin: str) -> Optional[Dict[str, Any]]:
         }
 
         try:
-            data = _request_sp_api(
-                cfg=cfg,
-                method="GET",
-                path="/catalog/2022-04-01/items",
-                params=params,
-            )
+            data = _request_sp_api(cfg=cfg, method="GET", path="/catalog/2022-04-01/items", params=params)
         except SellingPartnerAPIError as e:
             msg = str(e)
             if "404" in msg or "NOT_FOUND" in msg:
-                # tenta o próximo tipo de identificador
                 continue
             raise
 
@@ -496,26 +521,18 @@ def search_by_title(
         "pageSize": max(1, min(page_size, 10)),
     }
 
-    data = _request_sp_api(
-        cfg=cfg,
-        method="GET",
-        path="/catalog/2022-04-01/items",
-        params=params,
-    )
+    data = _request_sp_api(cfg=cfg, method="GET", path="/catalog/2022-04-01/items", params=params)
 
     items = data.get("items") or []
     if not items:
         return None
 
     if original_title:
-        # escolhe o item com maior similaridade de título
         scores: List[Tuple[int, Dict[str, Any]]] = []
         for it in items:
             summary = (it.get("summaries") or [{}])[0]
             cand_title = summary.get("itemName") or ""
-            score = fuzz.token_sort_ratio(
-                original_title.lower(), str(cand_title).lower()
-            )
+            score = fuzz.token_sort_ratio(original_title.lower(), str(cand_title).lower())
             scores.append((score, it))
         best = max(scores, key=lambda x: x[0])[1] if scores else items[0]
         return _extract_catalog_item(best, cfg.marketplace_id)
@@ -523,39 +540,163 @@ def search_by_title(
     return _extract_catalog_item(items[0], cfg.marketplace_id)
 
 
+def _extract_next_token(data: Dict[str, Any]) -> Optional[str]:
+    """
+    O Catalog Items search retorna paginação com next token.
+    Como o formato pode variar (pagination/nextToken etc), tentamos alguns caminhos.
+    """
+    if not isinstance(data, dict):
+        return None
+
+    pag = data.get("pagination") or data.get("Pagination") or {}
+    if isinstance(pag, dict):
+        nt = pag.get("nextToken") or pag.get("NextToken") or pag.get("nextPageToken")
+        if nt:
+            return str(nt)
+
+    nt2 = data.get("nextToken") or data.get("NextToken") or data.get("nextPageToken")
+    if nt2:
+        return str(nt2)
+
+    return None
+
+
+def search_catalog_items_with_pagination(
+    keywords: str,
+    page_size: int = 20,
+    page_token: Optional[str] = None,
+    included_data: str = "summaries,identifiers,salesRanks",
+    browse_node_id: Optional[int] = None,
+) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    """
+    Busca UMA página no Catalog Items API por keywords e retorna:
+      (items, next_token)
+
+    - page_token: token retornado na página anterior (para buscar a próxima)
+    - browse_node_id: quando fornecido, tentamos filtrar usando classificationIds (se suportado)
+    """
+    cfg = _load_config_from_env()
+    if not keywords:
+        return [], None
+
+    page_size = max(1, min(int(page_size), 20))
+
+    params: Dict[str, Any] = {
+        "marketplaceIds": cfg.marketplace_id,
+        "keywords": keywords[:200],
+        "includedData": included_data,
+        "pageSize": page_size,
+    }
+
+    if page_token:
+        params["pageToken"] = page_token
+
+    # tentativa de filtro por browse/classification (se a API aceitar)
+    if browse_node_id is not None:
+        try:
+            params["classificationIds"] = str(int(browse_node_id))
+        except Exception:
+            # se vier algo inválido, só ignora
+            pass
+
+    try:
+        data = _request_sp_api(cfg=cfg, method="GET", path="/catalog/2022-04-01/items", params=params)
+    except SellingPartnerAPIError as e:
+        # fallback: se classificationIds não for aceito, tenta sem ele
+        msg = str(e)
+        if browse_node_id is not None and ("classification" in msg.lower() or "invalidinput" in msg.lower()):
+            params.pop("classificationIds", None)
+            data = _request_sp_api(cfg=cfg, method="GET", path="/catalog/2022-04-01/items", params=params)
+        else:
+            raise
+
+    items = data.get("items") or []
+    next_token = _extract_next_token(data)
+    return items, next_token
+
+
 def search_catalog_items(
     keywords: str,
     page_size: int = 20,
     page: int = 1,
     included_data: str = "summaries,identifiers,salesRanks",
+    browse_node_id: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """
     Busca itens no Catalog Items API por palavra-chave, retornando a lista bruta de itens.
-    Útil para descoberta Amazon-first. Limita page_size entre 1 e 20.
 
-    OBS: aqui usamos paginação simples por número de página (`page`).
+    IMPORTANTE:
+      - A paginação real do Catalog Items usa pageToken.
+      - Para manter compatibilidade com o projeto (que chama com `page=1..N`),
+        esta função usa pageToken internamente e "salta" até a página desejada.
+      - Há cache leve por (keywords, page_size, included_data, browse_node_id, marketplace_id)
+        para evitar custo quadrático quando o chamador itera page=1..N.
     """
     cfg = _load_config_from_env()
     if not keywords:
         return []
 
     page_size = max(1, min(int(page_size), 20))
-    params = {
-        "marketplaceIds": cfg.marketplace_id,
-        "keywords": keywords[:200],
-        "includedData": included_data,
-        "pageSize": page_size,
-        "page": max(1, int(page)),
-    }
+    page = max(1, int(page))
 
-    data = _request_sp_api(
-        cfg=cfg,
-        method="GET",
-        path="/catalog/2022-04-01/items",
-        params=params,
-    )
+    cache_key = (keywords[:200], page_size, included_data, browse_node_id, cfg.marketplace_id)
+    cache = _catalog_pagination_cache.get(cache_key)
+    if cache is None:
+        cache = {"page_items": {}, "page_tokens": {1: None}, "exhausted": False}
+        _catalog_pagination_cache[cache_key] = cache
 
-    return data.get("items") or []
+    # se já temos essa página em cache, devolve direto
+    if page in cache["page_items"]:
+        return cache["page_items"][page]
+
+    # se já sabemos que acabou (sem next_token) e pediram página além, retorna vazio
+    if cache.get("exhausted") and page not in cache["page_items"]:
+        return []
+
+    # encontra a maior página conhecida <= page, para começar de lá
+    known_pages = [p for p in cache["page_tokens"].keys() if isinstance(p, int) and p <= page]
+    start_page = max(known_pages) if known_pages else 1
+
+    # token para buscar start_page
+    token = cache["page_tokens"].get(start_page, None)
+
+    # se start_page já tem items mas pediram uma página maior, avançamos a partir dela
+    current_page = start_page
+
+    # se start_page tem items e start_page == page, já teria sido retornado acima
+    # então aqui avançamos até atingir page
+    while current_page <= page:
+        if current_page in cache["page_items"]:
+            # já temos essa página, pega o próximo token e segue
+            token = cache["page_tokens"].get(current_page + 1, token)
+            current_page += 1
+            continue
+
+        items, next_token = search_catalog_items_with_pagination(
+            keywords=keywords,
+            page_size=page_size,
+            page_token=token,
+            included_data=included_data,
+            browse_node_id=browse_node_id,
+        )
+
+        cache["page_items"][current_page] = items
+        cache["page_tokens"][current_page + 1] = next_token
+
+        if not next_token:
+            cache["exhausted"] = True
+
+        if current_page == page:
+            return items
+
+        if not next_token:
+            # acabou antes de chegar na página solicitada
+            return []
+
+        token = next_token
+        current_page += 1
+
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -574,30 +715,17 @@ def get_catalog_item(asin: str) -> Dict[str, Any]:
         "includedData": "summaries,identifiers,salesRanks",
     }
 
-    return _request_sp_api(
-        cfg=cfg,
-        method="GET",
-        path=path,
-        params=params,
-    )
+    return _request_sp_api(cfg=cfg, method="GET", path=path, params=params)
 
 
 def debug_ping() -> Dict[str, Any]:
     """
     Chamada simples à SP-API para teste.
-
-    Usa /sellers/v1/marketplaceParticipations para verificar se a conta
-    está correta e se o seller participa do marketplace.
+    Usa /sellers/v1/marketplaceParticipations.
     """
     cfg = _load_config_from_env()
     path = "/sellers/v1/marketplaceParticipations"
-
-    return _request_sp_api(
-        cfg=cfg,
-        method="GET",
-        path=path,
-        params=None,
-    )
+    return _request_sp_api(cfg=cfg, method="GET", path=path, params=None)
 
 
 # ---------------------------------------------------------------------------
@@ -613,6 +741,9 @@ def get_buybox_price(asin: str, item_condition: str = "New") -> Optional[Dict[st
     Respeita:
       - intervalo mínimo entre chamadas (PRICING_MIN_INTERVAL, configurável via .env)
       - retry em caso de QuotaExceeded
+
+    Retorna dict com:
+      asin, price, currency, is_prime, fulfillment_channel, condition
     """
     global _last_pricing_call_ts
 
@@ -637,21 +768,14 @@ def get_buybox_price(asin: str, item_condition: str = "New") -> Optional[Dict[st
 
     for attempt in range(max_attempts):
         try:
-            data = _request_sp_api(
-                cfg=cfg,
-                method="GET",
-                path=path,
-                params=params,
-            )
+            data = _request_sp_api(cfg=cfg, method="GET", path=path, params=params)
             _last_pricing_call_ts = time.time()
             break
         except SellingPartnerAPIError as e:
             msg = str(e)
             if "QuotaExceeded" in msg and attempt < max_attempts - 1:
-                # espera um pouco e tenta de novo
                 time.sleep(3.0)
                 continue
-            # outros erros ou última tentativa → propaga
             raise
 
     if data is None:
@@ -697,6 +821,7 @@ def get_buybox_price(asin: str, item_condition: str = "New") -> Optional[Dict[st
         "currency": currency,
         "is_prime": is_prime,
         "fulfillment_channel": fulfillment_channel,
+        "condition": item_condition,
     }
 
 
@@ -717,10 +842,11 @@ if __name__ == "__main__":
         print(f"Buscando item por GTIN={gtin_arg} ...")
         data = search_by_gtin(gtin_arg)
         print(json.dumps(data, indent=2))
-    elif len(sys.argv) > 1 and sys.argv[1] == "offers" and len(sys.argv) == 3:
+    elif len(sys.argv) > 1 and sys.argv[1] == "offers" and len(sys.argv) in (3, 4):
         asin_arg = sys.argv[2]
-        print(f"Buscando BuyBox/offers para ASIN={asin_arg} ...")
-        data = get_buybox_price(asin_arg)
+        cond = sys.argv[3] if len(sys.argv) == 4 else "New"
+        print(f"Buscando BuyBox/offers para ASIN={asin_arg} (cond={cond}) ...")
+        data = get_buybox_price(asin_arg, item_condition=cond)
         print(json.dumps(data, indent=2))
     else:
         print("Testando conexao com SP-API (sellers/v1/marketplaceParticipations)...")

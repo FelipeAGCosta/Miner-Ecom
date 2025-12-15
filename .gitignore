@@ -190,3 +190,5 @@ requirements.txt
 # Heurísticas privadas (não versionar)
 lib/bsr_heuristics_private.py
 
+# scripts locais / utilitários que não vão pro repo
+sync_browse_nodes_to_yaml.py
