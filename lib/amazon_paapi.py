@@ -1,6 +1,14 @@
+"""
+Integração com a Amazon Product Advertising API (PA-API 5.0).
+
+- Usa a lib `python-amazon-paapi` (AmazonApi) para buscar produtos por GTIN.
+- Aplica throttling básico (via parâmetro `throttling` da lib).
+- Mantém um cache em memória por GTIN para reduzir chamadas repetidas.
+"""
+
+import logging
 import os
 import time
-import logging
 from typing import Any, Dict, Optional
 
 from amazon_paapi import AmazonApi  # pip install python-amazon-paapi
@@ -14,9 +22,8 @@ PAAPI_ACCESS_KEY = os.getenv("PAAPI_ACCESS_KEY")
 PAAPI_SECRET_KEY = os.getenv("PAAPI_SECRET_KEY")
 PAAPI_PARTNER_TAG = os.getenv("PAAPI_PARTNER_TAG")
 
-# Observação:
 # A lib python-amazon-paapi usa "COUNTRY" (US, BR, DE, etc.).
-# Vamos reaproveitar PAAPI_REGION como esse "COUNTRY".
+# Reaproveitamos PAAPI_REGION como esse "COUNTRY".
 # Ex.: PAAPI_REGION=US  ou  PAAPI_REGION=BR
 PAAPI_COUNTRY = os.getenv("PAAPI_REGION", "US") or "US"
 
@@ -35,7 +42,7 @@ _AMAZON_CLIENT: Optional[AmazonApi] = None
 # -------------------------------------------------------------------
 def _normalize_gtin(gtin: str | None) -> str:
     """
-    Normaliza GTIN (UPC/EAN/ISBN): mantém só dígitos.
+    Normaliza GTIN (UPC/EAN/ISBN): mantém apenas dígitos.
     """
     if gtin is None:
         return ""
@@ -44,6 +51,9 @@ def _normalize_gtin(gtin: str | None) -> str:
 
 
 def _get_cached_gtin(gtin: str) -> Optional[Dict[str, Any]]:
+    """
+    Obtém resposta de cache em memória, respeitando TTL.
+    """
     if not gtin:
         return None
 
@@ -61,6 +71,9 @@ def _get_cached_gtin(gtin: str) -> Optional[Dict[str, Any]]:
 
 
 def _set_cached_gtin(gtin: str, data: Optional[Dict[str, Any]]) -> None:
+    """
+    Salva uma resposta no cache em memória, se GTIN e dado forem válidos.
+    """
     if not gtin or data is None:
         return
     _GTIN_CACHE[gtin] = (time.time(), data)
@@ -69,6 +82,9 @@ def _set_cached_gtin(gtin: str, data: Optional[Dict[str, Any]]) -> None:
 def _get_client() -> AmazonApi:
     """
     Cria (lazy) o cliente AmazonApi da lib python-amazon-paapi.
+
+    Reusa uma instância global (_AMAZON_CLIENT) para evitar recriar
+    sessões HTTP em cada chamada.
     """
     global _AMAZON_CLIENT
 
@@ -102,10 +118,10 @@ def _get_client() -> AmazonApi:
 # -------------------------------------------------------------------
 def search_by_gtin(gtin: str) -> Optional[Dict[str, Any]]:
     """
-    Busca um produto na Amazon por GTIN (UPC/EAN/ISBN) usando PA-API 5.0,
-    retornando um dict flatten com info mínima para o app:
+    Busca um produto na Amazon por GTIN (UPC/EAN/ISBN) usando PA-API 5.0.
 
-    Retorno (dict) possível:
+    Retorna um dict "flatten" com informações mínimas para o app:
+
         {
             "asin": str | None,
             "title": str | None,
@@ -113,16 +129,16 @@ def search_by_gtin(gtin: str) -> Optional[Dict[str, Any]]:
             "currency": str | None,
             "is_prime_eligible": bool | None,
             "is_amazon_fulfilled": bool | None,
-            "offer_type": str,           # "PRIME" / "AMAZON_FULFILLED" / "OTHER" / "UNKNOWN"
+            "offer_type": str,  # "PRIME" / "AMAZON_FULFILLED" / "OTHER" / "UNKNOWN"
             "detail_page_url": str | None,
             "gtin_searched": str,
         }
 
-    Se não encontrar nada ou der erro "não crítico", retorna None.
+    Se não encontrar nada ou ocorrer um erro não crítico, retorna None.
     """
     norm_gtin = _normalize_gtin(gtin)
     if not norm_gtin:
-        logger.debug("search_by_gtin chamado com GTIN vazio/ inválido: %r", gtin)
+        logger.debug("search_by_gtin chamado com GTIN vazio/inválido: %r", gtin)
         return None
 
     # 1) Verificar cache em memória
@@ -139,7 +155,7 @@ def search_by_gtin(gtin: str) -> Optional[Dict[str, Any]]:
         return None
 
     # 3) Chamar a PA-API usando o GTIN como keywords
-    #    Pedimos só 1 item e os recursos mínimos (titulo, preço, info Prime/FBA).
+    #    Pedimos só 1 item e os recursos mínimos (título, preço, info Prime/FBA).
     try:
         search_result = client.search_items(
             keywords=norm_gtin,
@@ -186,10 +202,11 @@ def search_by_gtin(gtin: str) -> Optional[Dict[str, Any]]:
         listings = item.offers.listings  # type: ignore[attr-defined]
         if listings:
             listing = listings[0]
+
             # Preço
             try:
-                price_amount = float(listing.price.amount)  # type: ignore[attr-defined]
-                currency = str(listing.price.currency)      # type: ignore[attr-defined]
+                price_amount = float(listing.price.amount)   # type: ignore[attr-defined]
+                currency = str(listing.price.currency)       # type: ignore[attr-defined]
             except Exception:
                 pass
 
@@ -220,7 +237,9 @@ def search_by_gtin(gtin: str) -> Optional[Dict[str, Any]]:
         "price": price_amount,
         "currency": currency,
         "is_prime_eligible": bool(is_prime_eligible) if is_prime_eligible is not None else None,
-        "is_amazon_fulfilled": bool(is_amazon_fulfilled) if is_amazon_fulfilled is not None else None,
+        "is_amazon_fulfilled": (
+            bool(is_amazon_fulfilled) if is_amazon_fulfilled is not None else None
+        ),
         "offer_type": offer_type,
         "detail_page_url": detail_page_url,
         "gtin_searched": norm_gtin,
@@ -238,6 +257,7 @@ def search_by_gtin(gtin: str) -> Optional[Dict[str, Any]]:
 def is_configured() -> bool:
     """
     Retorna True se as variáveis mínimas da PA-API estiverem setadas no .env.
-    Útil para a UI decidir se mostra/oculta filtros Amazon.
+
+    Útil para a UI decidir se mostra/oculta recursos que dependem da PA-API.
     """
     return bool(PAAPI_ACCESS_KEY and PAAPI_SECRET_KEY and PAAPI_PARTNER_TAG)
