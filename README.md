@@ -214,3 +214,24 @@ A partir daí, acesse o menu lateral e use as páginas Minerar e Avançado.
 
 👋 Projeto mantido como estudo e portfólio de e-commerce / dados.
 Se você quiser detalhes técnicos sobre a arquitetura, escolhas de design ou a parte privada de integrações, só entrar em contato.
+
+--- 
+
+### 📸 Imagens do App:
+
+### 🔎 Tela de mineração (Amazon-first)
+
+**-> Filtros por categoria, subcategoria e palavra-chave:**
+
+![Filtros Amazon](assets/imagem_minerar.png)
+
+**-> Tabela de produtos encontrados na Amazon (com preço, BSR, demanda estimada, Prime etc.):**
+
+![Resultados Amazon](assets/imagem_minerar2.png)
+
+### 🧩 Dados no Banco
+
+**-> Crawler abastece o banco de dados automaticamente**
+
+![Arquitetura Miner Ecom](assets/imagem_db.png)
+
