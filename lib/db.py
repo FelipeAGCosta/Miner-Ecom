@@ -8,7 +8,9 @@ Centraliza a conversão de DataFrame (pandas) em linhas prontas para INSERT/UPDA
 via SQLAlchemy, garantindo tipos e valores padrão coerentes.
 """
 
-from typing import Any, Iterable, Optional, Set
+from __future__ import annotations
+
+from typing import Any, Iterable, Optional, Set, Dict
 from datetime import datetime
 
 import numpy as np
@@ -181,9 +183,7 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
             df[col] = None
 
     # Numéricos
-    df["browse_node_id"] = pd.to_numeric(
-        df["browse_node_id"], errors="coerce"
-    ).astype("Int64")
+    df["browse_node_id"] = pd.to_numeric(df["browse_node_id"], errors="coerce").astype("Int64")
     df["sales_rank"] = pd.to_numeric(df["sales_rank"], errors="coerce").astype("Int64")
     df["price"] = pd.to_numeric(df["price"], errors="coerce")
 
@@ -349,7 +349,8 @@ def get_recent_amazon_asins(
     cutoff: datetime,
 ) -> Set[str]:
     """
-    Retorna o conjunto de ASINs cujo fetched_at é >= cutoff (ou seja, "recentes" e NÃO devem ser atualizados).
+    Retorna o conjunto de ASINs cujo fetched_at é >= cutoff
+    (ou seja, "recentes" e NÃO devem ser atualizados).
     """
     asins_list = _normalize_asins(asins)
     if not asins_list:
@@ -365,7 +366,11 @@ def get_recent_amazon_asins(
               AND fetched_at >= :cutoff
             """
         ).bindparams(bindparam("asins", expanding=True))
-        params = {"marketplace_id": marketplace_id, "asins": asins_list, "cutoff": cutoff}
+        params = {
+            "marketplace_id": marketplace_id,
+            "asins": asins_list,
+            "cutoff": cutoff,
+        }
     else:
         sql = text(
             """
@@ -381,3 +386,54 @@ def get_recent_amazon_asins(
         rows = conn.execute(sql, params).fetchall()
 
     return {str(r[0]) for r in rows if r and r[0] is not None}
+
+
+def get_amazon_fetched_at_map(
+    engine: Any,
+    asins: Iterable[str],
+    marketplace_id: Optional[str],
+) -> Dict[str, Optional[datetime]]:
+    """
+    Retorna um dict {asin: fetched_at} para os ASINs informados.
+    Útil para debug/log e decisões sem precisar de várias queries.
+
+    Observação:
+    - Se marketplace_id for None, busca por asin (sem filtrar marketplace).
+    """
+    asins_list = _normalize_asins(asins)
+    if not asins_list:
+        return {}
+
+    if marketplace_id:
+        sql = text(
+            """
+            SELECT asin, fetched_at
+            FROM amazon_products
+            WHERE marketplace_id = :marketplace_id
+              AND asin IN :asins
+            """
+        ).bindparams(bindparam("asins", expanding=True))
+        params = {"marketplace_id": marketplace_id, "asins": asins_list}
+    else:
+        sql = text(
+            """
+            SELECT asin, fetched_at
+            FROM amazon_products
+            WHERE asin IN :asins
+            """
+        ).bindparams(bindparam("asins", expanding=True))
+        params = {"asins": asins_list}
+
+    with engine.begin() as conn:
+        rows = conn.execute(sql, params).fetchall()
+
+    out: Dict[str, Optional[datetime]] = {}
+    for r in rows:
+        if not r:
+            continue
+        asin = r[0]
+        fetched_at = r[1] if len(r) > 1 else None
+        if asin is None:
+            continue
+        out[str(asin)] = fetched_at
+    return out
