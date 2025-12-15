@@ -9,46 +9,51 @@ from urllib3.util.retry import Retry
 from lib.ebay_auth import get_app_token
 
 # ────────────────────────────────────────────────────────────────────────────────
-# Config
+# Configurações e Constantes
 # ────────────────────────────────────────────────────────────────────────────────
 BASE = "https://api.ebay.com/buy/browse/v1"
-# SiteID (0 = US). Mantém compatibilidade com seu .env
-SITE_ID = os.getenv("EBAY_BROWSE_SITE_ID", "0")
-# Marketplace para header
+SITE_ID = os.getenv("EBAY_BROWSE_SITE_ID", "0")  # Site ID (0 = US) compatível com .env
 MARKETPLACE_ID = os.getenv("EBAY_MARKETPLACE_ID", "EBAY_US")
 
-# Timeouts (ajustáveis via .env, com defaults seguros)
+# Configuração de Timeouts (ajustáveis via .env)
 CONNECT_TIMEOUT = float(os.getenv("HTTP_CONNECT_TIMEOUT", 5))
-READ_TIMEOUT    = float(os.getenv("HTTP_READ_TIMEOUT", 30))
+READ_TIMEOUT = float(os.getenv("HTTP_READ_TIMEOUT", 30))
 
-# Sessão HTTP com retry/backoff para chamadas eBay (resiliente a 429/5xx)
+# Configuração de Retry/Backoff para chamadas HTTP (para lidar com 429/5xx)
 _retry = Retry(
     total=5,
     connect=5,
     read=5,
-    backoff_factor=0.5,  # 0.5, 1, 2, 4, 8
+    backoff_factor=0.5,  # Atraso progressivo (0.5, 1, 2, 4, 8)
     status_forcelist=[429, 500, 502, 503, 504],
     allowed_methods=["GET"],
     raise_on_status=False,
 )
+
 _session = requests.Session()
 _session.mount("https://", HTTPAdapter(max_retries=_retry))
-_session.mount("http://",  HTTPAdapter(max_retries=_retry))
+_session.mount("http://", HTTPAdapter(max_retries=_retry))
 
 # ────────────────────────────────────────────────────────────────────────────────
-# Exceções
+# Exceções Personalizadas
 # ────────────────────────────────────────────────────────────────────────────────
 class EbayAuthError(Exception):
+    """Erro relacionado à autenticação com o eBay."""
     pass
 
 class EbayRequestError(Exception):
+    """Erro genérico nas requisições para a API do eBay."""
     pass
 
 # ────────────────────────────────────────────────────────────────────────────────
-# Helpers
+# Helpers (Funções auxiliares)
 # ────────────────────────────────────────────────────────────────────────────────
+
 def _auth_headers() -> Dict[str, str]:
-    token = get_app_token()  # usa cache/redis + retry definidos em lib.ebay_auth
+    """
+    Retorna os cabeçalhos de autenticação necessários para as chamadas à API do eBay.
+    """
+    token = get_app_token()  # Obtém o token de acesso do eBay via cache/redis + retry da lib lib.ebay_auth
     return {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
@@ -58,21 +63,23 @@ def _auth_headers() -> Dict[str, str]:
 
 def _build_filter(source_price_min: Optional[float], condition: Optional[str]) -> str:
     """
-    Monta a string do parâmetro 'filter' da Browse API.
-    Ex.: 'price:[15..],conditions:{NEW}'
+    Monta a string para o filtro de preço e condição a ser passado à Browse API.
+    Exemplo: 'price:[15..],conditions:{NEW}'
     """
     parts = []
     if source_price_min is not None:
         parts.append(f"price:[{source_price_min}..]")
     if condition:
-        # Browse aceita 'conditions:{NEW|USED|REFURBISHED}'
         parts.append(f"conditions:{{{condition}}}")
     return ",".join(parts)
 
 def _normalize_summary(s: Dict[str, any]) -> Dict[str, any]:
-    price = s.get("price") or {}
-    seller = s.get("seller") or {}
-    currency = price.get("currency") or "USD"
+    """
+    Normaliza o resumo do item retornado pela Browse API, extraindo os campos necessários.
+    """
+    price = s.get("price", {})
+    seller = s.get("seller", {})
+    currency = price.get("currency", "USD")
     try:
         price_val = float(price.get("value")) if price.get("value") is not None else None
     except Exception:
@@ -87,14 +94,15 @@ def _normalize_summary(s: Dict[str, any]) -> Dict[str, any]:
         "seller": seller.get("username"),
         "category_id": int(s.get("categoryId")) if s.get("categoryId") else None,
         "item_url": s.get("itemWebUrl"),
-        "available_qty": None,  # pode vir via estimatedAvailabilities, ou só no detalhe
+        "available_qty": None,  # Pode vir via estimatedAvailabilities ou apenas no detalhe
         "qty_flag": "EXACT",
         "brand": s.get("brand"),
         "mpn": s.get("mpn"),
         "gtin": s.get("gtin"),
     }
 
-    est = s.get("estimatedAvailabilities") or []
+    # Verificando a disponibilidade estimada
+    est = s.get("estimatedAvailabilities", [])
     if isinstance(est, list) and est:
         q = est[0].get("estimatedAvailableQuantity")
         if isinstance(q, int):
@@ -104,8 +112,9 @@ def _normalize_summary(s: Dict[str, any]) -> Dict[str, any]:
     return item
 
 # ────────────────────────────────────────────────────────────────────────────────
-# API pública usada pelo projeto (assinaturas compatíveis)
+# Funções Públicas: Consultas à Browse API do eBay
 # ────────────────────────────────────────────────────────────────────────────────
+
 def search_by_category(
     category_id: int,
     source_price_min: float = 15.0,
@@ -114,17 +123,16 @@ def search_by_category(
     max_pages: int = 2,
 ) -> List[dict]:
     """
-    Consulta a Browse API por category_id, aplicando filtros de preço (mínimo) e condição.
-    Paginado. Retorna lista de itens normalized (dicts) compatível com o app.
+    Consulta a Browse API do eBay por category_id, aplicando filtros de preço e condição.
+    Retorna uma lista de itens com as informações necessárias para o aplicativo.
     """
     headers = _auth_headers()
     params_base = {
         "category_ids": str(category_id),
         "limit": str(max(1, min(200, int(limit_per_page)))),
         "filter": _build_filter(source_price_min, condition),
-        # EXTENDED traz mais campos (quando disponíveis) sem “refinements”
-        "fieldgroups": "EXTENDED",
-        "sort": "price",  # crescente
+        "fieldgroups": "EXTENDED",  # Solicita campos extras (quando disponíveis)
+        "sort": "price",  # Ordenação crescente por preço
     }
 
     items: List[dict] = []
@@ -159,16 +167,15 @@ def search_by_category(
         if offset >= total:
             break
 
-        # micro pausa para respeitar rate limits
+        # Respeita limites de requisição com micro pausa
         time.sleep(0.08)
 
     return items
 
-
 def get_item_detail(item_id: str) -> dict:
     """
-    Busca detalhe de um item específico (Browse /item/{item_id}).
-    Tenta 'PRODUCT,ADDITIONAL_SELLER_DETAILS' e faz fallback sem fieldgroups.
+    Busca detalhes de um item específico através da Browse API do eBay.
+    Tenta 'PRODUCT,ADDITIONAL_SELLER_DETAILS' e faz fallback sem fieldgroups, se necessário.
     """
     headers = _auth_headers()
     url = f"{BASE}/item/{item_id}"
@@ -179,10 +186,10 @@ def get_item_detail(item_id: str) -> dict:
             params["fieldgroups"] = fieldgroups
         return _session.get(url, headers=headers, params=params, timeout=(CONNECT_TIMEOUT, READ_TIMEOUT))
 
-    # 1ª tentativa: com fieldgroups úteis
+    # Tentativa com 'PRODUCT,ADDITIONAL_SELLER_DETAILS'
     r = _do("PRODUCT,ADDITIONAL_SELLER_DETAILS")
     if r.status_code == 400:
-        # fallback sem fieldgroups (alguns itens dão 400 com combos específicos)
+        # Fallback sem fieldgroups (alguns itens podem causar erro com combos específicos)
         r = _do(None)
 
     if r.status_code != 200:
@@ -199,24 +206,24 @@ def get_item_detail(item_id: str) -> dict:
         "category_id": int(d.get("categoryId")) if d.get("categoryId") else None,
     }
 
-    # estimatedAvailabilities
-    est = d.get("estimatedAvailabilities") or []
+    # Verificando 'estimatedAvailabilities' (se exposto pela API)
+    est = d.get("estimatedAvailabilities", [])
     if isinstance(est, list) and est:
         q = est[0].get("estimatedAvailableQuantity")
         if isinstance(q, int):
             out["available_qty"] = q
             out["qty_flag"] = "EXACT"
 
-    # product.gtin (lista) + aspects (Brand/MPN)
-    prod = d.get("product") or {}
+    # Produto GTIN (caso presente) e aspectos (Brand, MPN)
+    prod = d.get("product", {})
     if isinstance(prod, dict):
         gtins = prod.get("gtin")
         if isinstance(gtins, list) and gtins:
             out["gtin"] = gtins[0]
-        aspects = prod.get("aspects") or {}
-        if not out.get("brand"):
+        aspects = prod.get("aspects", {})
+        if not out["brand"]:
             out["brand"] = (aspects.get("Brand") or [None])[0]
-        if not out.get("mpn"):
+        if not out["mpn"]:
             out["mpn"] = (aspects.get("MPN") or aspects.get("Manufacturer Part Number") or [None])[0]
 
     return out
