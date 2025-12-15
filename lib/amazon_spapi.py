@@ -1,18 +1,40 @@
-import os
-import time
+"""
+Integração com a Amazon Selling Partner API (SP-API).
+
+- Autenticação via LWA (Login With Amazon) + assinatura AWS SigV4.
+- Endpoints usados:
+    - Catalog Items 2022-04-01  (/catalog/2022-04-01/items)
+    - Sellers                    (/sellers/v1/marketplaceParticipations)
+    - Product Pricing            (/products/pricing/v0/items/{asin}/offers)
+
+Exposto para o restante do projeto principalmente via:
+    - search_by_gtin
+    - search_by_title
+    - search_catalog_items
+    - get_catalog_item
+    - get_buybox_price
+
+Além de helpers internos reutilizados por outros módulos:
+    - _extract_catalog_item
+    - _load_config_from_env
+"""
+
+from __future__ import annotations
+
+import hashlib
 import hmac
 import json
-import hashlib
+import os
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, List, Tuple
-from urllib.parse import quote
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import quote
 
 import requests
 from dotenv import load_dotenv
 from rapidfuzz import fuzz
-
 
 # ---------------------------------------------------------------------------
 # Carregar .env da raiz do projeto
@@ -53,12 +75,13 @@ class SPAPIConfig:
 
     @property
     def endpoint_host(self) -> str:
+        """Host da SP-API para a região lógica (na, eu, fe)."""
         # Endpoints oficiais por região
         return f"sellingpartnerapi-{self.region}.amazon.com"
 
     @property
     def aws_region(self) -> str:
-        # Mapeia a região lógica da SP-API para a região AWS usada na assinatura
+        """Região AWS usada na assinatura SigV4 (mapeada a partir de `region`)."""
         if self.region == "na":
             return "us-east-1"
         if self.region == "eu":
@@ -69,7 +92,11 @@ class SPAPIConfig:
 
 
 def _load_config_from_env() -> SPAPIConfig:
-    """Carrega configuração da SP-API a partir das variáveis de ambiente (.env)."""
+    """
+    Carrega configuração da SP-API a partir das variáveis de ambiente (.env).
+
+    Levanta RuntimeError se alguma variável essencial estiver ausente.
+    """
     missing: List[str] = []
 
     def getenv(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -113,12 +140,13 @@ PRICING_MIN_INTERVAL = float(os.getenv("SPAPI_PRICING_MIN_INTERVAL", "2.2"))
 
 def _get_lwa_access_token(cfg: SPAPIConfig) -> str:
     """
-    Obtém (ou reutiliza, se ainda válido) um access token da Login With Amazon (LWA),
-    usando o refresh_token. O token costuma valer ~3600s.
+    Obtém (ou reutiliza, se ainda válido) um access token da Login With Amazon (LWA).
+
+    O token costuma valer ~3600s. Mantemos um cache em memória com margem de segurança.
     """
     now = time.time()
     if _access_token_cache["token"] and now < _access_token_cache["expires_at"]:
-        return _access_token_cache["token"]
+        return _access_token_cache["token"]  # type: ignore[return-value]
 
     url = "https://api.amazon.com/auth/o2/token"
     data = {
@@ -170,8 +198,9 @@ def _sign_sp_api_request(
     if not path.startswith("/"):
         path = "/" + path
 
+    # Query string canônica (chaves ordenadas, encoding RFC 3986)
     if query_params:
-        qp_items = []
+        qp_items: List[str] = []
         for key in sorted(query_params.keys()):
             value = query_params[key]
             if value is None:
@@ -307,6 +336,10 @@ def _extract_catalog_item(
     marketplace_id: str,
     fallback_gtin: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """
+    Normaliza o payload de um item do Catalog Items em um dict
+    com os campos mínimos usados no projeto.
+    """
     asin = item.get("asin")
 
     # summary para o marketplace desejado
@@ -400,7 +433,7 @@ def search_by_gtin(gtin: str) -> Optional[Dict[str, Any]]:
         candidates = ["UPC", "GTIN"]
     elif length == 13:
         candidates = ["EAN", "GTIN"]
-    elif length in (10, 13):
+    elif length == 10:
         candidates = ["ISBN", "GTIN"]
     else:
         candidates = ["GTIN", "UPC", "EAN", "ISBN"]
@@ -447,7 +480,9 @@ def search_by_title(
 ) -> Optional[Dict[str, Any]]:
     """
     Fallback: busca item de catálogo por título/keywords.
-    Retorna o item com melhor similaridade de título (se original_title fornecido).
+
+    Se `original_title` for fornecido, retorna o item com maior similaridade
+    de título (via rapidfuzz). Caso contrário, retorna o primeiro item.
     """
     cfg = _load_config_from_env()
     title_clean = (title or "").strip()
@@ -550,6 +585,7 @@ def get_catalog_item(asin: str) -> Dict[str, Any]:
 def debug_ping() -> Dict[str, Any]:
     """
     Chamada simples à SP-API para teste.
+
     Usa /sellers/v1/marketplaceParticipations para verificar se a conta
     está correta e se o seller participa do marketplace.
     """

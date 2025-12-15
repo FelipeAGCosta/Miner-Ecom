@@ -1,30 +1,60 @@
-# lib/db.py
-import pandas as pd
+"""
+Funções de normalização e upsert para as tabelas principais:
+
+- ebay_listing
+- amazon_products
+
+Centraliza a conversão de DataFrame (pandas) em linhas prontas para INSERT/UPDATE
+via SQLAlchemy, garantindo tipos e valores padrão coerentes.
+"""
+
+from typing import Any
+
 import numpy as np
+import pandas as pd
 from sqlalchemy import text
+
 
 # ---------------------------------------------------------------------------
 # eBay: normalização e upsert
 # ---------------------------------------------------------------------------
 
+
 def sql_safe_frame(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Converte NaN/NA para None, normaliza tipos e garante defaults (ex.: currency='USD').
-    Usado para salvar listings do eBay.
+    Normaliza DataFrame de listings do eBay para inserção na tabela ebay_listing.
+
+    - Garante que todas as colunas esperadas existam.
+    - Converte valores numéricos (price, available_qty, category_id).
+    - Normaliza `condition` e `currency` (fallback USD).
+    - Converte NaN/NA para None (compatível com drivers MySQL).
     """
     df = df.copy()
 
     expected = [
-        "item_id", "title", "brand", "mpn", "gtin", "price", "currency",
-        "available_qty", "qty_flag", "condition", "seller", "category_id",
+        "item_id",
+        "title",
+        "brand",
+        "mpn",
+        "gtin",
+        "price",
+        "currency",
+        "available_qty",
+        "qty_flag",
+        "condition",
+        "seller",
+        "category_id",
         "item_url",
     ]
+
+    # Garante todas as colunas mínimas
     for col in expected:
         if col not in df.columns:
             df[col] = None
 
     # Numéricos
     df["price"] = pd.to_numeric(df["price"], errors="coerce")
+
     qty = pd.to_numeric(df["available_qty"], errors="coerce")
     df["available_qty"] = qty.where(qty.notna(), None)
 
@@ -32,7 +62,7 @@ def sql_safe_frame(df: pd.DataFrame) -> pd.DataFrame:
     cat = pd.to_numeric(df["category_id"], errors="coerce").astype("Int64")
     df["category_id"] = cat.where(cat.notna(), None)
 
-    # Normaliza condition
+    # Normaliza condição (apenas cosmeticamente)
     df["condition"] = df["condition"].astype(str).str.title()
 
     # currency: se vier vazio/None/NaN, define USD
@@ -65,10 +95,18 @@ def sql_safe_frame(df: pd.DataFrame) -> pd.DataFrame:
     return df[expected]
 
 
-def upsert_ebay_listings(engine, rows: pd.DataFrame) -> int:
+def upsert_ebay_listings(engine: Any, rows: pd.DataFrame) -> int:
+    """
+    Insere/atualiza listings na tabela ebay_listing.
+
+    - Usa item_id como chave única (definido no schema do MySQL).
+    - Atualiza campos principais e fetched_at a cada execução.
+    """
     if rows.empty:
         return 0
+
     rows = sql_safe_frame(rows)
+
     sql = text(
         """
         INSERT INTO ebay_listing
@@ -80,23 +118,25 @@ def upsert_ebay_listings(engine, rows: pd.DataFrame) -> int:
          :available_qty, :qty_flag, :condition, :seller, :category_id,
          :item_url, NOW())
         ON DUPLICATE KEY UPDATE
-          title        = VALUES(title),
-          brand        = VALUES(brand),
-          mpn          = VALUES(mpn),
-          gtin         = VALUES(gtin),
-          price        = VALUES(price),
-          currency     = VALUES(currency),
-          available_qty= VALUES(available_qty),
-          qty_flag     = VALUES(qty_flag),
-          `condition`  = VALUES(`condition`),
-          seller       = VALUES(seller),
-          category_id  = VALUES(category_id),
-          item_url     = VALUES(item_url),
-          fetched_at   = NOW();
-    """
+          title         = VALUES(title),
+          brand         = VALUES(brand),
+          mpn           = VALUES(mpn),
+          gtin          = VALUES(gtin),
+          price         = VALUES(price),
+          currency      = VALUES(currency),
+          available_qty = VALUES(available_qty),
+          qty_flag      = VALUES(qty_flag),
+          `condition`   = VALUES(`condition`),
+          seller        = VALUES(seller),
+          category_id   = VALUES(category_id),
+          item_url      = VALUES(item_url),
+          fetched_at    = NOW();
+        """
     )
+
     with engine.begin() as conn:
         conn.execute(sql, rows.to_dict(orient="records"))
+
     return len(rows)
 
 
@@ -104,10 +144,13 @@ def upsert_ebay_listings(engine, rows: pd.DataFrame) -> int:
 # Amazon: normalização e upsert
 # ---------------------------------------------------------------------------
 
+
 def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
     """
     Normaliza DataFrame de produtos Amazon para inserção na tabela amazon_products.
-    Garante que todas as colunas esperadas existam e estejam em tipos compatíveis.
+
+    Garante que todas as colunas esperadas existam e estejam em tipos compatíveis
+    com o driver (objetos Python, sem NaN/pd.NA).
     """
     df = df.copy()
 
@@ -137,9 +180,9 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
             df[col] = None
 
     # Numéricos
-    df["browse_node_id"] = pd.to_numeric(df["browse_node_id"], errors="coerce").astype(
-        "Int64"
-    )
+    df["browse_node_id"] = pd.to_numeric(
+        df["browse_node_id"], errors="coerce"
+    ).astype("Int64")
     df["sales_rank"] = pd.to_numeric(df["sales_rank"], errors="coerce").astype("Int64")
     df["price"] = pd.to_numeric(df["price"], errors="coerce")
 
@@ -180,7 +223,7 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
     return df[expected]
 
 
-def upsert_amazon_products(engine, df: pd.DataFrame) -> int:
+def upsert_amazon_products(engine: Any, df: pd.DataFrame) -> int:
     """
     Insere/atualiza produtos na tabela amazon_products.
 
@@ -236,7 +279,7 @@ def upsert_amazon_products(engine, df: pd.DataFrame) -> int:
           source_child_name   = VALUES(source_child_name),
           search_kw           = VALUES(search_kw),
           fetched_at          = NOW();
-    """
+        """
     )
 
     with engine.begin() as conn:
