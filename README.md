@@ -217,15 +217,15 @@ Se você quiser detalhes técnicos sobre a arquitetura, escolhas de design ou a 
 
 --- 
 
-📸 Imagens do App:
+### 📸 Imagens do App:
 
 ### 🔎 Tela de mineração (Amazon-first)
 
-**Filtros por categoria, subcategoria e palavra-chave:**
+**-> Filtros por categoria, subcategoria e palavra-chave:**
 
 ![Filtros Amazon](assets/imagem_minerar.png)
 
-**Tabela de produtos encontrados na Amazon (com preço, BSR, demanda estimada, Prime etc.):**
+**-> Tabela de produtos encontrados na Amazon (com preço, BSR, demanda estimada, Prime etc.):**
 
 ![Resultados Amazon](assets/imagem_minerar2.png)
 
