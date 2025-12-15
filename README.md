@@ -223,15 +223,15 @@ Se você quiser detalhes técnicos sobre a arquitetura, escolhas de design ou a 
 
 **Filtros por categoria, subcategoria e palavra-chave:**
 
-![Filtros Amazon](assets/readme/imagem_minerar.png)
+![Filtros Amazon](assets/imagem_minerar.png)
 
 **Tabela de produtos encontrados na Amazon (com preço, BSR, demanda estimada, Prime etc.):**
 
-![Resultados Amazon](assets/readme/imagem_minerar2.png)
+![Resultados Amazon](assets/imagem_minerar2.png)
 
 ### 🧩 Dados no Banco
 
 **-> Crawler abastece o banco de dados automaticamente**
 
-![Arquitetura Miner Ecom](assets/readme/imagem_db.png)
+![Arquitetura Miner Ecom](assets/imagem_db.png)
 
