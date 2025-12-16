@@ -166,6 +166,10 @@ cython_debug/
 *.csv
 *.log
 
+# backups do YAML
+search_tasks.yaml.bak_*
+*.bak_*
+
 # ─────────────────────────────────────────────
 # Projeto Miner Ecom – arquivos privados/locais
 # ─────────────────────────────────────────────
@@ -193,3 +197,4 @@ lib/bsr_heuristics_private.py
 
 # scripts locais / utilitários que não vão pro repo
 sync_browse_nodes_to_yaml.py
+update_browse_node_candidates.py
