@@ -172,6 +172,7 @@ cython_debug/
 
 # Configuração real de categorias/tarefas (mantida somente local)
 search_tasks.yaml
+search_tasks.backup.yaml
 config/search_tasks.yaml
 assets/search_tasks.yaml
 
