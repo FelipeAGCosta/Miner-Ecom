@@ -488,7 +488,7 @@ if st.button("Buscar Amazon", key="run_amazon"):
                 df_to_save = pd.DataFrame(
                     {
                         "asin": am_df.get("amazon_asin"),
-                        "marketplace_id": None,
+                        "marketplace_id": os.getenv("SPAPI_MARKETPLACE_ID"),
                         "title": am_df.get("amazon_title"),
                         "brand": am_df.get("amazon_brand"),
                         "browse_node_id": am_df.get("amazon_browse_node_id"),
