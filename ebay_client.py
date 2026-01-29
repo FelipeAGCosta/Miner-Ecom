@@ -46,9 +46,11 @@ _session.mount("http://", HTTPAdapter(max_retries=_retry))
 # ────────────────────────────────────────────────────────────────────────────────
 
 class EbayAuthError(Exception):
+    """Erro relacionado à autenticação com o eBay."""
     pass
 
 class EbayRequestError(Exception):
+    """Erro genérico nas requisições para a API do eBay."""
     pass
 
 # ────────────────────────────────────────────────────────────────────────────────
@@ -56,6 +58,9 @@ class EbayRequestError(Exception):
 # ────────────────────────────────────────────────────────────────────────────────
 
 def _auth_headers() -> Dict[str, str]:
+    """
+    Cabeçalhos necessários para chamadas à Browse API.
+    """
     try:
         token = get_app_token()
     except Exception as e:
@@ -78,14 +83,15 @@ def _money_val(m: Any) -> Optional[float]:
         return None
 
 def _extract_qty(obj: Dict[str, Any]) -> Optional[int]:
-    # 1) estimatedAvailabilities
+    """
+    Tenta extrair quantidade estimada de estoque a partir de múltiplas estruturas.
+    """
     est = obj.get("estimatedAvailabilities", [])
     if isinstance(est, list) and est:
         q = (est[0] or {}).get("estimatedAvailableQuantity")
         if isinstance(q, int):
             return q
 
-    # 2) availability.shipToLocationAvailability.quantity
     avail = obj.get("availability")
     if isinstance(avail, dict):
         ship = avail.get("shipToLocationAvailability")
@@ -98,10 +104,7 @@ def _extract_qty(obj: Dict[str, Any]) -> Optional[int]:
 
 def _condition_to_ids(condition: Optional[str]) -> Optional[List[int]]:
     """
-    Converte strings simples em conditionIds do eBay.
-    NEW -> 1000
-    USED -> 3000
-    REFURB -> conjunto aproximado
+    Converte strings simples em conditionIds (Browse API).
     """
     if not condition:
         return None
@@ -152,7 +155,7 @@ def _normalize_summary(s: Dict[str, Any]) -> Dict[str, Any]:
     if price_val is not None:
         total = price_val + (ship_cost or 0.0)
 
-    item = {
+    out = {
         "item_id": s.get("itemId"),
         "title": s.get("title"),
         "price": price_val,
@@ -173,25 +176,71 @@ def _normalize_summary(s: Dict[str, Any]) -> Dict[str, Any]:
 
     q = _extract_qty(s)
     if isinstance(q, int):
-        item["available_qty"] = q
-        item["qty_flag"] = "EXACT"
+        out["available_qty"] = q
+        out["qty_flag"] = "EXACT"
 
-    return item
+    return out
 
-# ────────────────────────────────────────────────────────────────────────────────
-# Funções públicas
-# ────────────────────────────────────────────────────────────────────────────────
+def search_item_summaries(
+    q: Optional[str] = None,
+    gtin: Optional[str] = None,
+    price_min: Optional[float] = None,
+    price_max: Optional[float] = None,
+    condition_ids: Optional[List[int]] = None,
+    limit: int = 20,
+) -> List[dict]:
+    """
+    Busca genérica por q (texto) ou gtin, aplicando filtros.
+    """
+    headers = _auth_headers()
+    params: Dict[str, str] = {}
+
+    if gtin:
+        params["gtin"] = str(gtin).strip()
+    else:
+        params["q"] = (q or "a").strip()
+
+    params["limit"] = str(max(1, min(50, int(limit))))
+    params["offset"] = "0"
+    params["filter"] = _build_filter(price_min, price_max, condition_ids)
+
+    try:
+        r = _session.get(
+            f"{BASE}/item_summary/search",
+            headers=headers,
+            params=params,
+            timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
+        )
+    except Exception as e:
+        raise EbayRequestError(f"Falha de rede no search: {type(e).__name__}: {e}")
+
+    # retry manual extra em 429 (além do Retry)
+    if r.status_code == 429:
+        time.sleep(1.0)
+        r = _session.get(
+            f"{BASE}/item_summary/search",
+            headers=headers,
+            params=params,
+            timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
+        )
+
+    if r.status_code != 200:
+        raise EbayRequestError(f"Erro Browse search: {r.status_code} {r.text[:500]}")
+
+    data = r.json() or {}
+    items = data.get("itemSummaries", []) or []
+    return [_normalize_summary(x) for x in items]
 
 def search_by_category(
     category_id: int,
-    source_price_min: Optional[float] = 15.0,
-    source_price_max: Optional[float] = None,
+    source_price_min: float = 15.0,
     condition: str = "NEW",
     limit_per_page: int = 50,
     max_pages: int = 2,
 ) -> List[dict]:
     """
     Consulta a Browse API do eBay por category_id, aplicando filtros.
+    Mantido por compatibilidade com seu app.
     """
     headers = _auth_headers()
     cond_ids = _condition_to_ids(condition)
@@ -199,7 +248,7 @@ def search_by_category(
     params_base = {
         "category_ids": str(category_id),
         "limit": str(max(1, min(200, int(limit_per_page)))),
-        "filter": _build_filter(source_price_min, source_price_max, cond_ids),
+        "filter": _build_filter(source_price_min, None, cond_ids),
         "fieldgroups": "EXTENDED",
         "sort": "price",
     }
@@ -222,7 +271,7 @@ def search_by_category(
             raise EbayRequestError(f"Falha de rede ao consultar Browse: {type(e).__name__}: {e}")
 
         if r.status_code != 200:
-            raise EbayRequestError(f"Erro Browse API: {r.status_code} {r.text}")
+            raise EbayRequestError(f"Erro Browse API: {r.status_code} {r.text[:500]}")
 
         data = r.json() or {}
         summaries = data.get("itemSummaries", []) or []
@@ -244,7 +293,6 @@ def search_by_category(
 def get_item_detail(item_id: str) -> dict:
     """
     Busca detalhes de um item específico através da Browse API.
-    Tenta fieldgroups e faz fallback sem fieldgroups se necessário.
     """
     headers = _auth_headers()
     url = f"{BASE}/item/{item_id}"
@@ -260,10 +308,9 @@ def get_item_detail(item_id: str) -> dict:
         r = _do(None)
 
     if r.status_code != 200:
-        raise EbayRequestError(f"Erro item detail {item_id}: {r.status_code} {r.text}")
+        raise EbayRequestError(f"Erro item detail {item_id}: {r.status_code} {r.text[:500]}")
 
     d = r.json() or {}
-
     out = {
         "item_id": d.get("itemId"),
         "available_qty": None,
