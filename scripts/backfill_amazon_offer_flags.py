@@ -1,46 +1,55 @@
-import argparse
+"""
+Backfill de flags de oferta no amazon_products:
+- is_prime
+- fulfillment_channel  (normalizado: AMAZON=FBA, MFN=FBM)
+
+Objetivo:
+Preencher colunas antigas que ficaram NULL/vazias sem alterar fetched_at.
+
+Uso (PowerShell, na raiz do projeto):
+  .\.venv\Scripts\python.exe scripts\backfill_amazon_offer_flags.py --limit 200 --only-missing --dry-run
+  .\.venv\Scripts\python.exe scripts\backfill_amazon_offer_flags.py --limit 200 --only-missing
+
+Observação:
+Rodar via "python scripts\..." faz o Python usar a pasta scripts como sys.path[0].
+Este arquivo injeta a raiz do projeto no sys.path para permitir "import lib.*".
+"""
+
+import os
 import sys
 import time
-from pathlib import Path
-from typing import Optional, Any, Dict, Tuple
+import argparse
+from typing import Any, Dict, Optional, Tuple
 
-# ✅ garante que "lib" seja importável mesmo rodando via scripts\...
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+from sqlalchemy import text
 
-from sqlalchemy import text  # noqa: E402
+# --- garante imports do projeto (lib/ etc.) ---
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 
-from lib.config import make_engine  # noqa: E402
-from lib.amazon_spapi import get_buybox_price  # noqa: E402
+from lib.config import make_engine
+from lib.amazon_spapi import get_buybox_price
 
 
-def _safe_bool(v: Any) -> Optional[bool]:
+def _safe_bool_or_none(v: Any) -> Optional[bool]:
     if v is None:
         return None
-    if isinstance(v, bool):
-        return v
-    if isinstance(v, (int, float)):
-        return bool(v)
-    if isinstance(v, str):
-        s = v.strip().lower()
-        if s in ("true", "1", "yes", "y", "sim", "s"):
-            return True
-        if s in ("false", "0", "no", "n", "nao", "não"):
-            return False
-        return None
-    try:
-        return bool(v)
-    except Exception:
-        return None
+    return bool(v)
 
 
-def _norm_fc(v: Any) -> Optional[str]:
+def _norm_fulfillment_channel(v: Any) -> Optional[str]:
+    """
+    Normaliza:
+      AMAZON / FBA / AFN -> "AMAZON"
+      MFN / FBM / MERCHANT / SELLER -> "MFN"
+    """
     if v is None:
         return None
     s = str(v).strip().upper()
     if not s:
         return None
+
     if s in ("AMAZON", "FBA", "AFN"):
         return "AMAZON"
     if s in ("MFN", "FBM", "MERCHANT", "SELLER"):
@@ -48,119 +57,138 @@ def _norm_fc(v: Any) -> Optional[str]:
     return s
 
 
-def _extract_flags(price_info: Any) -> Tuple[Optional[bool], Optional[str]]:
-    if not isinstance(price_info, dict):
+def _extract_flags(price_info: Optional[Dict[str, Any]]) -> Tuple[Optional[bool], Optional[str]]:
+    if not price_info or not isinstance(price_info, dict):
         return None, None
 
-    raw_prime = price_info.get("is_prime")
-    if raw_prime is None:
-        raw_prime = price_info.get("isPrime")
-    if raw_prime is None:
-        raw_prime = price_info.get("primeEligible")
-    if raw_prime is None:
-        raw_prime = price_info.get("prime")
-
-    prime = _safe_bool(raw_prime)
-
-    raw_fc = price_info.get("fulfillment_channel")
-    if raw_fc is None:
-        raw_fc = price_info.get("fulfillmentChannel")
-    if raw_fc is None:
-        raw_fc = price_info.get("fulfillment")
-    if raw_fc is None:
-        if _safe_bool(price_info.get("is_fba")) is True:
-            raw_fc = "FBA"
-        elif _safe_bool(price_info.get("is_fbm")) is True:
-            raw_fc = "FBM"
-
-    fc = _norm_fc(raw_fc)
-
-    # fallback útil
-    if prime is None and fc == "AMAZON":
-        prime = True
-
-    return prime, fc
+    is_prime = _safe_bool_or_none(price_info.get("is_prime"))
+    fc = _norm_fulfillment_channel(price_info.get("fulfillment_channel"))
+    return is_prime, fc
 
 
-def main():
+def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--limit", type=int, default=200, help="quantos ASINs processar por execução")
-    ap.add_argument("--sleep", type=float, default=0.10, help="pausa entre chamadas na API (segundos)")
-    ap.add_argument("--only-missing", action="store_true", help="processa apenas registros com is_prime/fulfillment vazios")
+    ap.add_argument("--limit", type=int, default=200, help="Quantidade máxima de ASINs para processar.")
+    ap.add_argument("--sleep", type=float, default=0.15, help="Pausa entre calls (segundos).")
+    ap.add_argument("--only-missing", action="store_true", help="Só processa registros com campos faltando.")
+    ap.add_argument("--dry-run", action="store_true", help="Não escreve no DB; só mostra o que faria.")
     args = ap.parse_args()
 
-    eng = make_engine()
+    engine = make_engine()
 
-    # seleciona candidatos
+    where = "1=1"
     if args.only_missing:
-        sel = text("""
-            SELECT amazon_asin AS asin
-            FROM amazon_products
-            WHERE (fulfillment_channel IS NULL OR fulfillment_channel = '')
-               OR (is_prime IS NULL)
-            ORDER BY fetched_at DESC
-            LIMIT :lim
-        """)
-    else:
-        sel = text("""
-            SELECT amazon_asin AS asin
-            FROM amazon_products
-            ORDER BY fetched_at DESC
-            LIMIT :lim
-        """)
+        where = """(
+            fulfillment_channel IS NULL OR fulfillment_channel = ''
+            OR is_prime IS NULL
+        )"""
 
-    rows = []
-    with eng.connect() as conn:
+    sel = text(f"""
+        SELECT asin
+        FROM amazon_products
+        WHERE {where}
+        ORDER BY fetched_at DESC
+        LIMIT :lim
+    """)
+
+    upd_tpl_only_missing = """
+        UPDATE amazon_products
+        SET
+            fulfillment_channel = CASE
+                WHEN (fulfillment_channel IS NULL OR fulfillment_channel = '') AND :fc IS NOT NULL THEN :fc
+                ELSE fulfillment_channel
+            END,
+            is_prime = CASE
+                WHEN is_prime IS NULL AND :prime IS NOT NULL THEN :prime
+                ELSE is_prime
+            END
+        WHERE asin = :asin
+    """
+
+    upd_tpl_overwrite = """
+        UPDATE amazon_products
+        SET
+            fulfillment_channel = :fc,
+            is_prime = :prime
+        WHERE asin = :asin
+    """
+
+    total = 0
+    ok = 0
+    skipped = 0
+    errors = 0
+    would_update = 0
+
+    with engine.connect() as conn:
         rows = conn.execute(sel, {"lim": int(args.limit)}).mappings().all()
 
     if not rows:
-        print("[OK] Nada para backfill (nenhum registro encontrado com esse filtro).")
+        print("[INFO] Nada para processar (nenhum asin encontrado pelo filtro).")
         return
 
     total = len(rows)
-    ok = 0
-    fail = 0
-    updated = 0
+    print(f"[INFO] Selecionados {total} ASINs para backfill. only_missing={bool(args.only_missing)} dry_run={bool(args.dry_run)}")
 
-    upd = text("""
-        UPDATE amazon_products
-           SET is_prime = :is_prime,
-               fulfillment_channel = :fc
-         WHERE amazon_asin = :asin
-    """)
+    # transação só para escrita
+    conn = engine.connect()
+    tx = conn.begin() if not args.dry_run else None
 
-    with eng.begin() as conn:
+    try:
         for i, r in enumerate(rows, start=1):
             asin = (r.get("asin") or "").strip()
             if not asin:
+                skipped += 1
                 continue
 
             try:
-                price_info: Optional[Dict[str, Any]] = get_buybox_price(asin)
-                prime_opt, fc = _extract_flags(price_info)
+                price_info = get_buybox_price(asin)
+                is_prime, fc = _extract_flags(price_info)
 
-                # pra gravar no DB: boolean definitivo (0/1)
-                is_prime = 1 if bool(prime_opt) else 0
+                # se não conseguimos extrair nada útil, não adianta escrever
+                if is_prime is None and fc is None:
+                    skipped += 1
+                    print(f"[{i}/{total}] asin={asin} -> sem flags (skip)")
+                    time.sleep(float(args.sleep))
+                    continue
 
-                # se fc continua None, grava NULL (não força lixo)
-                conn.execute(
-                    upd,
-                    {
-                        "asin": asin,
-                        "is_prime": is_prime,
-                        "fc": fc,
-                    },
-                )
-                ok += 1
-                updated += 1
+                params = {
+                    "asin": asin,
+                    "prime": None if is_prime is None else int(bool(is_prime)),
+                    "fc": fc,
+                }
+
+                if args.only_missing:
+                    upd = text(upd_tpl_only_missing)
+                else:
+                    upd = text(upd_tpl_overwrite)
+
+                if args.dry_run:
+                    would_update += 1
+                    print(f"[{i}/{total}] DRY asin={asin} prime={params['prime']} fc={params['fc']}")
+                else:
+                    conn.execute(upd, params)
+                    ok += 1
+                    if i % 25 == 0:
+                        print(f"[{i}/{total}] OK... (prime={params['prime']} fc={params['fc']})")
+
             except Exception as e:
-                fail += 1
-                print(f"[WARN] {i}/{total} asin={asin} erro={type(e).__name__}: {e}")
+                errors += 1
+                print(f"[{i}/{total}] ERROR asin={asin}: {type(e).__name__}: {e}")
 
-            if args.sleep > 0:
-                time.sleep(float(args.sleep))
+            time.sleep(float(args.sleep))
 
-    print(f"[DONE] total={total} updated={updated} ok={ok} fail={fail}")
+        if not args.dry_run and tx is not None:
+            tx.commit()
+
+    except Exception:
+        if not args.dry_run and tx is not None:
+            tx.rollback()
+        raise
+    finally:
+        conn.close()
+
+    print("--------------------------------------------------")
+    print(f"[DONE] total={total} ok={ok} dry_updates={would_update} skipped={skipped} errors={errors}")
 
 
 if __name__ == "__main__":
