@@ -30,7 +30,7 @@ from ebay_client import get_item_detail  # estoque (2ª etapa)
 # Configs internas (não aparecem pro usuário)
 # ---------------------------------------------------------------------------
 
-AMAZON_DB_LIMIT = int(os.getenv("AMAZON_DB_LIMIT", "15"))  # limite padrão de candidatos no DB
+AMAZON_DB_LIMIT = int(os.getenv("AMAZON_DB_LIMIT", "300"))  # limite padrão de candidatos no DB
 EBAY_SEARCH_LIMIT = int(os.getenv("EBAY_SEARCH_LIMIT", "20"))  # resultados por item no eBay
 EBAY_STOCK_MAX_ITEMS = int(os.getenv("EBAY_STOCK_MAX_ITEMS", "2000"))  # limite segurança (estoque)
 
@@ -65,6 +65,21 @@ st.markdown(
         Filtra produtos da sua base <code>amazon_products</code> e encontra matches no eBay em tempo real.
       </p>
     </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+# Bloquear digitação nos selectboxes (apenas seleção por clique)
+st.markdown(
+    """
+    <style>
+    /* Streamlit selectbox usa baseweb select com input interno para busca.
+       Isso desabilita digitação, mas mantém seleção via dropdown. */
+    div[data-baseweb="select"] input {
+        pointer-events: none !important;
+        caret-color: transparent !important;
+    }
+    </style>
     """,
     unsafe_allow_html=True,
 )

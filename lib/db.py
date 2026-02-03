@@ -152,8 +152,9 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
     """
     Normaliza DataFrame de produtos Amazon para inserção na tabela amazon_products.
 
-    Garante que todas as colunas esperadas existam e estejam em tipos compatíveis
-    com o driver (objetos Python, sem NaN/pd.NA).
+    Importante:
+    - Mantém is_prime como TRISTATE: 1 (Prime), 0 (Não Prime), NULL (Desconhecido)
+    - Evita apagar fulfillment_channel quando vier vazio/None
     """
     df = df.copy()
 
@@ -187,13 +188,59 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
     df["sales_rank"] = pd.to_numeric(df["sales_rank"], errors="coerce").astype("Int64")
     df["price"] = pd.to_numeric(df["price"], errors="coerce")
 
-    # Booleano -> int (0/1)
-    df["is_prime"] = df["is_prime"].fillna(False).astype(bool).astype(int)
-
     # currency: fallback para USD
     cur = df["currency"].astype(str).str.upper()
     df["currency"] = cur.where(~cur.isin(["", "NONE", "NAN"]), "USD")
     df["currency"] = df["currency"].fillna("USD")
+
+    # is_prime: 1/0/NULL (não forçar 0 quando desconhecido)
+    def _prime_to_int01_or_none(v: Any) -> Optional[int]:
+        if v is None or v is pd.NA:
+            return None
+        if isinstance(v, float) and np.isnan(v):
+            return None
+        if isinstance(v, (bool, np.bool_)):
+            return int(bool(v))
+        # aceita strings "1"/"0"/"true"/"false"
+        if isinstance(v, str):
+            s = v.strip().lower()
+            if s in ("", "none", "nan"):
+                return None
+            if s in ("1", "true", "t", "yes", "y"):
+                return 1
+            if s in ("0", "false", "f", "no", "n"):
+                return 0
+            try:
+                iv = int(s)
+                return iv if iv in (0, 1) else None
+            except Exception:
+                return None
+        try:
+            iv = int(v)
+            return iv if iv in (0, 1) else None
+        except Exception:
+            return None
+
+    df["is_prime"] = df["is_prime"].apply(_prime_to_int01_or_none)
+
+    # fulfillment_channel: normaliza para FBA/FBM/NULL (sem apagar com vazio)
+    def _norm_fulfillment(v: Any) -> Optional[str]:
+        if v is None or v is pd.NA:
+            return None
+        if isinstance(v, float) and np.isnan(v):
+            return None
+        s = str(v).strip().upper()
+        if s in ("", "NONE", "NAN"):
+            return None
+        # aceita padrões antigos e normaliza
+        if s in ("AMAZON", "FBA"):
+            return "FBA"
+        if s in ("MFN", "MERCHANT", "FBM"):
+            return "FBM"
+        # mantém outros valores, mas garante limite de tamanho
+        return s[:20]
+
+    df["fulfillment_channel"] = df["fulfillment_channel"].apply(_norm_fulfillment)
 
     # Converte NaN/NA restantes para None
     df = df.replace({np.nan: None, pd.NA: None})
@@ -263,22 +310,22 @@ def upsert_amazon_products(engine: Any, df: pd.DataFrame) -> int:
          :source_root_name, :source_child_name, :search_kw,
          NOW())
         ON DUPLICATE KEY UPDATE
-          marketplace_id      = VALUES(marketplace_id),
-          title               = VALUES(title),
-          brand               = VALUES(brand),
-          browse_node_id      = VALUES(browse_node_id),
-          browse_node_name    = VALUES(browse_node_name),
-          gtin                = VALUES(gtin),
-          gtin_type           = VALUES(gtin_type),
-          sales_rank          = VALUES(sales_rank),
-          sales_rank_category = VALUES(sales_rank_category),
-          price               = VALUES(price),
-          currency            = VALUES(currency),
-          is_prime            = VALUES(is_prime),
-          fulfillment_channel = VALUES(fulfillment_channel),
-          source_root_name    = VALUES(source_root_name),
-          source_child_name   = VALUES(source_child_name),
-          search_kw           = VALUES(search_kw),
+          marketplace_id      = COALESCE(NULLIF(VALUES(marketplace_id), ''), marketplace_id),
+          title               = COALESCE(NULLIF(VALUES(title), ''), title),
+          brand               = COALESCE(NULLIF(VALUES(brand), ''), brand),
+          browse_node_id      = COALESCE(VALUES(browse_node_id), browse_node_id),
+          browse_node_name    = COALESCE(NULLIF(VALUES(browse_node_name), ''), browse_node_name),
+          gtin                = COALESCE(NULLIF(VALUES(gtin), ''), gtin),
+          gtin_type           = COALESCE(NULLIF(VALUES(gtin_type), ''), gtin_type),
+          sales_rank          = COALESCE(VALUES(sales_rank), sales_rank),
+          sales_rank_category = COALESCE(NULLIF(VALUES(sales_rank_category), ''), sales_rank_category),
+          price               = COALESCE(VALUES(price), price),
+          currency            = COALESCE(NULLIF(VALUES(currency), ''), currency),
+          is_prime            = COALESCE(VALUES(is_prime), is_prime),
+          fulfillment_channel = COALESCE(NULLIF(VALUES(fulfillment_channel), ''), fulfillment_channel),
+          source_root_name    = COALESCE(NULLIF(VALUES(source_root_name), ''), source_root_name),
+          source_child_name   = COALESCE(NULLIF(VALUES(source_child_name), ''), source_child_name),
+          search_kw           = COALESCE(NULLIF(VALUES(search_kw), ''), search_kw),
           fetched_at          = NOW();
         """
     )
