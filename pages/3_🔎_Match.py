@@ -30,7 +30,7 @@ from ebay_client import get_item_detail  # estoque (2ª etapa)
 # Configs internas (não aparecem pro usuário)
 # ---------------------------------------------------------------------------
 
-AMAZON_DB_LIMIT = int(os.getenv("AMAZON_DB_LIMIT", "300"))  # limite padrão de candidatos no DB
+AMAZON_DB_LIMIT = int(os.getenv("AMAZON_DB_LIMIT", "15"))  # limite padrão de candidatos no DB
 EBAY_SEARCH_LIMIT = int(os.getenv("EBAY_SEARCH_LIMIT", "20"))  # resultados por item no eBay
 EBAY_STOCK_MAX_ITEMS = int(os.getenv("EBAY_STOCK_MAX_ITEMS", "2000"))  # limite segurança (estoque)
 
@@ -38,6 +38,13 @@ EBAY_STOCK_MAX_ITEMS = int(os.getenv("EBAY_STOCK_MAX_ITEMS", "2000"))  # limite 
 MIN_SCORE_TITLE_WITH_BRAND = float(os.getenv("MIN_SCORE_TITLE_WITH_BRAND", "92.0"))
 MIN_SCORE_TITLE_NO_BRAND = float(os.getenv("MIN_SCORE_TITLE_NO_BRAND", "95.0"))
 MIN_SCORE_GTIN = float(os.getenv("MIN_SCORE_GTIN", "85.0"))
+
+# ---------------------------------------------------------------------------
+# FORCE: Amazon-only (desativa eBay completamente nesta página)
+# - default: ligado ("1") para você validar somente filtros do DB Amazon.
+# - para reativar: adicione FORCE_AMAZON_ONLY=0 no .env (ou mude aqui).
+# ---------------------------------------------------------------------------
+FORCE_AMAZON_ONLY = (os.getenv("FORCE_AMAZON_ONLY", "1").strip() == "1")
 
 # ---------------------------------------------------------------------------
 # CSS global
@@ -556,6 +563,72 @@ if btn_run:
             f"Encontramos muitos resultados. Mostrando até {AMAZON_DB_LIMIT} itens (limite padrão do app). "
             f"Se quiser aumentar nos testes, ajuste AMAZON_DB_LIMIT no .env."
         )
+
+    # -----------------------------------------------------------------------
+    # FORCE Amazon-only: mostra apenas resultados do DB e interrompe antes do eBay
+    # -----------------------------------------------------------------------
+    if FORCE_AMAZON_ONLY:
+        st.success("Modo Amazon-only ativo: eBay desativado. Exibindo apenas resultados filtrados do DB Amazon.")
+
+        show = am_df.copy()
+        show["amazon_url"] = show["asin"].apply(_amazon_url)
+
+        # Colunas mais úteis pra validação do filtro Amazon (mantém o resto no debug/CSV)
+        preferred_cols = [
+            "title",
+            "brand",
+            "price",
+            "sales_rank",
+            "amazon_url",
+            "gtin",
+            "is_prime",
+            "fulfillment_channel",
+            "browse_node_name",
+            "source_root_name",
+            "source_child_name",
+            "fetched_at",
+        ]
+        cols = [c for c in preferred_cols if c in show.columns]
+        show_view = show[cols].copy()
+
+        st.metric("Itens Amazon retornados", len(show_view))
+
+        st.dataframe(
+            show_view,
+            use_container_width=True,
+            hide_index=True,
+            height=560,
+            column_config={
+                "title": "Produto (Amazon)",
+                "brand": "Marca",
+                "price": st.column_config.NumberColumn("Preço Amazon", format="$%.2f"),
+                "sales_rank": st.column_config.NumberColumn("BSR", format="%d"),
+                "amazon_url": st.column_config.LinkColumn("Link Amazon", display_text="Abrir"),
+                "gtin": "GTIN",
+                "is_prime": "Prime",
+                "fulfillment_channel": "Fulfillment",
+                "browse_node_name": "Browse node",
+                "source_root_name": "Categoria (root)",
+                "source_child_name": "Subcategoria (child)",
+                "fetched_at": "Fetched at",
+            },
+        )
+
+        # Export CSV (do resultado filtrado da Amazon)
+        csv_bytes = show.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "Exportar CSV (Amazon DB filtrado)",
+            data=csv_bytes,
+            file_name="amazon_db_filtrado.csv",
+            mime="text/csv",
+            use_container_width=False,
+        )
+
+        # Debug (opcional)
+        with st.expander("Detalhes (debug) - Amazon DB filtrado"):
+            st.dataframe(show, use_container_width=True, hide_index=True)
+
+        st.stop()
 
     client_id = (os.getenv("EBAY_CLIENT_ID") or "").strip()
     client_secret = (os.getenv("EBAY_CLIENT_SECRET") or "").strip()
