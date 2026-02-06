@@ -131,6 +131,38 @@ def _amazon_url(asin: Optional[str]) -> Optional[str]:
     asin = (asin or "").strip()
     return f"https://www.amazon.com/dp/{asin}" if asin else None
 
+def _prime_status(v: Any) -> str:
+    try:
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return "❓ Desconhecido"
+        iv = int(v)
+        if iv == 1:
+            return "✅ Prime"
+        if iv == 0:
+            return "❌ Não Prime"
+        return "❓ Desconhecido"
+    except Exception:
+        return "❓ Desconhecido"
+
+def _fulfillment_mode(v: Any) -> str:
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return "Desconhecido"
+    s = str(v).strip().upper()
+    if not s:
+        return "Desconhecido"
+    # suporta base antiga e nova
+    if s in ("FBA", "AMAZON", "AFN"):
+        return "FBA"
+    if s in ("FBM", "MFN", "MERCHANT", "SELLER"):
+        return "FBM"
+    return s
+
+def _norm_condition(v: Any) -> str:
+    if v is None or (isinstance(v, float) and pd.isna(v)):
+        return "Desconhecida"
+    s = str(v).strip()
+    return s if s else "Desconhecida"
+
 # ---------------------------------------------------------------------------
 # eBay: token + search (Browse API)
 # ---------------------------------------------------------------------------
@@ -320,7 +352,8 @@ def _load_amazon_from_db(
     price_min: Optional[float],
     price_max: Optional[float],
     prime_only: bool,
-    fulfillment_mode: str,  # ANY / FBA / FBM
+    fulfillment_mode: str,      # ANY / FBA / FBM
+    amazon_condition: str,      # ANY / NEW / USED / REFURB / UNKNOWN
     limit_rows: int,
 ) -> pd.DataFrame:
     where = ["1=1", "price IS NOT NULL"]
@@ -346,13 +379,26 @@ def _load_amazon_from_db(
         where.append("price <= :pmax")
         params["pmax"] = float(price_max)
 
+    # Prime estrito: somente is_prime = 1
     if prime_only:
         where.append("is_prime = 1")
 
+    # Fulfillment estrito, mas compatível com bases antigas e novas
     if fulfillment_mode == "FBA":
-        where.append("fulfillment_channel = 'AMAZON'")
+        where.append("fulfillment_channel IN ('FBA','AMAZON','AFN')")
     elif fulfillment_mode == "FBM":
-        where.append("(fulfillment_channel = 'MFN' OR fulfillment_channel = 'MERCHANT')")
+        where.append("fulfillment_channel IN ('FBM','MFN','MERCHANT','SELLER')")
+
+    # Condição Amazon (DB) — estrita
+    # Valores esperados: New / Used / Refurbished ... (ou NULL)
+    if amazon_condition == "NEW":
+        where.append("item_condition = 'New'")
+    elif amazon_condition == "USED":
+        where.append("item_condition = 'Used'")
+    elif amazon_condition == "REFURB":
+        where.append("item_condition IN ('Refurbished','Renewed','Reconditioned')")
+    elif amazon_condition == "UNKNOWN":
+        where.append("item_condition IS NULL")
 
     sql = f"""
         SELECT
@@ -367,6 +413,7 @@ def _load_amazon_from_db(
             currency,
             is_prime,
             fulfillment_channel,
+            item_condition,
             browse_node_name,
             source_root_name,
             source_child_name,
@@ -443,6 +490,23 @@ if fulfillment_pt == "Enviado pela Amazon (FBA)":
 elif fulfillment_pt == "Enviado pelo vendedor (FBM)":
     fulfillment_mode = "FBM"
 
+# Condição Amazon (do DB)
+condA = st.selectbox(
+    "Condição (Amazon - DB)",
+    ["Qualquer", "Novo", "Usado", "Recondicionado", "Desconhecida"],
+    index=0,
+)
+
+amazon_condition = "ANY"
+if condA == "Novo":
+    amazon_condition = "NEW"
+elif condA == "Usado":
+    amazon_condition = "USED"
+elif condA == "Recondicionado":
+    amazon_condition = "REFURB"
+elif condA == "Desconhecida":
+    amazon_condition = "UNKNOWN"
+
 st.markdown("</div>", unsafe_allow_html=True)
 
 # Card eBay
@@ -506,6 +570,7 @@ def _render_keepa_table(df: pd.DataFrame) -> None:
     keep_cols = [
         "amazon_title",
         "amazon_brand",
+        "amazon_item_condition",
         "amazon_price",
         "amazon_sales_rank",
         "amazon_url",
@@ -527,6 +592,7 @@ def _render_keepa_table(df: pd.DataFrame) -> None:
         column_config={
             "amazon_title": "Produto (Amazon)",
             "amazon_brand": "Marca",
+            "amazon_item_condition": "Condição (Amazon)",
             "amazon_price": st.column_config.NumberColumn("Preço Amazon", format="$%.2f"),
             "amazon_sales_rank": st.column_config.NumberColumn("BSR", format="%d"),
             "amazon_url": st.column_config.LinkColumn("Link Amazon", display_text="Abrir"),
@@ -566,6 +632,7 @@ if btn_run:
             price_max=amazon_price_max,
             prime_only=prime_only,
             fulfillment_mode=fulfillment_mode,
+            amazon_condition=amazon_condition,
             limit_rows=AMAZON_DB_LIMIT,
         )
 
@@ -588,16 +655,21 @@ if btn_run:
         show = am_df.copy()
         show["amazon_url"] = show["asin"].apply(_amazon_url)
 
-        # Colunas mais úteis pra validação do filtro Amazon (mantém o resto no debug/CSV)
+        # colunas “amigáveis” (tri-state + fulfillment normalizado)
+        show["prime_status"] = show["is_prime"].apply(_prime_status)
+        show["fulfillment_mode"] = show["fulfillment_channel"].apply(_fulfillment_mode)
+        show["item_condition_view"] = show["item_condition"].apply(_norm_condition)
+
         preferred_cols = [
             "title",
             "brand",
+            "item_condition_view",
             "price",
             "sales_rank",
             "amazon_url",
             "gtin",
-            "is_prime",
-            "fulfillment_channel",
+            "prime_status",
+            "fulfillment_mode",
             "browse_node_name",
             "source_root_name",
             "source_child_name",
@@ -616,12 +688,13 @@ if btn_run:
             column_config={
                 "title": "Produto (Amazon)",
                 "brand": "Marca",
+                "item_condition_view": "Condição (Amazon)",
                 "price": st.column_config.NumberColumn("Preço Amazon", format="$%.2f"),
                 "sales_rank": st.column_config.NumberColumn("BSR", format="%d"),
                 "amazon_url": st.column_config.LinkColumn("Link Amazon", display_text="Abrir"),
                 "gtin": "GTIN",
-                "is_prime": "Prime",
-                "fulfillment_channel": "Fulfillment",
+                "prime_status": "Prime (tri-state)",
+                "fulfillment_mode": "Fulfillment",
                 "browse_node_name": "Browse node",
                 "source_root_name": "Categoria (root)",
                 "source_child_name": "Subcategoria (child)",
@@ -708,11 +781,14 @@ if btn_run:
             "asin": asin,
             "amazon_title": title,
             "amazon_brand": brand,
+            "amazon_item_condition": row.get("item_condition"),
             "amazon_price": amazon_price,
             "amazon_sales_rank": row.get("sales_rank"),
             "amazon_sales_rank_category": row.get("sales_rank_category"),
             "amazon_url": _amazon_url(asin),
             "amazon_gtin": row.get("gtin"),
+            "amazon_prime": _prime_status(row.get("is_prime")),
+            "amazon_fulfillment": _fulfillment_mode(row.get("fulfillment_channel")),
             "fetched_at": row.get("fetched_at"),
             "source_root_name": row.get("source_root_name"),
             "source_child_name": row.get("source_child_name"),
