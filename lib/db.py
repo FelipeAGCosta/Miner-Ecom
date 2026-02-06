@@ -155,6 +155,7 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
     Importante:
     - Mantém is_prime como TRISTATE: 1 (Prime), 0 (Não Prime), NULL (Desconhecido)
     - Evita apagar fulfillment_channel quando vier vazio/None
+    - Normaliza item_condition (New/Used/Refurbished...) e respeita VARCHAR(16)
     """
     df = df.copy()
 
@@ -173,6 +174,7 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
         "currency",
         "is_prime",
         "fulfillment_channel",
+        "item_condition",  # <-- NOVO
         "source_root_name",
         "source_child_name",
         "search_kw",
@@ -187,6 +189,13 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
     df["browse_node_id"] = pd.to_numeric(df["browse_node_id"], errors="coerce").astype("Int64")
     df["sales_rank"] = pd.to_numeric(df["sales_rank"], errors="coerce").astype("Int64")
     df["price"] = pd.to_numeric(df["price"], errors="coerce")
+
+    # marketplace_id: evita NULL/'' (sua coluna é NOT NULL)
+    def _norm_marketplace(v: Any) -> str:
+        s = "" if v is None or v is pd.NA else str(v).strip()
+        return s if s else "ATVPDKIKX0DER"
+
+    df["marketplace_id"] = df["marketplace_id"].apply(_norm_marketplace)
 
     # currency: fallback para USD
     cur = df["currency"].astype(str).str.upper()
@@ -242,6 +251,20 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
 
     df["fulfillment_channel"] = df["fulfillment_channel"].apply(_norm_fulfillment)
 
+    # item_condition: normaliza e respeita VARCHAR(16)
+    def _norm_item_condition(v: Any) -> Optional[str]:
+        if v is None or v is pd.NA:
+            return None
+        if isinstance(v, float) and np.isnan(v):
+            return None
+        s = str(v).strip()
+        if not s or s.lower() in ("none", "nan"):
+            return None
+        # padrão esperado: New, Used, Refurbished, Collectible...
+        return s.title()[:16]
+
+    df["item_condition"] = df["item_condition"].apply(_norm_item_condition)
+
     # Converte NaN/NA restantes para None
     df = df.replace({np.nan: None, pd.NA: None})
 
@@ -262,6 +285,7 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
             "currency": object,
             "is_prime": object,
             "fulfillment_channel": object,
+            "item_condition": object,  # <-- NOVO
             "source_root_name": object,
             "source_child_name": object,
             "search_kw": object,
@@ -282,6 +306,7 @@ def upsert_amazon_products(engine: Any, df: pd.DataFrame) -> int:
       sales_rank, sales_rank_category,
       price, currency,
       is_prime, fulfillment_channel,
+      item_condition,
       source_root_name, source_child_name, search_kw
     """
     if df.empty:
@@ -289,9 +314,6 @@ def upsert_amazon_products(engine: Any, df: pd.DataFrame) -> int:
 
     rows = sql_safe_amazon_frame(df)
 
-    # OBS: Ajuste mínimo aqui:
-    # - Troca VALUES(col) por alias "new" para evitar warnings de depreciação no MySQL 8+
-    # - Mantém exatamente o mesmo comportamento (COALESCE pra não apagar valor bom com NULL)
     sql = text(
         """
         INSERT INTO amazon_products
@@ -300,7 +322,7 @@ def upsert_amazon_products(engine: Any, df: pd.DataFrame) -> int:
          gtin, gtin_type,
          sales_rank, sales_rank_category,
          price, currency,
-         is_prime, fulfillment_channel,
+         is_prime, fulfillment_channel, item_condition,
          source_root_name, source_child_name, search_kw,
          fetched_at)
         VALUES
@@ -309,27 +331,33 @@ def upsert_amazon_products(engine: Any, df: pd.DataFrame) -> int:
          :gtin, :gtin_type,
          :sales_rank, :sales_rank_category,
          :price, :currency,
-         :is_prime, :fulfillment_channel,
+         :is_prime, :fulfillment_channel, :item_condition,
          :source_root_name, :source_child_name, :search_kw,
-         NOW()) AS new
+         NOW())
         ON DUPLICATE KEY UPDATE
-          marketplace_id      = COALESCE(NULLIF(new.marketplace_id, ''), amazon_products.marketplace_id),
-          title               = COALESCE(NULLIF(new.title, ''), amazon_products.title),
-          brand               = COALESCE(NULLIF(new.brand, ''), amazon_products.brand),
-          browse_node_id      = COALESCE(new.browse_node_id, amazon_products.browse_node_id),
-          browse_node_name    = COALESCE(NULLIF(new.browse_node_name, ''), amazon_products.browse_node_name),
-          gtin                = COALESCE(NULLIF(new.gtin, ''), amazon_products.gtin),
-          gtin_type           = COALESCE(NULLIF(new.gtin_type, ''), amazon_products.gtin_type),
-          sales_rank          = COALESCE(new.sales_rank, amazon_products.sales_rank),
-          sales_rank_category = COALESCE(NULLIF(new.sales_rank_category, ''), amazon_products.sales_rank_category),
-          price               = COALESCE(new.price, amazon_products.price),
-          currency            = COALESCE(NULLIF(new.currency, ''), amazon_products.currency),
-          is_prime            = COALESCE(new.is_prime, amazon_products.is_prime),
-          fulfillment_channel = COALESCE(NULLIF(new.fulfillment_channel, ''), amazon_products.fulfillment_channel),
-          source_root_name    = COALESCE(NULLIF(new.source_root_name, ''), amazon_products.source_root_name),
-          source_child_name   = COALESCE(NULLIF(new.source_child_name, ''), amazon_products.source_child_name),
-          search_kw           = COALESCE(NULLIF(new.search_kw, ''), amazon_products.search_kw),
-          fetched_at          = new.fetched_at;
+          marketplace_id      = COALESCE(NULLIF(VALUES(marketplace_id), ''), marketplace_id),
+          title               = COALESCE(NULLIF(VALUES(title), ''), title),
+          brand               = COALESCE(NULLIF(VALUES(brand), ''), brand),
+          browse_node_id      = COALESCE(VALUES(browse_node_id), browse_node_id),
+          browse_node_name    = COALESCE(NULLIF(VALUES(browse_node_name), ''), browse_node_name),
+          gtin                = COALESCE(NULLIF(VALUES(gtin), ''), gtin),
+          gtin_type           = COALESCE(NULLIF(VALUES(gtin_type), ''), gtin_type),
+          sales_rank          = COALESCE(VALUES(sales_rank), sales_rank),
+          sales_rank_category = COALESCE(NULLIF(VALUES(sales_rank_category), ''), sales_rank_category),
+          price               = COALESCE(VALUES(price), price),
+          currency            = COALESCE(NULLIF(VALUES(currency), ''), currency),
+
+          -- tri-state: se vier NULL, preserva o antigo
+          is_prime            = COALESCE(VALUES(is_prime), is_prime),
+          fulfillment_channel = COALESCE(NULLIF(VALUES(fulfillment_channel), ''), fulfillment_channel),
+
+          -- NOVO: condição (se vier NULL/'' não apaga o antigo)
+          item_condition      = COALESCE(NULLIF(VALUES(item_condition), ''), item_condition),
+
+          source_root_name    = COALESCE(NULLIF(VALUES(source_root_name), ''), source_root_name),
+          source_child_name   = COALESCE(NULLIF(VALUES(source_child_name), ''), source_child_name),
+          search_kw           = COALESCE(NULLIF(VALUES(search_kw), ''), search_kw),
+          fetched_at          = NOW();
         """
     )
 
