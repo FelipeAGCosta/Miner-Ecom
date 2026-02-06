@@ -289,6 +289,9 @@ def upsert_amazon_products(engine: Any, df: pd.DataFrame) -> int:
 
     rows = sql_safe_amazon_frame(df)
 
+    # OBS: Ajuste mínimo aqui:
+    # - Troca VALUES(col) por alias "new" para evitar warnings de depreciação no MySQL 8+
+    # - Mantém exatamente o mesmo comportamento (COALESCE pra não apagar valor bom com NULL)
     sql = text(
         """
         INSERT INTO amazon_products
@@ -308,25 +311,25 @@ def upsert_amazon_products(engine: Any, df: pd.DataFrame) -> int:
          :price, :currency,
          :is_prime, :fulfillment_channel,
          :source_root_name, :source_child_name, :search_kw,
-         NOW())
+         NOW()) AS new
         ON DUPLICATE KEY UPDATE
-          marketplace_id      = COALESCE(NULLIF(VALUES(marketplace_id), ''), marketplace_id),
-          title               = COALESCE(NULLIF(VALUES(title), ''), title),
-          brand               = COALESCE(NULLIF(VALUES(brand), ''), brand),
-          browse_node_id      = COALESCE(VALUES(browse_node_id), browse_node_id),
-          browse_node_name    = COALESCE(NULLIF(VALUES(browse_node_name), ''), browse_node_name),
-          gtin                = COALESCE(NULLIF(VALUES(gtin), ''), gtin),
-          gtin_type           = COALESCE(NULLIF(VALUES(gtin_type), ''), gtin_type),
-          sales_rank          = COALESCE(VALUES(sales_rank), sales_rank),
-          sales_rank_category = COALESCE(NULLIF(VALUES(sales_rank_category), ''), sales_rank_category),
-          price               = COALESCE(VALUES(price), price),
-          currency            = COALESCE(NULLIF(VALUES(currency), ''), currency),
-          is_prime            = COALESCE(VALUES(is_prime), is_prime),
-          fulfillment_channel = COALESCE(NULLIF(VALUES(fulfillment_channel), ''), fulfillment_channel),
-          source_root_name    = COALESCE(NULLIF(VALUES(source_root_name), ''), source_root_name),
-          source_child_name   = COALESCE(NULLIF(VALUES(source_child_name), ''), source_child_name),
-          search_kw           = COALESCE(NULLIF(VALUES(search_kw), ''), search_kw),
-          fetched_at          = NOW();
+          marketplace_id      = COALESCE(NULLIF(new.marketplace_id, ''), amazon_products.marketplace_id),
+          title               = COALESCE(NULLIF(new.title, ''), amazon_products.title),
+          brand               = COALESCE(NULLIF(new.brand, ''), amazon_products.brand),
+          browse_node_id      = COALESCE(new.browse_node_id, amazon_products.browse_node_id),
+          browse_node_name    = COALESCE(NULLIF(new.browse_node_name, ''), amazon_products.browse_node_name),
+          gtin                = COALESCE(NULLIF(new.gtin, ''), amazon_products.gtin),
+          gtin_type           = COALESCE(NULLIF(new.gtin_type, ''), amazon_products.gtin_type),
+          sales_rank          = COALESCE(new.sales_rank, amazon_products.sales_rank),
+          sales_rank_category = COALESCE(NULLIF(new.sales_rank_category, ''), amazon_products.sales_rank_category),
+          price               = COALESCE(new.price, amazon_products.price),
+          currency            = COALESCE(NULLIF(new.currency, ''), amazon_products.currency),
+          is_prime            = COALESCE(new.is_prime, amazon_products.is_prime),
+          fulfillment_channel = COALESCE(NULLIF(new.fulfillment_channel, ''), amazon_products.fulfillment_channel),
+          source_root_name    = COALESCE(NULLIF(new.source_root_name, ''), amazon_products.source_root_name),
+          source_child_name   = COALESCE(NULLIF(new.source_child_name, ''), amazon_products.source_child_name),
+          search_kw           = COALESCE(NULLIF(new.search_kw, ''), amazon_products.search_kw),
+          fetched_at          = new.fetched_at;
         """
     )
 
