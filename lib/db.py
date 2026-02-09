@@ -348,11 +348,27 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
             return None
         if isinstance(v, float) and np.isnan(v):
             return None
+
         s = str(v).strip()
         if not s or s.lower() in ("none", "nan"):
             return None
-        # padrão esperado: New, Used, Refurbished, Collectible...
-        return s.title()[:16]
+
+        s_norm = s.strip().lower().replace(" ", "_")
+
+    # NEW
+        if s_norm.startswith("new"):
+            return "New"
+
+    # REFURBISHED (mapeia variações)
+        if ("refurb" in s_norm) or ("renew" in s_norm) or ("recond" in s_norm):
+            return "Refurbished"
+
+    # USED (mapeia variações comuns)
+        if s_norm.startswith("used") or s_norm in ("very_good", "good", "acceptable", "like_new"):
+            return "Used"
+
+    # fallback: se vier algo inesperado, joga pra Used (ou None, se preferir)
+        return "Used"
 
     df["item_condition"] = df["item_condition"].apply(_norm_item_condition)
 
