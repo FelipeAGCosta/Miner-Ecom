@@ -385,9 +385,10 @@ def _load_amazon_from_db(
 
     # Fulfillment estrito, mas compatível com bases antigas e novas
     if fulfillment_mode == "FBA":
-        where.append("fulfillment_channel IN ('FBA','AMAZON','AFN')")
+        where.append("(fulfillment_channel IN ('FBA','AMAZON','AFN'))")
+
     elif fulfillment_mode == "FBM":
-        where.append("fulfillment_channel IN ('FBM','MFN','MERCHANT','SELLER')")
+        where.append("(fulfillment_channel IN ('FBM','MFN','MERCHANT'))")
 
     # Condição Amazon (DB) — estrita
     # Valores esperados: New / Used / Refurbished ... (ou NULL)
