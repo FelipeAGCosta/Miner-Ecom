@@ -505,8 +505,6 @@ elif condA == "Usado":
     amazon_condition = "USED"
 elif condA == "Recondicionado":
     amazon_condition = "REFURB"
-elif condA == "Desconhecida":
-    amazon_condition = "UNKNOWN"
 
 st.markdown("</div>", unsafe_allow_html=True)
 
@@ -637,9 +635,29 @@ if btn_run:
             limit_rows=AMAZON_DB_LIMIT,
         )
 
-    if am_df.empty:
-        st.warning("Nenhum produto da Amazon encontrado com esses filtros.")
-        st.stop()
+        if am_df.empty:
+            if amazon_condition != "ANY":
+                st.warning(
+            "Nenhum produto da condição escolhida encontrado, mostraremos todas as condições disponíveis."
+            )
+            with st.spinner("Carregando produtos da Amazon (todas as condições disponíveis)..."):
+                am_df = _load_amazon_from_db(
+                    engine=engine,
+                    source_root_name=source_root_name,
+                    source_child_name=source_child_name,
+                    keyword=user_kw,
+                    price_min=amazon_price_min,
+                    price_max=amazon_price_max,
+                    prime_only=prime_only,
+                    fulfillment_mode=fulfillment_mode,
+                    amazon_condition="ANY",   # fallback
+                    limit_rows=AMAZON_DB_LIMIT,
+                )
+
+            if am_df.empty:
+                st.warning("Nenhum produto da Amazon encontrado com esses filtros.")
+                st.stop()
+
 
     if len(am_df) >= AMAZON_DB_LIMIT:
         st.info(
