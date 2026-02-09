@@ -155,6 +155,7 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
     Importante:
     - Mantém is_prime como TRISTATE: 1 (Prime), 0 (Não Prime), NULL (Desconhecido)
     - Evita apagar fulfillment_channel quando vier vazio/None
+    - Padroniza fulfillment_channel para valores CANÔNICOS no DB: AMAZON (FBA) / MFN (FBM)
     - Normaliza item_condition (New/Used/Refurbished...) e respeita VARCHAR(16)
     """
     df = df.copy()
@@ -174,7 +175,7 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
         "currency",
         "is_prime",
         "fulfillment_channel",
-        "item_condition",  # <-- NOVO
+        "item_condition",
         "source_root_name",
         "source_child_name",
         "search_kw",
@@ -185,6 +186,39 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
         if col not in df.columns:
             df[col] = None
 
+    # -----------------------------
+    # Helpers básicos
+    # -----------------------------
+    def _none_if_blank(v: Any) -> Any:
+        if v is None or v is pd.NA:
+            return None
+        if isinstance(v, float) and np.isnan(v):
+            return None
+        if isinstance(v, str):
+            s = v.strip()
+            return s if s else None
+        return v
+
+    # Sanitiza strings principais (evita '' indo pro INSERT)
+    text_cols = [
+        "asin",
+        "title",
+        "brand",
+        "browse_node_name",
+        "gtin",
+        "gtin_type",
+        "sales_rank_category",
+        "source_root_name",
+        "source_child_name",
+        "search_kw",
+        "currency",
+        "fulfillment_channel",
+        "item_condition",
+        "marketplace_id",
+    ]
+    for c in text_cols:
+        df[c] = df[c].apply(_none_if_blank)
+
     # Numéricos
     df["browse_node_id"] = pd.to_numeric(df["browse_node_id"], errors="coerce").astype("Int64")
     df["sales_rank"] = pd.to_numeric(df["sales_rank"], errors="coerce").astype("Int64")
@@ -192,13 +226,17 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
 
     # marketplace_id: evita NULL/'' (sua coluna é NOT NULL)
     def _norm_marketplace(v: Any) -> str:
-        s = "" if v is None or v is pd.NA else str(v).strip()
+        if v is None or v is pd.NA:
+            return "ATVPDKIKX0DER"
+        if isinstance(v, float) and np.isnan(v):
+            return "ATVPDKIKX0DER"
+        s = str(v).strip()
         return s if s else "ATVPDKIKX0DER"
 
     df["marketplace_id"] = df["marketplace_id"].apply(_norm_marketplace)
 
     # currency: fallback para USD
-    cur = df["currency"].astype(str).str.upper()
+    cur = df["currency"].apply(lambda v: None if v is None else str(v).strip().upper())
     df["currency"] = cur.where(~cur.isin(["", "NONE", "NAN"]), "USD")
     df["currency"] = df["currency"].fillna("USD")
 
@@ -209,8 +247,10 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
         if isinstance(v, float) and np.isnan(v):
             return None
         if isinstance(v, (bool, np.bool_)):
-            return int(bool(v))
-        # aceita strings "1"/"0"/"true"/"false"
+            return 1 if bool(v) else 0
+        if isinstance(v, (int, np.integer)):
+            iv = int(v)
+            return iv if iv in (0, 1) else None
         if isinstance(v, str):
             s = v.strip().lower()
             if s in ("", "none", "nan"):
@@ -229,6 +269,57 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
             return iv if iv in (0, 1) else None
         except Exception:
             return None
+
+    df["is_prime"] = df["is_prime"].apply(_prime_to_int01_or_none)
+
+    # fulfillment_channel: CANÔNICO no DB -> AMAZON (FBA) / MFN (FBM) / NULL
+    def _norm_fulfillment(v: Any) -> Optional[str]:
+        if v is None or v is pd.NA:
+            return None
+        if isinstance(v, float) and np.isnan(v):
+            return None
+        s = str(v).strip().upper()
+        if s in ("", "NONE", "NAN", "<NA>"):
+            return None
+
+        # aceita variações e padroniza para o DB
+        if s in ("AMAZON", "FBA", "AFN"):
+            return "AMAZON"
+        if s in ("MFN", "FBM", "MERCHANT", "SELLER"):
+            return "MFN"
+
+        # fallback: preserva, mas respeita VARCHAR(20)
+        return s[:20]
+
+    df["fulfillment_channel"] = df["fulfillment_channel"].apply(_norm_fulfillment)
+
+    # item_condition: normaliza e respeita VARCHAR(16)
+    def _norm_item_condition(v: Any) -> Optional[str]:
+        if v is None or v is pd.NA:
+            return None
+        if isinstance(v, float) and np.isnan(v):
+            return None
+        s = str(v).strip()
+        if not s or s.lower() in ("none", "nan", "<na>"):
+            return None
+        return s.title()[:16]
+
+    df["item_condition"] = df["item_condition"].apply(_norm_item_condition)
+
+    # Converte NaN/NA restantes para None
+    df = df.replace({np.nan: None, pd.NA: None})
+
+    # Proteção extra: asin obrigatório e sem vazio
+    df["asin"] = df["asin"].apply(lambda v: None if v is None else str(v).strip())
+    df = df[df["asin"].notna() & (df["asin"] != "")].copy()
+
+    # Dedup por asin (evita mandar duplicado pro executemany)
+    df = df.drop_duplicates(subset=["asin"], keep="first").reset_index(drop=True)
+
+    # Converte tudo para object (Python) para o driver do MySQL
+    df = df.astype({c: object for c in expected})
+
+    return df[expected]
 
     df["is_prime"] = df["is_prime"].apply(_prime_to_int01_or_none)
 
