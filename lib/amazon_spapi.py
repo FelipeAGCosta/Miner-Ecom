@@ -749,9 +749,13 @@ def get_buybox_price(asin: str, item_condition: str = "New") -> Optional[Dict[st
 
     cfg = _load_config_from_env()
     path = f"/products/pricing/v0/items/{asin}/offers"
+
+    # mantém o que você já faz hoje: ItemCondition vem do chamador
+    item_condition_api = (item_condition or "New").strip() or "New"
+
     params = {
         "MarketplaceId": cfg.marketplace_id,
-        "ItemCondition": item_condition,
+        "ItemCondition": item_condition_api,
         "CustomerType": "Consumer",
     }
 
@@ -815,13 +819,54 @@ def get_buybox_price(asin: str, item_condition: str = "New") -> Optional[Dict[st
     except (TypeError, ValueError):
         return None
 
+    # -----------------------------------------------------------------------
+    # AJUSTE COMPLEMENTAR: tenta extrair a condição REAL do payload (quando existir)
+    # - Não muda o fluxo e não aumenta chamadas.
+    # - Se não encontrar, mantém o item_condition solicitado (comportamento antigo).
+    # -----------------------------------------------------------------------
+    def _pick_condition_from_offer(offer: Any) -> Optional[str]:
+        if not isinstance(offer, dict):
+            return None
+        # caminhos comuns
+        for k in ("SubCondition", "subCondition", "Condition", "condition", "ItemCondition", "itemCondition"):
+            v = offer.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        return None
+
+    detected_condition: Optional[str] = None
+
+    offers = payload.get("Offers") or payload.get("offers") or []
+    if isinstance(offers, list) and offers:
+        # prioriza buybox winner se existir
+        buybox_offer = None
+        for off in offers:
+            if isinstance(off, dict) and (off.get("IsBuyBoxWinner") is True or off.get("isBuyBoxWinner") is True):
+                buybox_offer = off
+                break
+        if buybox_offer is None:
+            buybox_offer = offers[0] if offers else None
+
+        detected_condition = _pick_condition_from_offer(buybox_offer)
+
+        # fallback: tenta achar em qualquer offer
+        if not detected_condition:
+            for off in offers:
+                detected_condition = _pick_condition_from_offer(off)
+                if detected_condition:
+                    break
+
+    # normaliza saída (padrão do seu DB: New/Used/Refurbished...)
+    cond_out = (detected_condition or item_condition_api).strip()
+    cond_out = cond_out.title() if cond_out else item_condition_api
+
     return {
         "asin": asin,
         "price": price_value,
         "currency": currency,
         "is_prime": is_prime,
         "fulfillment_channel": fulfillment_channel,
-        "condition": item_condition,
+        "condition": cond_out,
     }
 
 
