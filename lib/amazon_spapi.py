@@ -660,14 +660,10 @@ def search_catalog_items(
     # token para buscar start_page
     token = cache["page_tokens"].get(start_page, None)
 
-    # se start_page já tem items mas pediram uma página maior, avançamos a partir dela
     current_page = start_page
 
-    # se start_page tem items e start_page == page, já teria sido retornado acima
-    # então aqui avançamos até atingir page
     while current_page <= page:
         if current_page in cache["page_items"]:
-            # já temos essa página, pega o próximo token e segue
             token = cache["page_tokens"].get(current_page + 1, token)
             current_page += 1
             continue
@@ -690,7 +686,6 @@ def search_catalog_items(
             return items
 
         if not next_token:
-            # acabou antes de chegar na página solicitada
             return []
 
         token = next_token
@@ -820,45 +815,199 @@ def get_buybox_price(asin: str, item_condition: str = "New") -> Optional[Dict[st
         return None
 
     # -----------------------------------------------------------------------
-    # AJUSTE COMPLEMENTAR: tenta extrair a condição REAL do payload (quando existir)
-    # - Não muda o fluxo e não aumenta chamadas.
-    # - Se não encontrar, mantém o item_condition solicitado (comportamento antigo).
+    # AJUSTE COMPLEMENTAR:
+    # 1) extrair Prime/Fulfillment do array Offers quando Summary vier NULL
+    # 2) condicao em apenas 3 estados: New / Used / Refurbished
     # -----------------------------------------------------------------------
+
+    def _as_bool_or_none(v: Any) -> Optional[bool]:
+        if v is None:
+            return None
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, (int, float)):
+            if v == 1:
+                return True
+            if v == 0:
+                return False
+            return None
+        if isinstance(v, str):
+            s = v.strip().lower()
+            if s in ("true", "t", "yes", "y", "1"):
+                return True
+            if s in ("false", "f", "no", "n", "0"):
+                return False
+        return None
+
+    def _offer_price(off: Any) -> Optional[float]:
+        if not isinstance(off, dict):
+            return None
+        # tentativas comuns
+        candidates = [
+            ("ListingPrice", "Amount"),
+            ("listingPrice", "amount"),
+        ]
+        for a, b in candidates:
+            node = off.get(a)
+            if isinstance(node, dict):
+                val = node.get(b)
+                try:
+                    return float(val) if val is not None else None
+                except Exception:
+                    pass
+        # alguns formatos podem aninhar "Price" -> "ListingPrice"
+        node_price = off.get("Price") or off.get("price")
+        if isinstance(node_price, dict):
+            lp = node_price.get("ListingPrice") or node_price.get("listingPrice")
+            if isinstance(lp, dict):
+                val = lp.get("Amount") or lp.get("amount")
+                try:
+                    return float(val) if val is not None else None
+                except Exception:
+                    pass
+        return None
+
     def _pick_condition_from_offer(offer: Any) -> Optional[str]:
         if not isinstance(offer, dict):
             return None
-        # caminhos comuns
         for k in ("SubCondition", "subCondition", "Condition", "condition", "ItemCondition", "itemCondition"):
             v = offer.get(k)
             if isinstance(v, str) and v.strip():
                 return v.strip()
         return None
 
+    def _extract_prime_fulfillment_from_offer(offer: Any) -> Tuple[Optional[bool], Optional[str]]:
+        if not isinstance(offer, dict):
+            return None, None
+
+        # PRIME: tenta alguns caminhos comuns
+        prime_val = (
+            offer.get("IsPrime")
+            or offer.get("isPrime")
+        )
+        if prime_val is None:
+            pi = offer.get("PrimeInformation") or offer.get("primeInformation") or {}
+            if isinstance(pi, dict):
+                prime_val = pi.get("IsPrime") or pi.get("isPrime") or pi.get("IsNationalPrime") or pi.get("isNationalPrime")
+
+        prime_bool = _as_bool_or_none(prime_val)
+
+        # FULFILLMENT: tenta chaves conhecidas
+        fc = offer.get("FulfillmentChannel") or offer.get("fulfillmentChannel")
+        is_fba = offer.get("IsFulfilledByAmazon") or offer.get("isFulfilledByAmazon")
+
+        if fc is None and is_fba is not None:
+            fb = _as_bool_or_none(is_fba)
+            if fb is True:
+                fc = "AMAZON"
+            elif fb is False:
+                fc = "MERCHANT"
+
+        fc_norm: Optional[str] = None
+        if isinstance(fc, str) and fc.strip():
+            s = fc.strip().upper()
+            # SP-API costuma retornar AMAZON/MERCHANT; mas aceitamos variações
+            if s in ("AMAZON", "AFN", "FBA"):
+                fc_norm = "AMAZON"
+            elif s in ("MERCHANT", "MFN", "FBM"):
+                fc_norm = "MERCHANT"
+            else:
+                # mantém cru (vai ser normalizado depois no DB)
+                fc_norm = s[:20]
+
+        return prime_bool, fc_norm
+
+    def _norm_condition_to_3(cond_raw: str, requested: str) -> str:
+        base = (cond_raw or requested or "New").strip()
+        if not base:
+            return "New"
+        s = base.strip().lower().replace("-", " ").replace("_", " ")
+        # refurbished family
+        if "refurb" in s or "renew" in s or "recondition" in s:
+            return "Refurbished"
+        # explicit new
+        if s.startswith("new"):
+            return "New"
+        # explicit used or subconditions => Used
+        if s.startswith("used") or "used" in s:
+            return "Used"
+        if s in ("very good", "good", "acceptable", "like new", "fair", "poor"):
+            return "Used"
+        # fallback pelo que foi pedido
+        req = (requested or "New").strip().lower()
+        if req.startswith("used"):
+            return "Used"
+        if "refurb" in req or "renew" in req or "recondition" in req:
+            return "Refurbished"
+        return "New" if req.startswith("new") else (requested.strip().title() if requested else "New")
+
     detected_condition: Optional[str] = None
 
     offers = payload.get("Offers") or payload.get("offers") or []
+    chosen_offer: Optional[Dict[str, Any]] = None
+
     if isinstance(offers, list) and offers:
-        # prioriza buybox winner se existir
-        buybox_offer = None
+        # 1) BuyBox winner
         for off in offers:
             if isinstance(off, dict) and (off.get("IsBuyBoxWinner") is True or off.get("isBuyBoxWinner") is True):
-                buybox_offer = off
+                chosen_offer = off
                 break
-        if buybox_offer is None:
-            buybox_offer = offers[0] if offers else None
 
-        detected_condition = _pick_condition_from_offer(buybox_offer)
+        # 2) tenta bater pelo preço (mais próximo)
+        if chosen_offer is None:
+            best = None
+            best_diff = None
+            for off in offers:
+                if not isinstance(off, dict):
+                    continue
+                p = _offer_price(off)
+                if p is None:
+                    continue
+                diff = abs(p - price_value)
+                if best is None or best_diff is None or diff < best_diff:
+                    best = off
+                    best_diff = diff
+            if isinstance(best, dict):
+                chosen_offer = best
 
-        # fallback: tenta achar em qualquer offer
+        # 3) fallback: primeira offer dict
+        if chosen_offer is None:
+            for off in offers:
+                if isinstance(off, dict):
+                    chosen_offer = off
+                    break
+
+        detected_condition = _pick_condition_from_offer(chosen_offer)
+
+        # PRIME/FULFILLMENT: só preenche se Summary não trouxe
+        if (is_prime is None or fulfillment_channel is None) and chosen_offer is not None:
+            p2, fc2 = _extract_prime_fulfillment_from_offer(chosen_offer)
+            if is_prime is None and p2 is not None:
+                is_prime = p2
+            if fulfillment_channel is None and fc2 is not None:
+                fulfillment_channel = fc2
+
+        # fallback extra: se ainda tá None, tenta em qualquer offer
+        if is_prime is None or fulfillment_channel is None:
+            for off in offers:
+                if not isinstance(off, dict):
+                    continue
+                p2, fc2 = _extract_prime_fulfillment_from_offer(off)
+                if is_prime is None and p2 is not None:
+                    is_prime = p2
+                if fulfillment_channel is None and fc2 is not None:
+                    fulfillment_channel = fc2
+                if is_prime is not None and fulfillment_channel is not None:
+                    break
+
+        # fallback de condição: procura em qualquer offer
         if not detected_condition:
             for off in offers:
                 detected_condition = _pick_condition_from_offer(off)
                 if detected_condition:
                     break
 
-    # normaliza saída (padrão do seu DB: New/Used/Refurbished...)
-    cond_out = (detected_condition or item_condition_api).strip()
-    cond_out = cond_out.title() if cond_out else item_condition_api
+    cond_out = _norm_condition_to_3(detected_condition or item_condition_api, item_condition_api)
 
     return {
         "asin": asin,
