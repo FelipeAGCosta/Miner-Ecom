@@ -494,7 +494,7 @@ elif fulfillment_pt == "Enviado pelo vendedor (FBM)":
 # Condição Amazon (do DB)
 condA = st.selectbox(
     "Condição (Amazon - DB)",
-    ["Qualquer", "Novo", "Usado", "Recondicionado", "Desconhecida"],
+    ["Qualquer", "Novo", "Usado", "Recondicionado"],
     index=0,
 )
 
