@@ -147,6 +147,44 @@ def upsert_ebay_listings(engine: Any, rows: pd.DataFrame) -> int:
 # Amazon: normalização e upsert
 # ---------------------------------------------------------------------------
 
+_AMAZON_PRODUCTS_COLS_CACHE: Optional[Set[str]] = None
+
+
+def _get_table_columns(engine: Any, table_name: str) -> Optional[Set[str]]:
+    """
+    Retorna set com nomes de colunas da tabela (schema atual).
+    Se falhar por qualquer motivo, retorna None (não quebra).
+    """
+    try:
+        sql = text(
+            """
+            SELECT COLUMN_NAME
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = :t
+            """
+        )
+        with engine.begin() as conn:
+            rows = conn.execute(sql, {"t": table_name}).fetchall()
+        cols = {str(r[0]) for r in rows if r and r[0]}
+        return cols if cols else None
+    except Exception:
+        return None
+
+
+def _amazon_products_columns(engine: Any) -> Set[str]:
+    """
+    Cache simples das colunas de amazon_products para decidir SQL (ex.: image_url).
+    Se falhar, retorna set vazio (fallback seguro).
+    """
+    global _AMAZON_PRODUCTS_COLS_CACHE
+    if _AMAZON_PRODUCTS_COLS_CACHE is not None:
+        return _AMAZON_PRODUCTS_COLS_CACHE
+
+    cols = _get_table_columns(engine, "amazon_products")
+    _AMAZON_PRODUCTS_COLS_CACHE = cols or set()
+    return _AMAZON_PRODUCTS_COLS_CACHE
+
 
 def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -157,6 +195,7 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
     - Evita apagar fulfillment_channel quando vier vazio/None
     - Padroniza fulfillment_channel para valores CANÔNICOS no DB: AMAZON (FBA) / MFN (FBM)
     - Normaliza item_condition (New/Used/Refurbished...) e respeita VARCHAR(16)
+    - (NOVO) Suporta image_url (thumbnail) quando existir no schema
     """
     df = df.copy()
 
@@ -164,6 +203,7 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
         "asin",
         "marketplace_id",
         "title",
+        "image_url",  # <-- NOVO (thumbnail)
         "brand",
         "browse_node_id",
         "browse_node_name",
@@ -203,6 +243,7 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
     text_cols = [
         "asin",
         "title",
+        "image_url",  # <-- NOVO
         "brand",
         "browse_node_name",
         "gtin",
@@ -306,6 +347,19 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
 
     df["item_condition"] = df["item_condition"].apply(_norm_item_condition)
 
+    # image_url: limpa lixo e mantém None quando vazio
+    def _norm_image_url(v: Any) -> Optional[str]:
+        if v is None or v is pd.NA:
+            return None
+        if isinstance(v, float) and np.isnan(v):
+            return None
+        s = str(v).strip()
+        if not s or s.lower() in ("none", "nan", "<na>"):
+            return None
+        return s
+
+    df["image_url"] = df["image_url"].apply(_norm_image_url)
+
     # Converte NaN/NA restantes para None
     df = df.replace({np.nan: None, pd.NA: None})
 
@@ -407,7 +461,7 @@ def upsert_amazon_products(engine: Any, df: pd.DataFrame) -> int:
     Insere/atualiza produtos na tabela amazon_products.
 
     Campos esperados (df):
-      asin, marketplace_id, title, brand,
+      asin, marketplace_id, title, image_url, brand,
       browse_node_id, browse_node_name,
       gtin, gtin_type,
       sales_rank, sales_rank_category,
@@ -421,52 +475,111 @@ def upsert_amazon_products(engine: Any, df: pd.DataFrame) -> int:
 
     rows = sql_safe_amazon_frame(df)
 
-    sql = text(
-        """
-        INSERT INTO amazon_products
-        (asin, marketplace_id, title, brand,
-         browse_node_id, browse_node_name,
-         gtin, gtin_type,
-         sales_rank, sales_rank_category,
-         price, currency,
-         is_prime, fulfillment_channel, item_condition,
-         source_root_name, source_child_name, search_kw,
-         fetched_at)
-        VALUES
-        (:asin, :marketplace_id, :title, :brand,
-         :browse_node_id, :browse_node_name,
-         :gtin, :gtin_type,
-         :sales_rank, :sales_rank_category,
-         :price, :currency,
-         :is_prime, :fulfillment_channel, :item_condition,
-         :source_root_name, :source_child_name, :search_kw,
-         NOW())
-        ON DUPLICATE KEY UPDATE
-          marketplace_id      = COALESCE(NULLIF(VALUES(marketplace_id), ''), marketplace_id),
-          title               = COALESCE(NULLIF(VALUES(title), ''), title),
-          brand               = COALESCE(NULLIF(VALUES(brand), ''), brand),
-          browse_node_id      = COALESCE(VALUES(browse_node_id), browse_node_id),
-          browse_node_name    = COALESCE(NULLIF(VALUES(browse_node_name), ''), browse_node_name),
-          gtin                = COALESCE(NULLIF(VALUES(gtin), ''), gtin),
-          gtin_type           = COALESCE(NULLIF(VALUES(gtin_type), ''), gtin_type),
-          sales_rank          = COALESCE(VALUES(sales_rank), sales_rank),
-          sales_rank_category = COALESCE(NULLIF(VALUES(sales_rank_category), ''), sales_rank_category),
-          price               = COALESCE(VALUES(price), price),
-          currency            = COALESCE(NULLIF(VALUES(currency), ''), currency),
+    # Decide se a tabela tem image_url (para não quebrar se schema ainda não foi alterado)
+    cols = _amazon_products_columns(engine)
+    has_image_url = "image_url" in cols
 
-          -- tri-state: se vier NULL, preserva o antigo
-          is_prime            = COALESCE(VALUES(is_prime), is_prime),
-          fulfillment_channel = COALESCE(NULLIF(VALUES(fulfillment_channel), ''), fulfillment_channel),
+    if not has_image_url:
+        # evita erro de bind param extra e/ou coluna inexistente no INSERT
+        rows = rows.drop(columns=["image_url"], errors="ignore")
 
-          -- NOVO: condição (se vier NULL/'' não apaga o antigo)
-          item_condition      = COALESCE(NULLIF(VALUES(item_condition), ''), item_condition),
+        sql = text(
+            """
+            INSERT INTO amazon_products
+            (asin, marketplace_id, title, brand,
+             browse_node_id, browse_node_name,
+             gtin, gtin_type,
+             sales_rank, sales_rank_category,
+             price, currency,
+             is_prime, fulfillment_channel, item_condition,
+             source_root_name, source_child_name, search_kw,
+             fetched_at)
+            VALUES
+            (:asin, :marketplace_id, :title, :brand,
+             :browse_node_id, :browse_node_name,
+             :gtin, :gtin_type,
+             :sales_rank, :sales_rank_category,
+             :price, :currency,
+             :is_prime, :fulfillment_channel, :item_condition,
+             :source_root_name, :source_child_name, :search_kw,
+             NOW())
+            ON DUPLICATE KEY UPDATE
+              marketplace_id      = COALESCE(NULLIF(VALUES(marketplace_id), ''), marketplace_id),
+              title               = COALESCE(NULLIF(VALUES(title), ''), title),
+              brand               = COALESCE(NULLIF(VALUES(brand), ''), brand),
+              browse_node_id      = COALESCE(VALUES(browse_node_id), browse_node_id),
+              browse_node_name    = COALESCE(NULLIF(VALUES(browse_node_name), ''), browse_node_name),
+              gtin                = COALESCE(NULLIF(VALUES(gtin), ''), gtin),
+              gtin_type           = COALESCE(NULLIF(VALUES(gtin_type), ''), gtin_type),
+              sales_rank          = COALESCE(VALUES(sales_rank), sales_rank),
+              sales_rank_category = COALESCE(NULLIF(VALUES(sales_rank_category), ''), sales_rank_category),
+              price               = COALESCE(VALUES(price), price),
+              currency            = COALESCE(NULLIF(VALUES(currency), ''), currency),
 
-          source_root_name    = COALESCE(NULLIF(VALUES(source_root_name), ''), source_root_name),
-          source_child_name   = COALESCE(NULLIF(VALUES(source_child_name), ''), source_child_name),
-          search_kw           = COALESCE(NULLIF(VALUES(search_kw), ''), search_kw),
-          fetched_at          = NOW();
-        """
-    )
+              -- tri-state: se vier NULL, preserva o antigo
+              is_prime            = COALESCE(VALUES(is_prime), is_prime),
+              fulfillment_channel = COALESCE(NULLIF(VALUES(fulfillment_channel), ''), fulfillment_channel),
+
+              -- condição (se vier NULL/'' não apaga o antigo)
+              item_condition      = COALESCE(NULLIF(VALUES(item_condition), ''), item_condition),
+
+              source_root_name    = COALESCE(NULLIF(VALUES(source_root_name), ''), source_root_name),
+              source_child_name   = COALESCE(NULLIF(VALUES(source_child_name), ''), source_child_name),
+              search_kw           = COALESCE(NULLIF(VALUES(search_kw), ''), search_kw),
+              fetched_at          = NOW();
+            """
+        )
+    else:
+        sql = text(
+            """
+            INSERT INTO amazon_products
+            (asin, marketplace_id, title, image_url, brand,
+             browse_node_id, browse_node_name,
+             gtin, gtin_type,
+             sales_rank, sales_rank_category,
+             price, currency,
+             is_prime, fulfillment_channel, item_condition,
+             source_root_name, source_child_name, search_kw,
+             fetched_at)
+            VALUES
+            (:asin, :marketplace_id, :title, :image_url, :brand,
+             :browse_node_id, :browse_node_name,
+             :gtin, :gtin_type,
+             :sales_rank, :sales_rank_category,
+             :price, :currency,
+             :is_prime, :fulfillment_channel, :item_condition,
+             :source_root_name, :source_child_name, :search_kw,
+             NOW())
+            ON DUPLICATE KEY UPDATE
+              marketplace_id      = COALESCE(NULLIF(VALUES(marketplace_id), ''), marketplace_id),
+              title               = COALESCE(NULLIF(VALUES(title), ''), title),
+
+              -- NOVO: thumbnail (se vier NULL/'' não apaga o antigo)
+              image_url           = COALESCE(NULLIF(VALUES(image_url), ''), image_url),
+
+              brand               = COALESCE(NULLIF(VALUES(brand), ''), brand),
+              browse_node_id      = COALESCE(VALUES(browse_node_id), browse_node_id),
+              browse_node_name    = COALESCE(NULLIF(VALUES(browse_node_name), ''), browse_node_name),
+              gtin                = COALESCE(NULLIF(VALUES(gtin), ''), gtin),
+              gtin_type           = COALESCE(NULLIF(VALUES(gtin_type), ''), gtin_type),
+              sales_rank          = COALESCE(VALUES(sales_rank), sales_rank),
+              sales_rank_category = COALESCE(NULLIF(VALUES(sales_rank_category), ''), sales_rank_category),
+              price               = COALESCE(VALUES(price), price),
+              currency            = COALESCE(NULLIF(VALUES(currency), ''), currency),
+
+              -- tri-state: se vier NULL, preserva o antigo
+              is_prime            = COALESCE(VALUES(is_prime), is_prime),
+              fulfillment_channel = COALESCE(NULLIF(VALUES(fulfillment_channel), ''), fulfillment_channel),
+
+              -- condição (se vier NULL/'' não apaga o antigo)
+              item_condition      = COALESCE(NULLIF(VALUES(item_condition), ''), item_condition),
+
+              source_root_name    = COALESCE(NULLIF(VALUES(source_root_name), ''), source_root_name),
+              source_child_name   = COALESCE(NULLIF(VALUES(source_child_name), ''), source_child_name),
+              search_kw           = COALESCE(NULLIF(VALUES(search_kw), ''), search_kw),
+              fetched_at          = NOW();
+            """
+        )
 
     with engine.begin() as conn:
         conn.execute(sql, rows.to_dict(orient="records"))

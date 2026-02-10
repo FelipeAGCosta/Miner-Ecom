@@ -163,6 +163,24 @@ def _norm_condition(v: Any) -> str:
     s = str(v).strip()
     return s if s else "Desconhecida"
 
+def _table_has_column(engine, table_name: str, col_name: str) -> bool:
+    try:
+        q = text(
+            """
+            SELECT 1
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = :t
+              AND COLUMN_NAME = :c
+            LIMIT 1
+            """
+        )
+        with engine.connect() as conn:
+            r = conn.execute(q, {"t": table_name, "c": col_name}).fetchone()
+        return bool(r)
+    except Exception:
+        return False
+
 # ---------------------------------------------------------------------------
 # eBay: token + search (Browse API)
 # ---------------------------------------------------------------------------
@@ -386,12 +404,10 @@ def _load_amazon_from_db(
     # Fulfillment estrito, mas compatível com bases antigas e novas
     if fulfillment_mode == "FBA":
         where.append("(fulfillment_channel IN ('FBA','AMAZON','AFN'))")
-
     elif fulfillment_mode == "FBM":
         where.append("(fulfillment_channel IN ('FBM','MFN','MERCHANT'))")
 
     # Condição Amazon (DB) — estrita
-    # Valores esperados: New / Used / Refurbished ... (ou NULL)
     if amazon_condition == "NEW":
         where.append("item_condition = 'New'")
     elif amazon_condition == "USED":
@@ -401,10 +417,14 @@ def _load_amazon_from_db(
     elif amazon_condition == "UNKNOWN":
         where.append("item_condition IS NULL")
 
+    has_image = _table_has_column(engine, "amazon_products", "image_url")
+    image_select = "image_url" if has_image else "NULL AS image_url"
+
     sql = f"""
         SELECT
             asin,
             title,
+            {image_select},
             brand,
             gtin,
             gtin_type,
@@ -567,6 +587,7 @@ def _render_keepa_table(df: pd.DataFrame) -> None:
     show = show.sort_values(by=["spread", "score"], ascending=[False, False], na_position="last")
 
     keep_cols = [
+        "amazon_image_url",
         "amazon_title",
         "amazon_brand",
         "amazon_item_condition",
@@ -583,25 +604,30 @@ def _render_keepa_table(df: pd.DataFrame) -> None:
     keep_cols = [c for c in keep_cols if c in show.columns]
     show = show[keep_cols].copy()
 
+    col_cfg: Dict[str, Any] = {
+        "amazon_title": "Produto (Amazon)",
+        "amazon_brand": "Marca",
+        "amazon_item_condition": "Condição (Amazon)",
+        "amazon_price": st.column_config.NumberColumn("Preço Amazon", format="$%.2f"),
+        "amazon_sales_rank": st.column_config.NumberColumn("BSR", format="%d"),
+        "amazon_url": st.column_config.LinkColumn("Link Amazon", display_text="Abrir"),
+        "ebay_total": st.column_config.NumberColumn("Total eBay", format="$%.2f"),
+        "spread": st.column_config.NumberColumn("Spread (Amazon - eBay)", format="$%.2f"),
+        "spread_pct": st.column_config.NumberColumn("Spread %", format="%.2f"),
+        "ebay_url": st.column_config.LinkColumn("Link eBay", display_text="Abrir"),
+        "score": st.column_config.NumberColumn("Score match", format="%.2f"),
+        "available_qty": st.column_config.NumberColumn("Estoque eBay", format="%d"),
+    }
+
+    if "amazon_image_url" in show.columns:
+        col_cfg["amazon_image_url"] = st.column_config.ImageColumn("Imagem")
+
     st.dataframe(
         show,
         use_container_width=True,
         hide_index=True,
         height=560,
-        column_config={
-            "amazon_title": "Produto (Amazon)",
-            "amazon_brand": "Marca",
-            "amazon_item_condition": "Condição (Amazon)",
-            "amazon_price": st.column_config.NumberColumn("Preço Amazon", format="$%.2f"),
-            "amazon_sales_rank": st.column_config.NumberColumn("BSR", format="%d"),
-            "amazon_url": st.column_config.LinkColumn("Link Amazon", display_text="Abrir"),
-            "ebay_total": st.column_config.NumberColumn("Total eBay", format="$%.2f"),
-            "spread": st.column_config.NumberColumn("Spread (Amazon - eBay)", format="$%.2f"),
-            "spread_pct": st.column_config.NumberColumn("Spread %", format="%.2f"),
-            "ebay_url": st.column_config.LinkColumn("Link eBay", display_text="Abrir"),
-            "score": st.column_config.NumberColumn("Score match", format="%.2f"),
-            "available_qty": st.column_config.NumberColumn("Estoque eBay", format="%d"),
-        },
+        column_config=col_cfg,
     )
 
 # ---------------------------------------------------------------------------
@@ -635,29 +661,25 @@ if btn_run:
             limit_rows=AMAZON_DB_LIMIT,
         )
 
-        if am_df.empty:
-            if amazon_condition != "ANY":
-                st.warning(
-            "Nenhum produto da condição escolhida encontrado, mostraremos todas as condições disponíveis."
+    if am_df.empty and amazon_condition != "ANY":
+        st.warning("Nenhum produto da condição escolhida encontrado, mostraremos todas as condições disponíveis.")
+        with st.spinner("Carregando produtos da Amazon (todas as condições disponíveis)..."):
+            am_df = _load_amazon_from_db(
+                engine=engine,
+                source_root_name=source_root_name,
+                source_child_name=source_child_name,
+                keyword=user_kw,
+                price_min=amazon_price_min,
+                price_max=amazon_price_max,
+                prime_only=prime_only,
+                fulfillment_mode=fulfillment_mode,
+                amazon_condition="ANY",
+                limit_rows=AMAZON_DB_LIMIT,
             )
-            with st.spinner("Carregando produtos da Amazon (todas as condições disponíveis)..."):
-                am_df = _load_amazon_from_db(
-                    engine=engine,
-                    source_root_name=source_root_name,
-                    source_child_name=source_child_name,
-                    keyword=user_kw,
-                    price_min=amazon_price_min,
-                    price_max=amazon_price_max,
-                    prime_only=prime_only,
-                    fulfillment_mode=fulfillment_mode,
-                    amazon_condition="ANY",   # fallback
-                    limit_rows=AMAZON_DB_LIMIT,
-                )
 
-            if am_df.empty:
-                st.warning("Nenhum produto da Amazon encontrado com esses filtros.")
-                st.stop()
-
+    if am_df.empty:
+        st.warning("Nenhum produto da Amazon encontrado com esses filtros.")
+        st.stop()
 
     if len(am_df) >= AMAZON_DB_LIMIT:
         st.info(
@@ -680,6 +702,7 @@ if btn_run:
         show["item_condition_view"] = show["item_condition"].apply(_norm_condition)
 
         preferred_cols = [
+            "image_url",
             "title",
             "brand",
             "item_condition_view",
@@ -699,26 +722,30 @@ if btn_run:
 
         st.metric("Itens Amazon retornados", len(show_view))
 
+        col_cfg: Dict[str, Any] = {
+            "title": "Produto (Amazon)",
+            "brand": "Marca",
+            "item_condition_view": "Condição (Amazon)",
+            "price": st.column_config.NumberColumn("Preço Amazon", format="$%.2f"),
+            "sales_rank": st.column_config.NumberColumn("BSR", format="%d"),
+            "amazon_url": st.column_config.LinkColumn("Link Amazon", display_text="Abrir"),
+            "gtin": "GTIN",
+            "prime_status": "Prime (tri-state)",
+            "fulfillment_mode": "Fulfillment",
+            "browse_node_name": "Browse node",
+            "source_root_name": "Categoria (root)",
+            "source_child_name": "Subcategoria (child)",
+            "fetched_at": "Fetched at",
+        }
+        if "image_url" in show_view.columns:
+            col_cfg["image_url"] = st.column_config.ImageColumn("Imagem")
+
         st.dataframe(
             show_view,
             use_container_width=True,
             hide_index=True,
             height=560,
-            column_config={
-                "title": "Produto (Amazon)",
-                "brand": "Marca",
-                "item_condition_view": "Condição (Amazon)",
-                "price": st.column_config.NumberColumn("Preço Amazon", format="$%.2f"),
-                "sales_rank": st.column_config.NumberColumn("BSR", format="%d"),
-                "amazon_url": st.column_config.LinkColumn("Link Amazon", display_text="Abrir"),
-                "gtin": "GTIN",
-                "prime_status": "Prime (tri-state)",
-                "fulfillment_mode": "Fulfillment",
-                "browse_node_name": "Browse node",
-                "source_root_name": "Categoria (root)",
-                "source_child_name": "Subcategoria (child)",
-                "fetched_at": "Fetched at",
-            },
+            column_config=col_cfg,
         )
 
         # Export CSV (do resultado filtrado da Amazon)
@@ -762,6 +789,7 @@ if btn_run:
         asin = row.get("asin")
         title = row.get("title") or ""
         brand = row.get("brand")
+        image_url = row.get("image_url")
 
         gtin = row.get("gtin")
         gtin = gtin.strip() if isinstance(gtin, str) else None
@@ -798,6 +826,7 @@ if btn_run:
 
         base = {
             "asin": asin,
+            "amazon_image_url": image_url,
             "amazon_title": title,
             "amazon_brand": brand,
             "amazon_item_condition": row.get("item_condition"),
