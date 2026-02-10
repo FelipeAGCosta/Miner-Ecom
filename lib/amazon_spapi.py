@@ -347,6 +347,61 @@ def _request_sp_api(
 # Catalog helpers
 # ---------------------------------------------------------------------------
 
+def _pick_catalog_thumbnail_url(item: Dict[str, Any], marketplace_id: str) -> Optional[str]:
+    """
+    Extrai uma URL de imagem pequena (thumbnail) do payload do Catalog Items.
+
+    Estratégia:
+      1) Seleciona o bloco `images` do marketplaceId (ou cai no primeiro)
+      2) Prioriza variante MAIN (quando existir)
+      3) Escolhe a menor por área (width*height) para ser leve
+    """
+    images_by_mkt = item.get("images") or []
+    if not isinstance(images_by_mkt, list) or not images_by_mkt:
+        return None
+
+    chosen_block: Optional[Dict[str, Any]] = None
+    for b in images_by_mkt:
+        if isinstance(b, dict) and b.get("marketplaceId") == marketplace_id:
+            chosen_block = b
+            break
+    if chosen_block is None:
+        first = images_by_mkt[0]
+        chosen_block = first if isinstance(first, dict) else None
+
+    if not chosen_block:
+        return None
+
+    imgs = chosen_block.get("images") or []
+    if not isinstance(imgs, list) or not imgs:
+        return None
+
+    def _is_valid(img: Any) -> bool:
+        return isinstance(img, dict) and isinstance(img.get("link"), str) and img["link"].startswith("http")
+
+    valid_imgs = [img for img in imgs if _is_valid(img)]
+    if not valid_imgs:
+        return None
+
+    mains = [img for img in valid_imgs if str(img.get("variant", "")).strip().upper() == "MAIN"]
+    pool = mains if mains else valid_imgs
+
+    def _area(img: Dict[str, Any]) -> int:
+        w = img.get("width")
+        h = img.get("height")
+        if isinstance(w, int) and isinstance(h, int) and w > 0 and h > 0:
+            return w * h
+        return 10**18
+
+    best = min(pool, key=_area)
+
+    # se a menor por área não tem dimensões (area "infinita"), cai no primeiro do pool
+    if _area(best) >= 10**18:
+        best = pool[0]
+
+    return best.get("link")
+
+
 def _extract_catalog_item(
     item: Dict[str, Any],
     marketplace_id: str,
@@ -438,6 +493,9 @@ def _extract_catalog_item(
         sales_rank = best_rank
         sales_rank_category = best_title
 
+    # Thumbnail / image URL (Catalog Items -> images)
+    image_url = _pick_catalog_thumbnail_url(item, marketplace_id)
+
     return {
         "asin": asin,
         "marketplace_id": marketplace_id,
@@ -449,6 +507,7 @@ def _extract_catalog_item(
         "gtin_type": gtin_type,
         "sales_rank": sales_rank,
         "sales_rank_category": sales_rank_category,
+        "image_url": image_url,
     }
 
 
@@ -476,7 +535,7 @@ def search_by_gtin(gtin: str) -> Optional[Dict[str, Any]]:
             "marketplaceIds": cfg.marketplace_id,
             "identifiers": gtin_clean,
             "identifiersType": ident_type,
-            "includedData": "summaries,identifiers,salesRanks",
+            "includedData": "summaries,identifiers,salesRanks,images",
         }
 
         try:
@@ -517,7 +576,7 @@ def search_by_title(
     params = {
         "marketplaceIds": cfg.marketplace_id,
         "keywords": title_clean[:200],
-        "includedData": "summaries,identifiers,salesRanks",
+        "includedData": "summaries,identifiers,salesRanks,images",
         "pageSize": max(1, min(page_size, 10)),
     }
 
@@ -565,7 +624,7 @@ def search_catalog_items_with_pagination(
     keywords: str,
     page_size: int = 20,
     page_token: Optional[str] = None,
-    included_data: str = "summaries,identifiers,salesRanks",
+    included_data: str = "summaries,identifiers,salesRanks,images",
     browse_node_id: Optional[int] = None,
 ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
     """
@@ -619,7 +678,7 @@ def search_catalog_items(
     keywords: str,
     page_size: int = 20,
     page: int = 1,
-    included_data: str = "summaries,identifiers,salesRanks",
+    included_data: str = "summaries,identifiers,salesRanks,images",
     browse_node_id: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """
@@ -707,7 +766,7 @@ def get_catalog_item(asin: str) -> Dict[str, Any]:
     path = f"/catalog/2022-04-01/items/{asin}"
     params = {
         "marketplaceIds": cfg.marketplace_id,
-        "includedData": "summaries,identifiers,salesRanks",
+        "includedData": "summaries,identifiers,salesRanks,images",
     }
 
     return _request_sp_api(cfg=cfg, method="GET", path=path, params=params)
