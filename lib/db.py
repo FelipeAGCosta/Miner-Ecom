@@ -10,9 +10,10 @@ via SQLAlchemy, garantindo tipos e valores padrão coerentes.
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Optional, Set, Dict
+from typing import List, Any, Iterable, Optional, Set, Dict
 from datetime import datetime
 
+import math
 import numpy as np
 import pandas as pd
 from sqlalchemy import text, bindparam
@@ -119,50 +120,228 @@ def sql_safe_frame(df: pd.DataFrame) -> pd.DataFrame:
     return df[expected]
 
 
-def upsert_ebay_listings(engine: Any, rows: pd.DataFrame) -> int:
-    """
-    Insere/atualiza listings na tabela ebay_listing.
+def _get_table_columns(engine, table_name: str, schema: Optional[str] = None) -> List[str]:
+    if schema is None:
+        schema = engine.url.database
+    sql = text("""
+        SELECT COLUMN_NAME
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = :schema
+          AND TABLE_NAME = :table
+    """)
+    with engine.begin() as conn:
+        rows = conn.execute(sql, {"schema": schema, "table": table_name}).fetchall()
+    return [r[0] for r in rows]
 
-    - Usa item_id como chave única (definido no schema do MySQL).
-    - Atualiza campos principais e fetched_at a cada execução.
+
+def upsert_ebay_listings(engine, df: pd.DataFrame, chunk_size: int = 500) -> int:
     """
-    if rows.empty:
+    Upsert em ebay_listing preservando dados antigos quando o novo vier NULL/vazio.
+    - first_seen_at: mantém o primeiro (não sobrescreve)
+    - fetched_at: atualiza sempre que vier preenchido
+    - image_url/item_url/title/price/...: só atualiza se vier valor válido
+    """
+    if df is None or df.empty:
         return 0
 
-    rows = sql_safe_frame(rows)
+    # normaliza NaN -> None
+    def _clean(v):
+        if v is None:
+            return None
+        if isinstance(v, float) and math.isnan(v):
+            return None
+        return v
 
-    sql = text(
-        """
-        INSERT INTO ebay_listing
-        (item_id, title, brand, mpn, gtin, price, currency,
-         available_qty, qty_flag, `condition`, seller, category_id,
-         item_url, fetched_at)
-        VALUES
-        (:item_id, :title, :brand, :mpn, :gtin, :price, :currency,
-         :available_qty, :qty_flag, :condition, :seller, :category_id,
-         :item_url, NOW())
+    df = df.copy()
+    df.columns = [c.strip() for c in df.columns]
+
+    table = "ebay_listing"
+    cols_exist = set(_get_table_columns(engine, table))
+
+    # colunas candidatas (só usa as que existirem no schema)
+    wanted = [
+        "item_id", "title", "brand", "mpn", "gtin",
+        "price", "currency", "available_qty", "qty_flag",
+        "condition", "seller", "category_id",
+        "item_url", "image_url",
+        "first_seen_at", "fetched_at",
+    ]
+    cols = [c for c in wanted if c in df.columns and c in cols_exist]
+    if "item_id" not in cols:
+        raise RuntimeError("upsert_ebay_listings: preciso de item_id (coluna e/ou DF não tem).")
+
+    df = df[cols].copy()
+
+    records: List[Dict[str, Any]] = []
+    for rec in df.to_dict(orient="records"):
+        records.append({k: _clean(v) for k, v in rec.items()})
+
+    insert_cols_sql = ", ".join([f"`{c}`" for c in cols])
+    values_sql = ", ".join([f":{c}" for c in cols])
+
+    # regra: não apagar com vazio/NULL
+    def _upd_keep(col: str) -> str:
+        # COALESCE(NULLIF(VALUES(col), ''), col)
+        return f"`{col}` = COALESCE(NULLIF(VALUES(`{col}`), ''), `{col}`)"
+
+    update_parts: List[str] = []
+
+    # first_seen_at: só preenche se ainda estiver NULL
+    if "first_seen_at" in cols_exist and "first_seen_at" in cols:
+        update_parts.append("`first_seen_at` = COALESCE(`first_seen_at`, VALUES(`first_seen_at`))")
+
+    # fetched_at: atualiza se vier preenchido
+    if "fetched_at" in cols_exist and "fetched_at" in cols:
+        update_parts.append("`fetched_at` = COALESCE(VALUES(`fetched_at`), `fetched_at`)")
+
+    # demais campos: só atualiza se vier valor válido
+    for c in cols:
+        if c in ("item_id", "first_seen_at", "fetched_at"):
+            continue
+        update_parts.append(_upd_keep(c))
+
+    if not update_parts:
+        # sem colunas pra update além de PK (raro), mas evita SQL inválido
+        update_parts.append("`item_id` = `item_id`")
+
+    update_sql = ", ".join(update_parts)
+
+    sql = text(f"""
+        INSERT INTO `{table}` ({insert_cols_sql})
+        VALUES ({values_sql})
         ON DUPLICATE KEY UPDATE
-          title         = VALUES(title),
-          brand         = VALUES(brand),
-          mpn           = VALUES(mpn),
-          gtin          = VALUES(gtin),
-          price         = VALUES(price),
-          currency      = VALUES(currency),
-          available_qty = VALUES(available_qty),
-          qty_flag      = VALUES(qty_flag),
-          `condition`   = VALUES(`condition`),
-          seller        = VALUES(seller),
-          category_id   = VALUES(category_id),
-          item_url      = VALUES(item_url),
-          fetched_at    = NOW();
-        """
-    )
+          {update_sql}
+    """)
 
+    total = 0
     with engine.begin() as conn:
-        conn.execute(sql, rows.to_dict(orient="records"))
+        for i in range(0, len(records), chunk_size):
+            batch = records[i:i + chunk_size]
+            conn.execute(sql, batch)
+            total += len(batch)
 
-    return len(rows)
+    return total
 
+
+def upsert_match_map(engine, rows: List[Dict[str, Any]], chunk_size: int = 500) -> int:
+    """
+    Upsert em match_map com proteção:
+    - Se existir match_score na tabela, só substitui um match quando o score novo >= score atual.
+    - Caso não exista match_score, faz COALESCE/NULLIF padrão (não apaga com vazio).
+    """
+    if not rows:
+        return 0
+
+    table = "match_map"
+    cols_exist = set(_get_table_columns(engine, table))
+
+    # tenta usar o máximo, mas só se existir na tabela
+    wanted = [
+        "asin", "item_id",
+        "match_method", "match_score", "image_distance", "notes",
+        "created_at", "updated_at", "last_validated_at",
+    ]
+    cols = [c for c in wanted if c in cols_exist]
+
+    if "asin" not in cols_exist:
+        raise RuntimeError("upsert_match_map: tabela match_map não tem coluna asin.")
+    if "asin" not in cols:
+        cols.insert(0, "asin")
+    if "item_id" in cols_exist and "item_id" not in cols:
+        cols.insert(1, "item_id")
+
+    def _clean(v):
+        if v is None:
+            return None
+        if isinstance(v, float) and math.isnan(v):
+            return None
+        return v
+
+    # garante timestamps se existirem
+    now = datetime.utcnow()
+    prepared: List[Dict[str, Any]] = []
+    for r in rows:
+        rr = {k: _clean(v) for k, v in r.items() if k in cols_exist}
+        if "created_at" in cols_exist and rr.get("created_at") is None:
+            rr["created_at"] = now
+        if "updated_at" in cols_exist:
+            rr["updated_at"] = now
+        if "last_validated_at" in cols_exist and rr.get("last_validated_at") is None:
+            rr["last_validated_at"] = now
+        prepared.append(rr)
+
+    # usa apenas colunas presentes no batch
+    cols_in_batch = [c for c in cols if any(c in r for r in prepared)]
+    if "asin" not in cols_in_batch:
+        cols_in_batch.insert(0, "asin")
+    if "item_id" in cols_exist and "item_id" not in cols_in_batch:
+        cols_in_batch.insert(1, "item_id")
+
+    insert_cols_sql = ", ".join([f"`{c}`" for c in cols_in_batch])
+    values_sql = ", ".join([f":{c}" for c in cols_in_batch])
+
+    update_parts: List[str] = []
+
+    has_score = ("match_score" in cols_exist) and ("match_score" in cols_in_batch)
+
+    if has_score:
+        # só troca se o score novo >= score atual (ou atual é NULL)
+        cond = "(VALUES(`match_score`) IS NOT NULL AND (`match_score` IS NULL OR VALUES(`match_score`) >= `match_score`))"
+
+        for c in cols_exist:
+            if c in ("asin", "created_at"):
+                continue
+            if c not in cols_in_batch:
+                continue
+
+            if c == "updated_at":
+                # só atualiza updated_at quando ocorrer upgrade real (senão mantém)
+                update_parts.append(f"`updated_at` = CASE WHEN {cond} THEN VALUES(`updated_at`) ELSE `updated_at` END")
+                continue
+
+            if c == "last_validated_at":
+                update_parts.append(f"`last_validated_at` = CASE WHEN {cond} THEN VALUES(`last_validated_at`) ELSE `last_validated_at` END")
+                continue
+
+            # campos do match: só atualiza quando cond for true
+            update_parts.append(f"`{c}` = CASE WHEN {cond} THEN VALUES(`{c}`) ELSE `{c}` END")
+
+        # match_score em si: guarda o maior
+        update_parts.append("`match_score` = GREATEST(COALESCE(`match_score`, 0), COALESCE(VALUES(`match_score`), 0))")
+
+    else:
+        # fallback simples: não apagar com vazio/NULL
+        def _upd_keep(col: str) -> str:
+            return f"`{col}` = COALESCE(NULLIF(VALUES(`{col}`), ''), `{col}`)"
+
+        for c in cols_in_batch:
+            if c in ("asin", "created_at"):
+                continue
+            if c == "updated_at":
+                update_parts.append("`updated_at` = VALUES(`updated_at`)")
+                continue
+            update_parts.append(_upd_keep(c))
+
+    if not update_parts:
+        update_parts.append("`asin` = `asin`")
+
+    update_sql = ", ".join(update_parts)
+
+    sql = text(f"""
+        INSERT INTO `{table}` ({insert_cols_sql})
+        VALUES ({values_sql})
+        ON DUPLICATE KEY UPDATE
+          {update_sql}
+    """)
+
+    total = 0
+    with engine.begin() as conn:
+        for i in range(0, len(prepared), chunk_size):
+            batch = prepared[i:i + chunk_size]
+            conn.execute(sql, batch)
+            total += len(batch)
+
+    return total
 
 # ---------------------------------------------------------------------------
 # Amazon: normalização e upsert
