@@ -20,9 +20,104 @@ from sqlalchemy import text, bindparam
 
 
 # ---------------------------------------------------------------------------
-# eBay: normalização e upsert
+# Helpers comuns (schema introspection)
 # ---------------------------------------------------------------------------
 
+def _get_table_columns(engine: Any, table_name: str) -> Set[str]:
+    """
+    Retorna set com nomes de colunas da tabela no schema atual (DATABASE()).
+    Nunca retorna None (fallback seguro: set()).
+    """
+    try:
+        sql = text(
+            """
+            SELECT COLUMN_NAME
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = :t
+            """
+        )
+        with engine.begin() as conn:
+            rows = conn.execute(sql, {"t": table_name}).fetchall()
+        cols = {str(r[0]) for r in rows if r and r[0]}
+        return cols
+    except Exception:
+        return set()
+
+
+def _get_column_type(engine: Any, table_name: str, column_name: str) -> Optional[str]:
+    """
+    Retorna COLUMN_TYPE (ex.: "enum('GTIN','BRAND_MPN','TITLE')") ou None.
+    """
+    try:
+        sql = text(
+            """
+            SELECT COLUMN_TYPE
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = :t
+              AND COLUMN_NAME = :c
+            """
+        )
+        with engine.begin() as conn:
+            row = conn.execute(sql, {"t": table_name, "c": column_name}).fetchone()
+        if not row or not row[0]:
+            return None
+        return str(row[0])
+    except Exception:
+        return None
+
+
+def _parse_enum_values(column_type: str) -> List[str]:
+    """
+    Parse simples de enum('A','B','C') -> ['A','B','C']
+    """
+    s = column_type.strip()
+    if not s.lower().startswith("enum("):
+        return []
+    inner = s[s.find("(") + 1 : s.rfind(")")]
+    vals: List[str] = []
+    cur = ""
+    in_quote = False
+    escape = False
+    for ch in inner:
+        if escape:
+            cur += ch
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == "'":
+            in_quote = not in_quote
+            if not in_quote:
+                vals.append(cur)
+                cur = ""
+            continue
+        if in_quote:
+            cur += ch
+    return vals
+
+
+def _clean_scalar(v: Any) -> Any:
+    """
+    Normaliza NaN/NA/blank -> None para inserir no MySQL.
+    """
+    if v is None or v is pd.NA:
+        return None
+    if isinstance(v, float) and math.isnan(v):
+        return None
+    if isinstance(v, (np.floating,)) and np.isnan(v):
+        return None
+    if isinstance(v, str):
+        s = v.strip()
+        return None if s == "" else v
+    return v
+
+
+# ---------------------------------------------------------------------------
+# eBay: normalização e upsert
+# ---------------------------------------------------------------------------
 
 def sql_safe_frame(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -49,6 +144,10 @@ def sql_safe_frame(df: pd.DataFrame) -> pd.DataFrame:
         "seller",
         "category_id",
         "item_url",
+        # opcional (não quebra quem não usa):
+        "image_url",
+        "first_seen_at",
+        "fetched_at",
     ]
 
     # Garante todas as colunas mínimas
@@ -95,43 +194,21 @@ def sql_safe_frame(df: pd.DataFrame) -> pd.DataFrame:
 
     df["currency"] = df["currency"].apply(_norm_currency)
 
+    # image_url: limpa blanks
+    df["image_url"] = df["image_url"].apply(lambda v: _clean_scalar(v))
+
+    # timestamps (se vierem como string)
+    for c in ("first_seen_at", "fetched_at"):
+        df[c] = pd.to_datetime(df[c], errors="coerce")
+        df[c] = df[c].where(df[c].notna(), None)
+
     # Converte NaN/NA restantes para None
     df = df.replace({np.nan: None, pd.NA: None})
 
     # Tipos Python "object" para o execute do SQLAlchemy/PyMySQL
-    df = df.astype(
-        {
-            "item_id": object,
-            "title": object,
-            "brand": object,
-            "mpn": object,
-            "gtin": object,
-            "price": object,
-            "currency": object,
-            "available_qty": object,
-            "qty_flag": object,
-            "condition": object,
-            "seller": object,
-            "category_id": object,
-            "item_url": object,
-        }
-    )
+    df = df.astype({c: object for c in expected})
 
     return df[expected]
-
-
-def _get_table_columns(engine, table_name: str, schema: Optional[str] = None) -> List[str]:
-    if schema is None:
-        schema = engine.url.database
-    sql = text("""
-        SELECT COLUMN_NAME
-        FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_SCHEMA = :schema
-          AND TABLE_NAME = :table
-    """)
-    with engine.begin() as conn:
-        rows = conn.execute(sql, {"schema": schema, "table": table_name}).fetchall()
-    return [r[0] for r in rows]
 
 
 def upsert_ebay_listings(engine, df: pd.DataFrame, chunk_size: int = 500) -> int:
@@ -139,49 +216,53 @@ def upsert_ebay_listings(engine, df: pd.DataFrame, chunk_size: int = 500) -> int
     Upsert em ebay_listing preservando dados antigos quando o novo vier NULL/vazio.
     - first_seen_at: mantém o primeiro (não sobrescreve)
     - fetched_at: atualiza sempre que vier preenchido
-    - image_url/item_url/title/price/...: só atualiza se vier valor válido
+    - não apaga campos com NULL/'' do batch
     """
     if df is None or df.empty:
         return 0
-
-    # normaliza NaN -> None
-    def _clean(v):
-        if v is None:
-            return None
-        if isinstance(v, float) and math.isnan(v):
-            return None
-        return v
 
     df = df.copy()
     df.columns = [c.strip() for c in df.columns]
 
     table = "ebay_listing"
-    cols_exist = set(_get_table_columns(engine, table))
+    cols_exist = _get_table_columns(engine, table)
 
-    # colunas candidatas (só usa as que existirem no schema)
     wanted = [
-        "item_id", "title", "brand", "mpn", "gtin",
-        "price", "currency", "available_qty", "qty_flag",
-        "condition", "seller", "category_id",
-        "item_url", "image_url",
-        "first_seen_at", "fetched_at",
+        "item_id",
+        "title",
+        "brand",
+        "mpn",
+        "gtin",
+        "price",
+        "currency",
+        "available_qty",
+        "qty_flag",
+        "condition",
+        "seller",
+        "category_id",
+        "item_url",
+        "image_url",
+        "first_seen_at",
+        "fetched_at",
     ]
     cols = [c for c in wanted if c in df.columns and c in cols_exist]
     if "item_id" not in cols:
-        raise RuntimeError("upsert_ebay_listings: preciso de item_id (coluna e/ou DF não tem).")
+        raise RuntimeError("upsert_ebay_listings: preciso de item_id.")
+    if "title" in cols:
+        # title é NOT NULL no seu schema -> garante valor
+        df["title"] = df["title"].apply(lambda v: "(sem título)" if _clean_scalar(v) is None else str(v))
 
     df = df[cols].copy()
 
     records: List[Dict[str, Any]] = []
     for rec in df.to_dict(orient="records"):
-        records.append({k: _clean(v) for k, v in rec.items()})
+        records.append({k: _clean_scalar(v) for k, v in rec.items()})
 
     insert_cols_sql = ", ".join([f"`{c}`" for c in cols])
     values_sql = ", ".join([f":{c}" for c in cols])
 
-    # regra: não apagar com vazio/NULL
     def _upd_keep(col: str) -> str:
-        # COALESCE(NULLIF(VALUES(col), ''), col)
+        # não apaga com NULL/'' do batch
         return f"`{col}` = COALESCE(NULLIF(VALUES(`{col}`), ''), `{col}`)"
 
     update_parts: List[str] = []
@@ -201,16 +282,13 @@ def upsert_ebay_listings(engine, df: pd.DataFrame, chunk_size: int = 500) -> int
         update_parts.append(_upd_keep(c))
 
     if not update_parts:
-        # sem colunas pra update além de PK (raro), mas evita SQL inválido
         update_parts.append("`item_id` = `item_id`")
-
-    update_sql = ", ".join(update_parts)
 
     sql = text(f"""
         INSERT INTO `{table}` ({insert_cols_sql})
         VALUES ({values_sql})
         ON DUPLICATE KEY UPDATE
-          {update_sql}
+          {", ".join(update_parts)}
     """)
 
     total = 0
@@ -225,113 +303,105 @@ def upsert_ebay_listings(engine, df: pd.DataFrame, chunk_size: int = 500) -> int
 
 def upsert_match_map(engine, rows: List[Dict[str, Any]], chunk_size: int = 500) -> int:
     """
-    Upsert em match_map com proteção:
-    - Se existir match_score na tabela, só substitui um match quando o score novo >= score atual.
-    - Caso não exista match_score, faz COALESCE/NULLIF padrão (não apaga com vazio).
+    Upsert em match_map alinhado ao seu schema REAL (ENUM + DECIMAL NOT NULL).
+
+    Seu schema (pelo que você mostrou):
+      item_id varchar(32) NOT NULL
+      asin varchar(10) NOT NULL
+      match_method enum('GTIN','BRAND_MPN','TITLE') NOT NULL
+      match_score decimal(4,2) NOT NULL
+      notes varchar(255) NULL
+      created_at datetime NOT NULL
+      (possíveis colunas extras não assumidas aqui)
+
+    Regra de segurança:
+      - Só "troca" asin/method/notes quando o score novo >= score atual.
+      - match_score sempre guarda o maior.
     """
     if not rows:
         return 0
 
     table = "match_map"
-    cols_exist = set(_get_table_columns(engine, table))
+    cols_exist = _get_table_columns(engine, table)
 
-    # tenta usar o máximo, mas só se existir na tabela
-    wanted = [
-        "asin", "item_id",
-        "match_method", "match_score", "image_distance", "notes",
-        "created_at", "updated_at", "last_validated_at",
-    ]
-    cols = [c for c in wanted if c in cols_exist]
+    required = {"item_id", "asin", "match_method", "match_score", "created_at"}
+    missing = [c for c in required if c not in cols_exist]
+    if missing:
+        raise RuntimeError(f"upsert_match_map: tabela {table} sem colunas esperadas: {missing}")
 
-    if "asin" not in cols_exist:
-        raise RuntimeError("upsert_match_map: tabela match_map não tem coluna asin.")
-    if "asin" not in cols:
-        cols.insert(0, "asin")
-    if "item_id" in cols_exist and "item_id" not in cols:
-        cols.insert(1, "item_id")
+    # Descobre valores permitidos do ENUM (fallback seguro)
+    allowed_methods = {"GTIN", "BRAND_MPN", "TITLE"}
+    ctype = _get_column_type(engine, table, "match_method")
+    if ctype:
+        enum_vals = _parse_enum_values(ctype)
+        if enum_vals:
+            allowed_methods = {v.upper() for v in enum_vals}
 
-    def _clean(v):
-        if v is None:
-            return None
-        if isinstance(v, float) and math.isnan(v):
-            return None
-        return v
-
-    # garante timestamps se existirem
     now = datetime.utcnow()
     prepared: List[Dict[str, Any]] = []
+
     for r in rows:
-        rr = {k: _clean(v) for k, v in r.items() if k in cols_exist}
-        if "created_at" in cols_exist and rr.get("created_at") is None:
-            rr["created_at"] = now
-        if "updated_at" in cols_exist:
-            rr["updated_at"] = now
-        if "last_validated_at" in cols_exist and rr.get("last_validated_at") is None:
-            rr["last_validated_at"] = now
-        prepared.append(rr)
+        item_id = _clean_scalar(r.get("item_id"))
+        asin = _clean_scalar(r.get("asin"))
+        if item_id is None or asin is None:
+            continue
 
-    # usa apenas colunas presentes no batch
-    cols_in_batch = [c for c in cols if any(c in r for r in prepared)]
-    if "asin" not in cols_in_batch:
-        cols_in_batch.insert(0, "asin")
-    if "item_id" in cols_exist and "item_id" not in cols_in_batch:
-        cols_in_batch.insert(1, "item_id")
+        method = _clean_scalar(r.get("match_method"))
+        method = str(method).strip().upper() if method is not None else "TITLE"
+        if method not in allowed_methods:
+            method = "TITLE"
 
-    insert_cols_sql = ", ".join([f"`{c}`" for c in cols_in_batch])
-    values_sql = ", ".join([f":{c}" for c in cols_in_batch])
+        score = _clean_scalar(r.get("match_score"))
+        try:
+            score_f = float(score) if score is not None else 0.0
+        except Exception:
+            score_f = 0.0
 
-    update_parts: List[str] = []
+        # DECIMAL(4,2): 0.00 a 99.99
+        if score_f < 0:
+            score_f = 0.0
+        if score_f > 99.99:
+            score_f = 99.99
+        score_f = round(score_f, 2)
 
-    has_score = ("match_score" in cols_exist) and ("match_score" in cols_in_batch)
+        notes = _clean_scalar(r.get("notes"))
+        notes_s = str(notes)[:255] if notes is not None else None
 
-    if has_score:
-        # só troca se o score novo >= score atual (ou atual é NULL)
-        cond = "(VALUES(`match_score`) IS NOT NULL AND (`match_score` IS NULL OR VALUES(`match_score`) >= `match_score`))"
+        created_at = r.get("created_at") if r.get("created_at") is not None else now
 
-        for c in cols_exist:
-            if c in ("asin", "created_at"):
-                continue
-            if c not in cols_in_batch:
-                continue
+        prepared.append(
+            {
+                "item_id": str(item_id),
+                "asin": str(asin)[:10],
+                "match_method": method,
+                "match_score": score_f,
+                "notes": notes_s,
+                "created_at": created_at,
+            }
+        )
 
-            if c == "updated_at":
-                # só atualiza updated_at quando ocorrer upgrade real (senão mantém)
-                update_parts.append(f"`updated_at` = CASE WHEN {cond} THEN VALUES(`updated_at`) ELSE `updated_at` END")
-                continue
+    if not prepared:
+        return 0
 
-            if c == "last_validated_at":
-                update_parts.append(f"`last_validated_at` = CASE WHEN {cond} THEN VALUES(`last_validated_at`) ELSE `last_validated_at` END")
-                continue
+    insert_cols = ["item_id", "asin", "match_method", "match_score", "notes", "created_at"]
+    insert_cols_sql = ", ".join([f"`{c}`" for c in insert_cols])
+    values_sql = ", ".join([f":{c}" for c in insert_cols])
 
-            # campos do match: só atualiza quando cond for true
-            update_parts.append(f"`{c}` = CASE WHEN {cond} THEN VALUES(`{c}`) ELSE `{c}` END")
-
-        # match_score em si: guarda o maior
-        update_parts.append("`match_score` = GREATEST(COALESCE(`match_score`, 0), COALESCE(VALUES(`match_score`), 0))")
-
-    else:
-        # fallback simples: não apagar com vazio/NULL
-        def _upd_keep(col: str) -> str:
-            return f"`{col}` = COALESCE(NULLIF(VALUES(`{col}`), ''), `{col}`)"
-
-        for c in cols_in_batch:
-            if c in ("asin", "created_at"):
-                continue
-            if c == "updated_at":
-                update_parts.append("`updated_at` = VALUES(`updated_at`)")
-                continue
-            update_parts.append(_upd_keep(c))
-
-    if not update_parts:
-        update_parts.append("`asin` = `asin`")
-
-    update_sql = ", ".join(update_parts)
+    # Só atualiza campos "sensíveis" quando o score novo >= score atual
+    cond = "(VALUES(`match_score`) >= `match_score`)"
 
     sql = text(f"""
         INSERT INTO `{table}` ({insert_cols_sql})
         VALUES ({values_sql})
         ON DUPLICATE KEY UPDATE
-          {update_sql}
+          `match_score`  = GREATEST(`match_score`, VALUES(`match_score`)),
+          `asin`         = CASE WHEN {cond} THEN VALUES(`asin`) ELSE `asin` END,
+          `match_method` = CASE WHEN {cond} THEN VALUES(`match_method`) ELSE `match_method` END,
+          `notes`        = CASE
+                             WHEN {cond} THEN COALESCE(NULLIF(VALUES(`notes`), ''), `notes`)
+                             ELSE `notes`
+                           END,
+          `created_at`   = COALESCE(`created_at`, VALUES(`created_at`))
     """)
 
     total = 0
@@ -343,6 +413,7 @@ def upsert_match_map(engine, rows: List[Dict[str, Any]], chunk_size: int = 500) 
 
     return total
 
+
 # ---------------------------------------------------------------------------
 # Amazon: normalização e upsert
 # ---------------------------------------------------------------------------
@@ -350,43 +421,17 @@ def upsert_match_map(engine, rows: List[Dict[str, Any]], chunk_size: int = 500) 
 _AMAZON_PRODUCTS_COLS_CACHE: Optional[Set[str]] = None
 
 
-def _get_table_columns(engine: Any, table_name: str) -> Optional[Set[str]]:
-    """
-    Retorna set com nomes de colunas da tabela (schema atual).
-    Se falhar por qualquer motivo, retorna None (não quebra).
-    """
-    try:
-        sql = text(
-            """
-            SELECT COLUMN_NAME
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME = :t
-            """
-        )
-        with engine.begin() as conn:
-            rows = conn.execute(sql, {"t": table_name}).fetchall()
-        cols = {str(r[0]) for r in rows if r and r[0]}
-        return cols if cols else None
-    except Exception:
-        return None
-
-
 def _amazon_products_columns(engine: Any) -> Set[str]:
     """
     Cache simples das colunas de amazon_products para decidir SQL (ex.: image_url).
-
-    IMPORTANTE:
-    - Não "cacheia vazio" quando dá erro ao ler schema, para não travar decisões erradas
-      (ex.: coluna image_url existe, mas uma leitura falha e o processo fica achando que não existe).
+    Não cacheia em caso de falha.
     """
     global _AMAZON_PRODUCTS_COLS_CACHE
     if _AMAZON_PRODUCTS_COLS_CACHE is not None:
         return _AMAZON_PRODUCTS_COLS_CACHE
 
     cols = _get_table_columns(engine, "amazon_products")
-    if cols is None:
-        # falhou ler schema -> fallback seguro sem cache
+    if not cols:
         return set()
 
     _AMAZON_PRODUCTS_COLS_CACHE = cols
@@ -428,14 +473,10 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
         "search_kw",
     ]
 
-    # Garante todas as colunas
     for col in expected:
         if col not in df.columns:
             df[col] = None
 
-    # -----------------------------
-    # Helpers básicos
-    # -----------------------------
     def _none_if_blank(v: Any) -> Any:
         if v is None or v is pd.NA:
             return None
@@ -451,7 +492,6 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
             return s
         return v
 
-    # Sanitiza strings principais (evita '' indo pro INSERT)
     text_cols = [
         "asin",
         "title",
@@ -472,12 +512,10 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
     for c in text_cols:
         df[c] = df[c].apply(_none_if_blank)
 
-    # Numéricos
     df["browse_node_id"] = pd.to_numeric(df["browse_node_id"], errors="coerce").astype("Int64")
     df["sales_rank"] = pd.to_numeric(df["sales_rank"], errors="coerce").astype("Int64")
     df["price"] = pd.to_numeric(df["price"], errors="coerce")
 
-    # marketplace_id: evita NULL/'' (sua coluna é NOT NULL)
     def _norm_marketplace(v: Any) -> str:
         if v is None or v is pd.NA:
             return "ATVPDKIKX0DER"
@@ -490,7 +528,6 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
 
     df["marketplace_id"] = df["marketplace_id"].apply(_norm_marketplace)
 
-    # currency: fallback para USD
     def _norm_currency(v: Any) -> str:
         if v is None or v is pd.NA:
             return "USD"
@@ -503,7 +540,6 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
 
     df["currency"] = df["currency"].apply(_norm_currency)
 
-    # is_prime: 1/0/NULL (não forçar 0 quando desconhecido)
     def _prime_to_int01_or_none(v: Any) -> Optional[int]:
         if v is None or v is pd.NA:
             return None
@@ -535,7 +571,6 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
 
     df["is_prime"] = df["is_prime"].apply(_prime_to_int01_or_none)
 
-    # fulfillment_channel: CANÔNICO no DB -> AMAZON (FBA) / MFN (FBM) / NULL
     def _norm_fulfillment(v: Any) -> Optional[str]:
         if v is None or v is pd.NA:
             return None
@@ -544,19 +579,14 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
         s = str(v).strip().upper()
         if s in ("", "NONE", "NAN", "<NA>", "NULL"):
             return None
-
-        # aceita variações e padroniza para o DB
         if s in ("AMAZON", "FBA", "AFN"):
             return "AMAZON"
         if s in ("MFN", "FBM", "MERCHANT", "SELLER"):
             return "MFN"
-
-        # fallback: preserva, mas respeita VARCHAR(20)
         return s[:20]
 
     df["fulfillment_channel"] = df["fulfillment_channel"].apply(_norm_fulfillment)
 
-    # item_condition: normaliza e respeita VARCHAR(16)
     def _norm_item_condition(v: Any) -> Optional[str]:
         if v is None or v is pd.NA:
             return None
@@ -569,7 +599,6 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
 
     df["item_condition"] = df["item_condition"].apply(_norm_item_condition)
 
-    # image_url: limpa lixo e mantém None quando vazio
     def _norm_image_url(v: Any) -> Optional[str]:
         if v is None or v is pd.NA:
             return None
@@ -582,17 +611,12 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
 
     df["image_url"] = df["image_url"].apply(_norm_image_url)
 
-    # Converte NaN/NA restantes para None
     df = df.replace({np.nan: None, pd.NA: None})
 
-    # Proteção extra: asin obrigatório e sem vazio
     df["asin"] = df["asin"].apply(lambda v: None if v is None else str(v).strip())
     df = df[df["asin"].notna() & (df["asin"] != "")].copy()
 
-    # Dedup por asin (evita mandar duplicado pro executemany)
     df = df.drop_duplicates(subset=["asin"], keep="first").reset_index(drop=True)
-
-    # Converte tudo para object (Python) para o driver do MySQL
     df = df.astype({c: object for c in expected})
 
     return df[expected]
@@ -601,28 +625,16 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
 def upsert_amazon_products(engine: Any, df: pd.DataFrame) -> int:
     """
     Insere/atualiza produtos na tabela amazon_products.
-
-    Campos esperados (df):
-      asin, marketplace_id, title, image_url, brand,
-      browse_node_id, browse_node_name,
-      gtin, gtin_type,
-      sales_rank, sales_rank_category,
-      price, currency,
-      is_prime, fulfillment_channel,
-      item_condition,
-      source_root_name, source_child_name, search_kw
     """
     if df.empty:
         return 0
 
     rows = sql_safe_amazon_frame(df)
 
-    # Decide se a tabela tem image_url (para não quebrar se schema ainda não foi alterado)
     cols = _amazon_products_columns(engine)
     has_image_url = "image_url" in cols
 
     if not has_image_url:
-        # evita erro de bind param extra e/ou coluna inexistente no INSERT
         rows = rows.drop(columns=["image_url"], errors="ignore")
 
         sql = text(
@@ -657,14 +669,9 @@ def upsert_amazon_products(engine: Any, df: pd.DataFrame) -> int:
               sales_rank_category = COALESCE(NULLIF(VALUES(sales_rank_category), ''), sales_rank_category),
               price               = COALESCE(VALUES(price), price),
               currency            = COALESCE(NULLIF(VALUES(currency), ''), currency),
-
-              -- tri-state: se vier NULL, preserva o antigo
               is_prime            = COALESCE(VALUES(is_prime), is_prime),
               fulfillment_channel = COALESCE(NULLIF(VALUES(fulfillment_channel), ''), fulfillment_channel),
-
-              -- condição (se vier NULL/'' não apaga o antigo)
               item_condition      = COALESCE(NULLIF(VALUES(item_condition), ''), item_condition),
-
               source_root_name    = COALESCE(NULLIF(VALUES(source_root_name), ''), source_root_name),
               source_child_name   = COALESCE(NULLIF(VALUES(source_child_name), ''), source_child_name),
               search_kw           = COALESCE(NULLIF(VALUES(search_kw), ''), search_kw),
@@ -695,10 +702,7 @@ def upsert_amazon_products(engine: Any, df: pd.DataFrame) -> int:
             ON DUPLICATE KEY UPDATE
               marketplace_id      = COALESCE(NULLIF(VALUES(marketplace_id), ''), marketplace_id),
               title               = COALESCE(NULLIF(VALUES(title), ''), title),
-
-              -- thumbnail (se vier NULL/'' não apaga o antigo)
               image_url           = COALESCE(NULLIF(VALUES(image_url), ''), image_url),
-
               brand               = COALESCE(NULLIF(VALUES(brand), ''), brand),
               browse_node_id      = COALESCE(VALUES(browse_node_id), browse_node_id),
               browse_node_name    = COALESCE(NULLIF(VALUES(browse_node_name), ''), browse_node_name),
@@ -708,14 +712,9 @@ def upsert_amazon_products(engine: Any, df: pd.DataFrame) -> int:
               sales_rank_category = COALESCE(NULLIF(VALUES(sales_rank_category), ''), sales_rank_category),
               price               = COALESCE(VALUES(price), price),
               currency            = COALESCE(NULLIF(VALUES(currency), ''), currency),
-
-              -- tri-state: se vier NULL, preserva o antigo
               is_prime            = COALESCE(VALUES(is_prime), is_prime),
               fulfillment_channel = COALESCE(NULLIF(VALUES(fulfillment_channel), ''), fulfillment_channel),
-
-              -- condição (se vier NULL/'' não apaga o antigo)
               item_condition      = COALESCE(NULLIF(VALUES(item_condition), ''), item_condition),
-
               source_root_name    = COALESCE(NULLIF(VALUES(source_root_name), ''), source_root_name),
               source_child_name   = COALESCE(NULLIF(VALUES(source_child_name), ''), source_child_name),
               search_kw           = COALESCE(NULLIF(VALUES(search_kw), ''), search_kw),
@@ -733,14 +732,12 @@ def upsert_amazon_products(engine: Any, df: pd.DataFrame) -> int:
 # Amazon: helpers para o crawler (evitar update dentro de X dias)
 # ---------------------------------------------------------------------------
 
-
 def _normalize_asins(asins: Iterable[str]) -> list[str]:
     out: list[str] = []
     for a in asins:
         s = str(a).strip()
         if s:
             out.append(s)
-    # dedupe mantendo ordem
     return list(dict.fromkeys(out))
 
 
@@ -749,9 +746,6 @@ def get_existing_amazon_asins(
     asins: Iterable[str],
     marketplace_id: Optional[str],
 ) -> Set[str]:
-    """
-    Retorna o conjunto de ASINs que já existem no banco (para o marketplace_id informado).
-    """
     asins_list = _normalize_asins(asins)
     if not asins_list:
         return set()
@@ -788,10 +782,6 @@ def get_recent_amazon_asins(
     marketplace_id: Optional[str],
     cutoff: datetime,
 ) -> Set[str]:
-    """
-    Retorna o conjunto de ASINs cujo fetched_at é >= cutoff
-    (ou seja, "recentes" e NÃO devem ser atualizados).
-    """
     asins_list = _normalize_asins(asins)
     if not asins_list:
         return set()
@@ -833,13 +823,6 @@ def get_amazon_fetched_at_map(
     asins: Iterable[str],
     marketplace_id: Optional[str],
 ) -> Dict[str, Optional[datetime]]:
-    """
-    Retorna um dict {asin: fetched_at} para os ASINs informados.
-    Útil para debug/log e decisões sem precisar de várias queries.
-
-    Observação:
-    - Se marketplace_id for None, busca por asin (sem filtrar marketplace).
-    """
     asins_list = _normalize_asins(asins)
     if not asins_list:
         return {}
