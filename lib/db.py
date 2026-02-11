@@ -65,13 +65,34 @@ def sql_safe_frame(df: pd.DataFrame) -> pd.DataFrame:
     cat = pd.to_numeric(df["category_id"], errors="coerce").astype("Int64")
     df["category_id"] = cat.where(cat.notna(), None)
 
-    # Normaliza condição (apenas cosmeticamente)
-    df["condition"] = df["condition"].astype(str).str.title()
+    # Normaliza condition sem transformar None em "None"
+    def _norm_condition(v: Any) -> Optional[str]:
+        if v is None or v is pd.NA:
+            return None
+        if isinstance(v, float) and np.isnan(v):
+            return None
+        s = str(v).strip()
+        if not s:
+            return None
+        low = s.lower()
+        if low in ("none", "nan", "<na>", "null"):
+            return None
+        return s.title()
 
-    # currency: se vier vazio/None/NaN, define USD
-    cur = df["currency"].astype(str).str.upper()
-    df["currency"] = cur.where(~cur.isin(["", "NONE", "NAN"]), "USD")
-    df["currency"] = df["currency"].fillna("USD")
+    df["condition"] = df["condition"].apply(_norm_condition)
+
+    # currency: se vier vazio/None/NaN, define USD (sem virar "NONE"/"NAN")
+    def _norm_currency(v: Any) -> str:
+        if v is None or v is pd.NA:
+            return "USD"
+        if isinstance(v, float) and np.isnan(v):
+            return "USD"
+        s = str(v).strip().upper()
+        if s in ("", "NONE", "NAN", "<NA>", "NULL"):
+            return "USD"
+        return s
+
+    df["currency"] = df["currency"].apply(_norm_currency)
 
     # Converte NaN/NA restantes para None
     df = df.replace({np.nan: None, pd.NA: None})
@@ -175,14 +196,21 @@ def _get_table_columns(engine: Any, table_name: str) -> Optional[Set[str]]:
 def _amazon_products_columns(engine: Any) -> Set[str]:
     """
     Cache simples das colunas de amazon_products para decidir SQL (ex.: image_url).
-    Se falhar, retorna set vazio (fallback seguro).
+
+    IMPORTANTE:
+    - Não "cacheia vazio" quando dá erro ao ler schema, para não travar decisões erradas
+      (ex.: coluna image_url existe, mas uma leitura falha e o processo fica achando que não existe).
     """
     global _AMAZON_PRODUCTS_COLS_CACHE
     if _AMAZON_PRODUCTS_COLS_CACHE is not None:
         return _AMAZON_PRODUCTS_COLS_CACHE
 
     cols = _get_table_columns(engine, "amazon_products")
-    _AMAZON_PRODUCTS_COLS_CACHE = cols or set()
+    if cols is None:
+        # falhou ler schema -> fallback seguro sem cache
+        return set()
+
+    _AMAZON_PRODUCTS_COLS_CACHE = cols
     return _AMAZON_PRODUCTS_COLS_CACHE
 
 
@@ -195,7 +223,7 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
     - Evita apagar fulfillment_channel quando vier vazio/None
     - Padroniza fulfillment_channel para valores CANÔNICOS no DB: AMAZON (FBA) / MFN (FBM)
     - Normaliza item_condition (New/Used/Refurbished...) e respeita VARCHAR(16)
-    - (NOVO) Suporta image_url (thumbnail) quando existir no schema
+    - Suporta image_url (thumbnail) quando existir no schema
     """
     df = df.copy()
 
@@ -203,7 +231,7 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
         "asin",
         "marketplace_id",
         "title",
-        "image_url",  # <-- NOVO (thumbnail)
+        "image_url",  # thumbnail
         "brand",
         "browse_node_id",
         "browse_node_name",
@@ -236,14 +264,19 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
             return None
         if isinstance(v, str):
             s = v.strip()
-            return s if s else None
+            if not s:
+                return None
+            low = s.lower()
+            if low in ("none", "nan", "<na>", "null"):
+                return None
+            return s
         return v
 
     # Sanitiza strings principais (evita '' indo pro INSERT)
     text_cols = [
         "asin",
         "title",
-        "image_url",  # <-- NOVO
+        "image_url",
         "brand",
         "browse_node_name",
         "gtin",
@@ -272,14 +305,24 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
         if isinstance(v, float) and np.isnan(v):
             return "ATVPDKIKX0DER"
         s = str(v).strip()
-        return s if s else "ATVPDKIKX0DER"
+        if not s or s.lower() in ("none", "nan", "<na>", "null"):
+            return "ATVPDKIKX0DER"
+        return s
 
     df["marketplace_id"] = df["marketplace_id"].apply(_norm_marketplace)
 
     # currency: fallback para USD
-    cur = df["currency"].apply(lambda v: None if v is None else str(v).strip().upper())
-    df["currency"] = cur.where(~cur.isin(["", "NONE", "NAN"]), "USD")
-    df["currency"] = df["currency"].fillna("USD")
+    def _norm_currency(v: Any) -> str:
+        if v is None or v is pd.NA:
+            return "USD"
+        if isinstance(v, float) and np.isnan(v):
+            return "USD"
+        s = str(v).strip().upper()
+        if s in ("", "NONE", "NAN", "<NA>", "NULL"):
+            return "USD"
+        return s
+
+    df["currency"] = df["currency"].apply(_norm_currency)
 
     # is_prime: 1/0/NULL (não forçar 0 quando desconhecido)
     def _prime_to_int01_or_none(v: Any) -> Optional[int]:
@@ -294,7 +337,7 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
             return iv if iv in (0, 1) else None
         if isinstance(v, str):
             s = v.strip().lower()
-            if s in ("", "none", "nan"):
+            if s in ("", "none", "nan", "<na>", "null"):
                 return None
             if s in ("1", "true", "t", "yes", "y"):
                 return 1
@@ -320,7 +363,7 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
         if isinstance(v, float) and np.isnan(v):
             return None
         s = str(v).strip().upper()
-        if s in ("", "NONE", "NAN", "<NA>"):
+        if s in ("", "NONE", "NAN", "<NA>", "NULL"):
             return None
 
         # aceita variações e padroniza para o DB
@@ -341,7 +384,7 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
         if isinstance(v, float) and np.isnan(v):
             return None
         s = str(v).strip()
-        if not s or s.lower() in ("none", "nan", "<na>"):
+        if not s or s.lower() in ("none", "nan", "<na>", "null"):
             return None
         return s.title()[:16]
 
@@ -354,7 +397,7 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
         if isinstance(v, float) and np.isnan(v):
             return None
         s = str(v).strip()
-        if not s or s.lower() in ("none", "nan", "<na>"):
+        if not s or s.lower() in ("none", "nan", "<na>", "null"):
             return None
         return s
 
@@ -372,86 +415,6 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
 
     # Converte tudo para object (Python) para o driver do MySQL
     df = df.astype({c: object for c in expected})
-
-    return df[expected]
-
-    df["is_prime"] = df["is_prime"].apply(_prime_to_int01_or_none)
-
-    # fulfillment_channel: normaliza para FBA/FBM/NULL (sem apagar com vazio)
-    def _norm_fulfillment(v: Any) -> Optional[str]:
-        if v is None or v is pd.NA:
-            return None
-        if isinstance(v, float) and np.isnan(v):
-            return None
-        s = str(v).strip().upper()
-        if s in ("", "NONE", "NAN"):
-            return None
-        # aceita padrões antigos e normaliza
-        if s in ("AMAZON", "FBA"):
-            return "FBA"
-        if s in ("MFN", "MERCHANT", "FBM"):
-            return "FBM"
-        # mantém outros valores, mas garante limite de tamanho
-        return s[:20]
-
-    df["fulfillment_channel"] = df["fulfillment_channel"].apply(_norm_fulfillment)
-
-    # item_condition: normaliza e respeita VARCHAR(16)
-    def _norm_item_condition(v: Any) -> Optional[str]:
-        if v is None or v is pd.NA:
-            return None
-        if isinstance(v, float) and np.isnan(v):
-            return None
-
-        s = str(v).strip()
-        if not s or s.lower() in ("none", "nan"):
-            return None
-
-        s_norm = s.strip().lower().replace(" ", "_")
-
-    # NEW
-        if s_norm.startswith("new"):
-            return "New"
-
-    # REFURBISHED (mapeia variações)
-        if ("refurb" in s_norm) or ("renew" in s_norm) or ("recond" in s_norm):
-            return "Refurbished"
-
-    # USED (mapeia variações comuns)
-        if s_norm.startswith("used") or s_norm in ("very_good", "good", "acceptable", "like_new"):
-            return "Used"
-
-    # fallback: se vier algo inesperado, joga pra Used (ou None, se preferir)
-        return "Used"
-
-    df["item_condition"] = df["item_condition"].apply(_norm_item_condition)
-
-    # Converte NaN/NA restantes para None
-    df = df.replace({np.nan: None, pd.NA: None})
-
-    # Converte tudo para object (Python) para o driver do MySQL
-    df = df.astype(
-        {
-            "asin": object,
-            "marketplace_id": object,
-            "title": object,
-            "brand": object,
-            "browse_node_id": object,
-            "browse_node_name": object,
-            "gtin": object,
-            "gtin_type": object,
-            "sales_rank": object,
-            "sales_rank_category": object,
-            "price": object,
-            "currency": object,
-            "is_prime": object,
-            "fulfillment_channel": object,
-            "item_condition": object,  # <-- NOVO
-            "source_root_name": object,
-            "source_child_name": object,
-            "search_kw": object,
-        }
-    )
 
     return df[expected]
 
@@ -554,7 +517,7 @@ def upsert_amazon_products(engine: Any, df: pd.DataFrame) -> int:
               marketplace_id      = COALESCE(NULLIF(VALUES(marketplace_id), ''), marketplace_id),
               title               = COALESCE(NULLIF(VALUES(title), ''), title),
 
-              -- NOVO: thumbnail (se vier NULL/'' não apaga o antigo)
+              -- thumbnail (se vier NULL/'' não apaga o antigo)
               image_url           = COALESCE(NULLIF(VALUES(image_url), ''), image_url),
 
               brand               = COALESCE(NULLIF(VALUES(brand), ''), brand),
