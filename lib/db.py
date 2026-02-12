@@ -210,13 +210,37 @@ def sql_safe_frame(df: pd.DataFrame) -> pd.DataFrame:
 
     return df[expected]
 
+def _get_table_columns_info(engine, table_name: str, schema: Optional[str] = None) -> Dict[str, str]:
+    """
+    Retorna dict {coluna: data_type} da tabela.
+    Ex.: {"price": "decimal", "title": "varchar", ...}
+    """
+    if schema is None:
+        schema = engine.url.database
+
+    sql = text("""
+        SELECT COLUMN_NAME, DATA_TYPE
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = :schema
+          AND TABLE_NAME = :table
+    """)
+    with engine.begin() as conn:
+        rows = conn.execute(sql, {"schema": schema, "table": table_name}).fetchall()
+
+    out: Dict[str, str] = {}
+    for r in rows:
+        if not r:
+            continue
+        out[str(r[0])] = str(r[1]).lower() if r[1] is not None else ""
+    return out
 
 def upsert_ebay_listings(engine, df: pd.DataFrame, chunk_size: int = 500) -> int:
     """
     Upsert em ebay_listing preservando dados antigos quando o novo vier NULL/vazio.
-    - first_seen_at: mantém o primeiro (não sobrescreve)
-    - fetched_at: atualiza sempre que vier preenchido
-    - não apaga campos com NULL/'' do batch
+
+    Fix importante:
+    - Para colunas NUMÉRICAS (DECIMAL/INT/etc), NÃO usar NULLIF(...,'') no UPDATE,
+      pois MySQL pode dar "Truncated incorrect DECIMAL value: ''".
     """
     if df is None or df.empty:
         return 0
@@ -225,45 +249,61 @@ def upsert_ebay_listings(engine, df: pd.DataFrame, chunk_size: int = 500) -> int
     df.columns = [c.strip() for c in df.columns]
 
     table = "ebay_listing"
-    cols_exist = _get_table_columns(engine, table)
 
+    cols_info = _get_table_columns_info(engine, table)  # {col: datatype}
+    cols_exist = set(cols_info.keys())
+
+    numeric_types = {
+        "decimal", "numeric", "float", "double",
+        "int", "bigint", "smallint", "mediumint", "tinyint",
+        "year"
+    }
+    numeric_cols = {c for c, t in cols_info.items() if t in numeric_types}
+
+    # colunas candidatas (só usa as que existirem no schema)
     wanted = [
-        "item_id",
-        "title",
-        "brand",
-        "mpn",
-        "gtin",
-        "price",
-        "currency",
-        "available_qty",
-        "qty_flag",
-        "condition",
-        "seller",
-        "category_id",
-        "item_url",
-        "image_url",
-        "first_seen_at",
-        "fetched_at",
+        "item_id", "title", "brand", "mpn", "gtin",
+        "price", "currency", "available_qty", "qty_flag",
+        "condition", "seller", "category_id",
+        "item_url", "image_url",
+        "first_seen_at", "fetched_at",
     ]
     cols = [c for c in wanted if c in df.columns and c in cols_exist]
     if "item_id" not in cols:
-        raise RuntimeError("upsert_ebay_listings: preciso de item_id.")
-    if "title" in cols:
-        # title é NOT NULL no seu schema -> garante valor
-        df["title"] = df["title"].apply(lambda v: "(sem título)" if _clean_scalar(v) is None else str(v))
+        raise RuntimeError("upsert_ebay_listings: preciso de item_id (coluna e/ou DF não tem).")
 
     df = df[cols].copy()
 
+    def _clean(v):
+        if v is None:
+            return None
+        if v is pd.NA:
+            return None
+        if isinstance(v, float) and math.isnan(v):
+            return None
+        # pandas Timestamp -> datetime python
+        if isinstance(v, pd.Timestamp):
+            return v.to_pydatetime().replace(tzinfo=None)
+        # evita '' indo pro SQL (principalmente em numéricos)
+        if isinstance(v, str):
+            s = v.strip()
+            return s if s != "" else None
+        return v
+
     records: List[Dict[str, Any]] = []
     for rec in df.to_dict(orient="records"):
-        records.append({k: _clean_scalar(v) for k, v in rec.items()})
+        records.append({k: _clean(v) for k, v in rec.items()})
 
     insert_cols_sql = ", ".join([f"`{c}`" for c in cols])
     values_sql = ", ".join([f":{c}" for c in cols])
 
-    def _upd_keep(col: str) -> str:
-        # não apaga com NULL/'' do batch
+    # update: strings não devem apagar com vazio/NULL
+    def _upd_keep_text(col: str) -> str:
         return f"`{col}` = COALESCE(NULLIF(VALUES(`{col}`), ''), `{col}`)"
+
+    # update: numéricos: não usar NULLIF com ''
+    def _upd_keep_numeric(col: str) -> str:
+        return f"`{col}` = COALESCE(VALUES(`{col}`), `{col}`)"
 
     update_parts: List[str] = []
 
@@ -275,20 +315,26 @@ def upsert_ebay_listings(engine, df: pd.DataFrame, chunk_size: int = 500) -> int
     if "fetched_at" in cols_exist and "fetched_at" in cols:
         update_parts.append("`fetched_at` = COALESCE(VALUES(`fetched_at`), `fetched_at`)")
 
-    # demais campos: só atualiza se vier valor válido
+    # demais campos
     for c in cols:
         if c in ("item_id", "first_seen_at", "fetched_at"):
             continue
-        update_parts.append(_upd_keep(c))
+
+        if c in numeric_cols:
+            update_parts.append(_upd_keep_numeric(c))
+        else:
+            update_parts.append(_upd_keep_text(c))
 
     if not update_parts:
         update_parts.append("`item_id` = `item_id`")
+
+    update_sql = ", ".join(update_parts)
 
     sql = text(f"""
         INSERT INTO `{table}` ({insert_cols_sql})
         VALUES ({values_sql})
         ON DUPLICATE KEY UPDATE
-          {", ".join(update_parts)}
+          {update_sql}
     """)
 
     total = 0
@@ -299,7 +345,6 @@ def upsert_ebay_listings(engine, df: pd.DataFrame, chunk_size: int = 500) -> int
             total += len(batch)
 
     return total
-
 
 def upsert_match_map(engine, rows: List[Dict[str, Any]], chunk_size: int = 500) -> int:
     """

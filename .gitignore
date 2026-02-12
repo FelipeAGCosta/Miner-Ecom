@@ -185,6 +185,7 @@ crawler_state.json
 crawler_amazon.py
 crawler_amazon_batch.py
 run_crawler_daily.bat
+crawler_state_ebay.json
 
 # Integrações privadas (SP-API, Amazon store, etc.)
 integrations/
