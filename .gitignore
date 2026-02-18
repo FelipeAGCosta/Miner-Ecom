@@ -188,6 +188,7 @@ crawler_amazon_batch.py
 run_crawler_daily.bat
 crawler_state_ebay.json
 crawler_state_ebay_seeded
+*.bat
 
 # --- crawler state files ---
 crawler_state_ebay.json
