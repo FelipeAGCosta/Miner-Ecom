@@ -179,6 +179,7 @@ search_tasks.yaml
 search_tasks.backup.yaml
 config/search_tasks.yaml
 assets/search_tasks.yaml
+search_tasks_ebay.yaml
 
 # Estado do crawler e scripts de agendamento locais
 crawler_state.json
