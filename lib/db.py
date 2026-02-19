@@ -3,6 +3,7 @@ Funções de normalização e upsert para as tabelas principais:
 
 - ebay_listing
 - amazon_products
+- match_map
 
 Centraliza a conversão de DataFrame (pandas) em linhas prontas para INSERT/UPDATE
 via SQLAlchemy, garantindo tipos e valores padrão coerentes.
@@ -10,7 +11,7 @@ via SQLAlchemy, garantindo tipos e valores padrão coerentes.
 
 from __future__ import annotations
 
-from typing import List, Any, Iterable, Optional, Set, Dict
+from typing import List, Any, Iterable, Optional, Set, Dict, Tuple
 from datetime import datetime
 
 import math
@@ -47,7 +48,7 @@ def _get_table_columns(engine: Any, table_name: str) -> Set[str]:
 
 def _get_column_type(engine: Any, table_name: str, column_name: str) -> Optional[str]:
     """
-    Retorna COLUMN_TYPE (ex.: "enum('GTIN','BRAND_MPN','TITLE')") ou None.
+    Retorna COLUMN_TYPE (ex.: "enum('GTIN','BRAND_MPN','TITLE','IMAGE')") ou None.
     """
     try:
         sql = text(
@@ -115,6 +116,31 @@ def _clean_scalar(v: Any) -> Any:
     return v
 
 
+def _get_table_columns_info(engine, table_name: str, schema: Optional[str] = None) -> Dict[str, str]:
+    """
+    Retorna dict {coluna: data_type} da tabela.
+    Ex.: {"price": "decimal", "title": "varchar", ...}
+    """
+    if schema is None:
+        schema = engine.url.database
+
+    sql = text("""
+        SELECT COLUMN_NAME, DATA_TYPE
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = :schema
+          AND TABLE_NAME = :table
+    """)
+    with engine.begin() as conn:
+        rows = conn.execute(sql, {"schema": schema, "table": table_name}).fetchall()
+
+    out: Dict[str, str] = {}
+    for r in rows:
+        if not r:
+            continue
+        out[str(r[0])] = str(r[1]).lower() if r[1] is not None else ""
+    return out
+
+
 # ---------------------------------------------------------------------------
 # eBay: normalização e upsert
 # ---------------------------------------------------------------------------
@@ -144,28 +170,23 @@ def sql_safe_frame(df: pd.DataFrame) -> pd.DataFrame:
         "seller",
         "category_id",
         "item_url",
-        # opcional (não quebra quem não usa):
         "image_url",
         "first_seen_at",
         "fetched_at",
     ]
 
-    # Garante todas as colunas mínimas
     for col in expected:
         if col not in df.columns:
             df[col] = None
 
-    # Numéricos
     df["price"] = pd.to_numeric(df["price"], errors="coerce")
 
     qty = pd.to_numeric(df["available_qty"], errors="coerce")
     df["available_qty"] = qty.where(qty.notna(), None)
 
-    # category_id inteiro quando houver
     cat = pd.to_numeric(df["category_id"], errors="coerce").astype("Int64")
     df["category_id"] = cat.where(cat.notna(), None)
 
-    # Normaliza condition sem transformar None em "None"
     def _norm_condition(v: Any) -> Optional[str]:
         if v is None or v is pd.NA:
             return None
@@ -181,7 +202,6 @@ def sql_safe_frame(df: pd.DataFrame) -> pd.DataFrame:
 
     df["condition"] = df["condition"].apply(_norm_condition)
 
-    # currency: se vier vazio/None/NaN, define USD (sem virar "NONE"/"NAN")
     def _norm_currency(v: Any) -> str:
         if v is None or v is pd.NA:
             return "USD"
@@ -194,45 +214,17 @@ def sql_safe_frame(df: pd.DataFrame) -> pd.DataFrame:
 
     df["currency"] = df["currency"].apply(_norm_currency)
 
-    # image_url: limpa blanks
     df["image_url"] = df["image_url"].apply(lambda v: _clean_scalar(v))
 
-    # timestamps (se vierem como string)
     for c in ("first_seen_at", "fetched_at"):
         df[c] = pd.to_datetime(df[c], errors="coerce")
         df[c] = df[c].where(df[c].notna(), None)
 
-    # Converte NaN/NA restantes para None
     df = df.replace({np.nan: None, pd.NA: None})
-
-    # Tipos Python "object" para o execute do SQLAlchemy/PyMySQL
     df = df.astype({c: object for c in expected})
 
     return df[expected]
 
-def _get_table_columns_info(engine, table_name: str, schema: Optional[str] = None) -> Dict[str, str]:
-    """
-    Retorna dict {coluna: data_type} da tabela.
-    Ex.: {"price": "decimal", "title": "varchar", ...}
-    """
-    if schema is None:
-        schema = engine.url.database
-
-    sql = text("""
-        SELECT COLUMN_NAME, DATA_TYPE
-        FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_SCHEMA = :schema
-          AND TABLE_NAME = :table
-    """)
-    with engine.begin() as conn:
-        rows = conn.execute(sql, {"schema": schema, "table": table_name}).fetchall()
-
-    out: Dict[str, str] = {}
-    for r in rows:
-        if not r:
-            continue
-        out[str(r[0])] = str(r[1]).lower() if r[1] is not None else ""
-    return out
 
 def upsert_ebay_listings(engine, df: pd.DataFrame, chunk_size: int = 500) -> int:
     """
@@ -250,17 +242,16 @@ def upsert_ebay_listings(engine, df: pd.DataFrame, chunk_size: int = 500) -> int
 
     table = "ebay_listing"
 
-    cols_info = _get_table_columns_info(engine, table)  # {col: datatype}
+    cols_info = _get_table_columns_info(engine, table)
     cols_exist = set(cols_info.keys())
 
     numeric_types = {
         "decimal", "numeric", "float", "double",
         "int", "bigint", "smallint", "mediumint", "tinyint",
-        "year"
+        "year",
     }
     numeric_cols = {c for c, t in cols_info.items() if t in numeric_types}
 
-    # colunas candidatas (só usa as que existirem no schema)
     wanted = [
         "item_id", "title", "brand", "mpn", "gtin",
         "price", "currency", "available_qty", "qty_flag",
@@ -275,16 +266,12 @@ def upsert_ebay_listings(engine, df: pd.DataFrame, chunk_size: int = 500) -> int
     df = df[cols].copy()
 
     def _clean(v):
-        if v is None:
-            return None
-        if v is pd.NA:
+        if v is None or v is pd.NA:
             return None
         if isinstance(v, float) and math.isnan(v):
             return None
-        # pandas Timestamp -> datetime python
         if isinstance(v, pd.Timestamp):
             return v.to_pydatetime().replace(tzinfo=None)
-        # evita '' indo pro SQL (principalmente em numéricos)
         if isinstance(v, str):
             s = v.strip()
             return s if s != "" else None
@@ -297,29 +284,23 @@ def upsert_ebay_listings(engine, df: pd.DataFrame, chunk_size: int = 500) -> int
     insert_cols_sql = ", ".join([f"`{c}`" for c in cols])
     values_sql = ", ".join([f":{c}" for c in cols])
 
-    # update: strings não devem apagar com vazio/NULL
     def _upd_keep_text(col: str) -> str:
         return f"`{col}` = COALESCE(NULLIF(VALUES(`{col}`), ''), `{col}`)"
 
-    # update: numéricos: não usar NULLIF com ''
     def _upd_keep_numeric(col: str) -> str:
         return f"`{col}` = COALESCE(VALUES(`{col}`), `{col}`)"
 
     update_parts: List[str] = []
 
-    # first_seen_at: só preenche se ainda estiver NULL
     if "first_seen_at" in cols_exist and "first_seen_at" in cols:
         update_parts.append("`first_seen_at` = COALESCE(`first_seen_at`, VALUES(`first_seen_at`))")
 
-    # fetched_at: atualiza se vier preenchido
     if "fetched_at" in cols_exist and "fetched_at" in cols:
         update_parts.append("`fetched_at` = COALESCE(VALUES(`fetched_at`), `fetched_at`)")
 
-    # demais campos
     for c in cols:
         if c in ("item_id", "first_seen_at", "fetched_at"):
             continue
-
         if c in numeric_cols:
             update_parts.append(_upd_keep_numeric(c))
         else:
@@ -346,22 +327,14 @@ def upsert_ebay_listings(engine, df: pd.DataFrame, chunk_size: int = 500) -> int
 
     return total
 
+
+# ---------------------------------------------------------------------------
+# match_map: upsert (genérico)
+# ---------------------------------------------------------------------------
+
 def upsert_match_map(engine, rows: List[Dict[str, Any]], chunk_size: int = 500) -> int:
     """
-    Upsert em match_map alinhado ao seu schema REAL (ENUM + DECIMAL NOT NULL).
-
-    Seu schema (pelo que você mostrou):
-      item_id varchar(32) NOT NULL
-      asin varchar(10) NOT NULL
-      match_method enum('GTIN','BRAND_MPN','TITLE') NOT NULL
-      match_score decimal(4,2) NOT NULL
-      notes varchar(255) NULL
-      created_at datetime NOT NULL
-      (possíveis colunas extras não assumidas aqui)
-
-    Regra de segurança:
-      - Só "troca" asin/method/notes quando o score novo >= score atual.
-      - match_score sempre guarda o maior.
+    Upsert em match_map de forma compatível com o schema atual.
     """
     if not rows:
         return 0
@@ -369,18 +342,18 @@ def upsert_match_map(engine, rows: List[Dict[str, Any]], chunk_size: int = 500) 
     table = "match_map"
     cols_exist = _get_table_columns(engine, table)
 
-    required = {"item_id", "asin", "match_method", "match_score", "created_at"}
-    missing = [c for c in required if c not in cols_exist]
-    if missing:
-        raise RuntimeError(f"upsert_match_map: tabela {table} sem colunas esperadas: {missing}")
+    if "item_id" not in cols_exist or "asin" not in cols_exist:
+        raise RuntimeError(f"upsert_match_map: tabela {table} sem item_id/asin.")
 
-    # Descobre valores permitidos do ENUM (fallback seguro)
-    allowed_methods = {"GTIN", "BRAND_MPN", "TITLE"}
+    allowed_methods = {"GTIN", "BRAND_MPN", "TITLE", "IMAGE"}
     ctype = _get_column_type(engine, table, "match_method")
     if ctype:
         enum_vals = _parse_enum_values(ctype)
         if enum_vals:
             allowed_methods = {v.upper() for v in enum_vals}
+
+    has_image_distance = "image_distance" in cols_exist
+    has_updated_at = "updated_at" in cols_exist
 
     now = datetime.utcnow()
     prepared: List[Dict[str, Any]] = []
@@ -402,11 +375,7 @@ def upsert_match_map(engine, rows: List[Dict[str, Any]], chunk_size: int = 500) 
         except Exception:
             score_f = 0.0
 
-        # DECIMAL(4,2): 0.00 a 99.99
-        if score_f < 0:
-            score_f = 0.0
-        if score_f > 99.99:
-            score_f = 99.99
+        score_f = max(0.0, min(99.99, score_f))
         score_f = round(score_f, 2)
 
         notes = _clean_scalar(r.get("notes"))
@@ -414,39 +383,63 @@ def upsert_match_map(engine, rows: List[Dict[str, Any]], chunk_size: int = 500) 
 
         created_at = r.get("created_at") if r.get("created_at") is not None else now
 
-        prepared.append(
-            {
-                "item_id": str(item_id),
-                "asin": str(asin)[:10],
-                "match_method": method,
-                "match_score": score_f,
-                "notes": notes_s,
-                "created_at": created_at,
-            }
-        )
+        payload: Dict[str, Any] = {
+            "item_id": str(item_id),
+            "asin": str(asin)[:20],
+            "match_method": method,
+            "match_score": score_f,
+            "notes": notes_s,
+            "created_at": created_at,
+        }
+
+        if has_image_distance:
+            imgd = _clean_scalar(r.get("image_distance"))
+            try:
+                payload["image_distance"] = int(imgd) if imgd is not None else None
+            except Exception:
+                payload["image_distance"] = None
+
+        if has_updated_at:
+            payload["updated_at"] = now
+
+        prepared.append(payload)
 
     if not prepared:
         return 0
 
     insert_cols = ["item_id", "asin", "match_method", "match_score", "notes", "created_at"]
+    if has_image_distance:
+        insert_cols.insert(4, "image_distance")
+    if has_updated_at:
+        insert_cols.append("updated_at")
+
     insert_cols_sql = ", ".join([f"`{c}`" for c in insert_cols])
     values_sql = ", ".join([f":{c}" for c in insert_cols])
 
-    # Só atualiza campos "sensíveis" quando o score novo >= score atual
     cond = "(VALUES(`match_score`) >= `match_score`)"
+
+    upd_parts = [
+        "`match_score`  = GREATEST(`match_score`, VALUES(`match_score`))",
+        "`asin`         = CASE WHEN " + cond + " THEN VALUES(`asin`) ELSE `asin` END",
+        "`match_method` = CASE WHEN " + cond + " THEN VALUES(`match_method`) ELSE `match_method` END",
+        "`notes`        = CASE WHEN " + cond + " THEN COALESCE(NULLIF(VALUES(`notes`), ''), `notes`) ELSE `notes` END",
+        "`created_at`   = COALESCE(`created_at`, VALUES(`created_at`))",
+    ]
+
+    if has_image_distance:
+        upd_parts.insert(
+            3,
+            "`image_distance` = CASE WHEN " + cond + " THEN VALUES(`image_distance`) ELSE `image_distance` END"
+        )
+
+    if has_updated_at:
+        upd_parts.append("`updated_at` = VALUES(`updated_at`)")
 
     sql = text(f"""
         INSERT INTO `{table}` ({insert_cols_sql})
         VALUES ({values_sql})
         ON DUPLICATE KEY UPDATE
-          `match_score`  = GREATEST(`match_score`, VALUES(`match_score`)),
-          `asin`         = CASE WHEN {cond} THEN VALUES(`asin`) ELSE `asin` END,
-          `match_method` = CASE WHEN {cond} THEN VALUES(`match_method`) ELSE `match_method` END,
-          `notes`        = CASE
-                             WHEN {cond} THEN COALESCE(NULLIF(VALUES(`notes`), ''), `notes`)
-                             ELSE `notes`
-                           END,
-          `created_at`   = COALESCE(`created_at`, VALUES(`created_at`))
+          {", ".join(upd_parts)}
     """)
 
     total = 0
@@ -459,6 +452,151 @@ def upsert_match_map(engine, rows: List[Dict[str, Any]], chunk_size: int = 500) 
     return total
 
 
+def save_match_1to1_best(
+    engine,
+    item_id: str,
+    asin: str,
+    match_method: str,
+    match_score: float,
+    image_distance: Optional[int] = None,
+    notes: Optional[str] = None,
+) -> Tuple[int, str]:
+    """
+    Resolve 1:1 real (PK item_id + UNIQUE asin) com desempate por score.
+
+    Retorna:
+      (1, "saved") quando gravou
+      (0, motivo) quando recusou por existir match melhor
+    """
+    item_id = str(item_id).strip() if item_id is not None else ""
+    asin = str(asin).strip() if asin is not None else ""
+    if not item_id or not asin:
+        return 0, "invalid_keys"
+
+    try:
+        match_score = float(match_score)
+    except Exception:
+        match_score = 0.0
+
+    cols_exist = _get_table_columns(engine, "match_map")
+    has_image_distance = "image_distance" in cols_exist
+    has_updated_at = "updated_at" in cols_exist
+
+    with engine.begin() as conn:
+        # 1) conflito por ASIN
+        r = conn.execute(
+            text("SELECT item_id, match_score FROM match_map WHERE asin = :asin LIMIT 1"),
+            {"asin": asin},
+        ).fetchone()
+        if r:
+            existing_item = str(r[0])
+            existing_score = float(r[1] or 0.0)
+            if existing_item != item_id:
+                if existing_score >= match_score:
+                    return 0, f"asin_taken_better(score={existing_score:.2f})"
+                conn.execute(text("DELETE FROM match_map WHERE asin = :asin"), {"asin": asin})
+
+        # 2) conflito por ITEM_ID
+        r2 = conn.execute(
+            text("SELECT asin, match_score FROM match_map WHERE item_id = :item_id LIMIT 1"),
+            {"item_id": item_id},
+        ).fetchone()
+        if r2:
+            existing_asin = str(r2[0])
+            existing_score = float(r2[1] or 0.0)
+            if existing_asin != asin:
+                if existing_score >= match_score:
+                    return 0, f"item_taken_better(score={existing_score:.2f})"
+                conn.execute(text("DELETE FROM match_map WHERE item_id = :item_id"), {"item_id": item_id})
+
+        if has_image_distance:
+            if has_updated_at:
+                conn.execute(
+                    text("""
+                        INSERT INTO match_map (item_id, asin, match_method, match_score, image_distance, notes, updated_at)
+                        VALUES (:item_id, :asin, :match_method, :match_score, :image_distance, :notes, NOW())
+                        ON DUPLICATE KEY UPDATE
+                          asin = VALUES(asin),
+                          match_method = VALUES(match_method),
+                          match_score = VALUES(match_score),
+                          image_distance = VALUES(image_distance),
+                          notes = VALUES(notes),
+                          updated_at = NOW()
+                    """),
+                    {
+                        "item_id": item_id,
+                        "asin": asin[:20],
+                        "match_method": match_method,
+                        "match_score": round(match_score, 2),
+                        "image_distance": image_distance,
+                        "notes": notes,
+                    },
+                )
+            else:
+                conn.execute(
+                    text("""
+                        INSERT INTO match_map (item_id, asin, match_method, match_score, image_distance, notes)
+                        VALUES (:item_id, :asin, :match_method, :match_score, :image_distance, :notes)
+                        ON DUPLICATE KEY UPDATE
+                          asin = VALUES(asin),
+                          match_method = VALUES(match_method),
+                          match_score = VALUES(match_score),
+                          image_distance = VALUES(image_distance),
+                          notes = VALUES(notes)
+                    """),
+                    {
+                        "item_id": item_id,
+                        "asin": asin[:20],
+                        "match_method": match_method,
+                        "match_score": round(match_score, 2),
+                        "image_distance": image_distance,
+                        "notes": notes,
+                    },
+                )
+        else:
+            if has_updated_at:
+                conn.execute(
+                    text("""
+                        INSERT INTO match_map (item_id, asin, match_method, match_score, notes, updated_at)
+                        VALUES (:item_id, :asin, :match_method, :match_score, :notes, NOW())
+                        ON DUPLICATE KEY UPDATE
+                          asin = VALUES(asin),
+                          match_method = VALUES(match_method),
+                          match_score = VALUES(match_score),
+                          notes = VALUES(notes),
+                          updated_at = NOW()
+                    """),
+                    {
+                        "item_id": item_id,
+                        "asin": asin[:20],
+                        "match_method": match_method,
+                        "match_score": round(match_score, 2),
+                        "notes": notes,
+                    },
+                )
+            else:
+                conn.execute(
+                    text("""
+                        INSERT INTO match_map (item_id, asin, match_method, match_score, notes)
+                        VALUES (:item_id, :asin, :match_method, :match_score, :notes)
+                        ON DUPLICATE KEY UPDATE
+                          asin = VALUES(asin),
+                          match_method = VALUES(match_method),
+                          match_score = VALUES(match_score),
+                          notes = VALUES(notes)
+                    """),
+                    {
+                        "item_id": item_id,
+                        "asin": asin[:20],
+                        "match_method": match_method,
+                        "match_score": round(match_score, 2),
+                        "notes": notes,
+                    },
+                )
+
+    return 1, "saved"
+
+
 # ---------------------------------------------------------------------------
 # Amazon: normalização e upsert
 # ---------------------------------------------------------------------------
@@ -467,10 +605,6 @@ _AMAZON_PRODUCTS_COLS_CACHE: Optional[Set[str]] = None
 
 
 def _amazon_products_columns(engine: Any) -> Set[str]:
-    """
-    Cache simples das colunas de amazon_products para decidir SQL (ex.: image_url).
-    Não cacheia em caso de falha.
-    """
     global _AMAZON_PRODUCTS_COLS_CACHE
     if _AMAZON_PRODUCTS_COLS_CACHE is not None:
         return _AMAZON_PRODUCTS_COLS_CACHE
@@ -486,13 +620,6 @@ def _amazon_products_columns(engine: Any) -> Set[str]:
 def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
     """
     Normaliza DataFrame de produtos Amazon para inserção na tabela amazon_products.
-
-    Importante:
-    - Mantém is_prime como TRISTATE: 1 (Prime), 0 (Não Prime), NULL (Desconhecido)
-    - Evita apagar fulfillment_channel quando vier vazio/None
-    - Padroniza fulfillment_channel para valores CANÔNICOS no DB: AMAZON (FBA) / MFN (FBM)
-    - Normaliza item_condition (New/Used/Refurbished...) e respeita VARCHAR(16)
-    - Suporta image_url (thumbnail) quando existir no schema
     """
     df = df.copy()
 
@@ -500,7 +627,7 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
         "asin",
         "marketplace_id",
         "title",
-        "image_url",  # thumbnail
+        "image_url",
         "brand",
         "browse_node_id",
         "browse_node_name",
@@ -538,21 +665,10 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
         return v
 
     text_cols = [
-        "asin",
-        "title",
-        "image_url",
-        "brand",
-        "browse_node_name",
-        "gtin",
-        "gtin_type",
-        "sales_rank_category",
-        "source_root_name",
-        "source_child_name",
-        "search_kw",
-        "currency",
-        "fulfillment_channel",
-        "item_condition",
-        "marketplace_id",
+        "asin", "title", "image_url", "brand", "browse_node_name",
+        "gtin", "gtin_type", "sales_rank_category", "source_root_name",
+        "source_child_name", "search_kw", "currency", "fulfillment_channel",
+        "item_condition", "marketplace_id",
     ]
     for c in text_cols:
         df[c] = df[c].apply(_none_if_blank)
@@ -668,9 +784,6 @@ def sql_safe_amazon_frame(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def upsert_amazon_products(engine: Any, df: pd.DataFrame) -> int:
-    """
-    Insere/atualiza produtos na tabela amazon_products.
-    """
     if df.empty:
         return 0
 
@@ -841,11 +954,7 @@ def get_recent_amazon_asins(
               AND fetched_at >= :cutoff
             """
         ).bindparams(bindparam("asins", expanding=True))
-        params = {
-            "marketplace_id": marketplace_id,
-            "asins": asins_list,
-            "cutoff": cutoff,
-        }
+        params = {"marketplace_id": marketplace_id, "asins": asins_list, "cutoff": cutoff}
     else:
         sql = text(
             """
