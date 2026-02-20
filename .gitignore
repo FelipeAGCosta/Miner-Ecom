@@ -212,3 +212,4 @@ logs/
 
 # --- crawlers internos (não subir pro GitHub) ---
 /crawlers_ebay/
+backfill_amazon_images_from_matchmap.py
