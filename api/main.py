@@ -1,0 +1,225 @@
+from __future__ import annotations
+
+from typing import Optional, Dict, Any, List
+
+from fastapi import FastAPI, Query
+from sqlalchemy import text
+
+from lib.config import make_engine
+from api.models import MatchListResponse, MatchItem
+
+app = FastAPI(title="miner-ecom API", version="0.3.1")
+
+# Regex mais robusta (pega "Movies & TV", "Blu Ray", "Video Games", etc.)
+DEFAULT_MEDIA_REGEX = r"(movie|movies|dvd|blu(\s|-)?ray|blu-ray|book|books|kindle|music|cd|vinyl|video\s?game|video\s?games|tv)"
+
+
+def _clamp_int(v: int, lo: int, hi: int) -> int:
+    return max(lo, min(hi, int(v)))
+
+
+@app.get("/health")
+def health() -> Dict[str, Any]:
+    return {"ok": True}
+
+
+@app.get("/matches", response_model=MatchListResponse)
+def list_matches(
+    # paginação
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+
+    # regras de distância
+    max_image_distance: int = Query(8, ge=0, le=20),          # para métodos não-GTIN (IMAGE)
+    gtin_max_dist: int = Query(15, ge=0, le=40),              # para GTIN quando há imagem
+
+    # filtros Amazon
+    amazon_price_min: Optional[float] = None,
+    amazon_price_max: Optional[float] = None,
+    amazon_condition: Optional[str] = None,
+    amazon_fulfillment: Optional[str] = None,
+    amazon_is_prime: Optional[int] = None,
+
+    # filtros eBay
+    ebay_price_min: Optional[float] = None,
+    ebay_price_max: Optional[float] = None,
+    ebay_condition: Optional[str] = None,
+
+    # controle: mostrar mídia?
+    include_media: int = Query(0, ge=0, le=1),
+):
+    page_size = _clamp_int(page_size, 1, 200)
+    offset = (page - 1) * page_size
+
+    where: List[str] = []
+    params: Dict[str, Any] = {
+        "lim": page_size,
+        "off": offset,
+        "max_dist": int(max_image_distance),
+        "gtin_max_dist": int(gtin_max_dist),
+        "media_re": DEFAULT_MEDIA_REGEX,
+    }
+
+    # Regra final:
+    # - GTIN: aceita se dist for NULL (não tem imagem) OU dist <= gtin_max_dist
+    # - NÃO-GTIN: aceita somente se dist existe e dist <= max_dist
+    where.append(
+        "("
+        "(mo.validated_method = 'GTIN' AND (mo.image_distance IS NULL OR mo.image_distance <= :gtin_max_dist))"
+        " OR "
+        "(mo.validated_method <> 'GTIN' AND mo.image_distance IS NOT NULL AND mo.image_distance <= :max_dist)"
+        ")"
+    )
+
+    # filtro default: esconder mídia por REGEXP (mais robusto que NOT IN)
+    if include_media != 1:
+        where.append("(ap.browse_node_name IS NULL OR LOWER(ap.browse_node_name) NOT REGEXP :media_re)")
+
+    # filtros Amazon
+    if amazon_price_min is not None:
+        where.append("ap.price >= :ap_min")
+        params["ap_min"] = float(amazon_price_min)
+    if amazon_price_max is not None:
+        where.append("ap.price <= :ap_max")
+        params["ap_max"] = float(amazon_price_max)
+    if amazon_condition:
+        where.append("ap.item_condition = :ap_cond")
+        params["ap_cond"] = str(amazon_condition)
+    if amazon_fulfillment:
+        where.append("ap.fulfillment_channel = :ap_fc")
+        params["ap_fc"] = str(amazon_fulfillment)
+    if amazon_is_prime in (0, 1):
+        where.append("ap.is_prime = :ap_prime")
+        params["ap_prime"] = int(amazon_is_prime)
+
+    # filtros eBay
+    if ebay_price_min is not None:
+        where.append("el.price >= :eb_min")
+        params["eb_min"] = float(ebay_price_min)
+    if ebay_price_max is not None:
+        where.append("el.price <= :eb_max")
+        params["eb_max"] = float(ebay_price_max)
+    if ebay_condition:
+        where.append("el.`condition` = :eb_cond")
+        params["eb_cond"] = str(ebay_condition)
+
+    where_sql = " AND ".join(where) if where else "1=1"
+
+    sql_total = text(f"""
+        SELECT COUNT(DISTINCT mo.asin)
+        FROM match_offers mo
+        JOIN amazon_products ap ON ap.asin = mo.asin
+        JOIN ebay_listing el ON el.item_id = mo.item_id
+        WHERE {where_sql}
+    """)
+
+    sql_items = text(f"""
+        WITH filtered AS (
+          SELECT
+            mo.updated_at AS mo_updated_at,
+            mo.validated_method,
+            COALESCE(mo.validated_score, 0) AS validated_score,
+            mo.image_distance,
+
+            ap.asin,
+            ap.title AS amazon_title,
+            ap.brand AS amazon_brand,
+            ap.item_condition AS amazon_condition,
+            ap.price AS amazon_price,
+            ap.currency AS amazon_currency,
+            ap.sales_rank AS amazon_bsr,
+            ap.gtin AS amazon_gtin,
+            ap.is_prime AS amazon_is_prime,
+            ap.fulfillment_channel AS amazon_fulfillment,
+            ap.browse_node_name AS amazon_browse_node_name,
+            ap.image_url AS amazon_image_url,
+            CONCAT('https://www.amazon.com/dp/', ap.asin) AS amazon_url,
+
+            el.item_id,
+            el.title AS ebay_title,
+            el.price AS ebay_price,
+            el.currency AS ebay_currency,
+            el.`condition` AS ebay_condition,
+            el.seller AS ebay_seller,
+            el.item_url AS ebay_url
+          FROM match_offers mo
+          JOIN amazon_products ap ON ap.asin = mo.asin
+          JOIN ebay_listing el ON el.item_id = mo.item_id
+          WHERE {where_sql}
+        ),
+        ranked AS (
+          SELECT
+            *,
+            ROW_NUMBER() OVER (PARTITION BY asin ORDER BY ebay_price ASC, item_id ASC) AS rn
+          FROM filtered
+        )
+        SELECT
+          mo_updated_at,
+          validated_method,
+          validated_score,
+          image_distance,
+
+          asin,
+          amazon_title,
+          amazon_brand,
+          amazon_condition,
+          amazon_price,
+          amazon_currency,
+          amazon_bsr,
+          amazon_gtin,
+          amazon_is_prime,
+          amazon_fulfillment,
+          amazon_browse_node_name,
+          amazon_image_url,
+          amazon_url,
+
+          item_id,
+          ebay_title,
+          ebay_price,
+          ebay_currency,
+          ebay_condition,
+          ebay_seller,
+          ebay_url
+        FROM ranked
+        WHERE rn = 1
+        ORDER BY mo_updated_at DESC
+        LIMIT :lim OFFSET :off
+    """)
+
+    engine = make_engine()
+    with engine.begin() as conn:
+        total = int(conn.execute(sql_total, params).scalar() or 0)
+        rows = conn.execute(sql_items, params).fetchall()
+
+    items = []
+    for r in rows:
+        items.append(MatchItem(
+            created_at=r[0],
+            match_method=r[1],
+            match_score=float(r[2]),
+            image_distance=r[3],
+
+            asin=r[4],
+            amazon_title=r[5],
+            amazon_brand=r[6],
+            amazon_condition=r[7],
+            amazon_price=float(r[8]) if r[8] is not None else None,
+            amazon_currency=r[9],
+            amazon_bsr=int(r[10]) if r[10] is not None else None,
+            amazon_gtin=r[11],
+            amazon_is_prime=int(r[12]) if r[12] is not None else None,
+            amazon_fulfillment=r[13],
+            amazon_browse_node_name=r[14],
+            amazon_image_url=r[15],
+            amazon_url=r[16],
+
+            item_id=r[17],
+            ebay_title=r[18],
+            ebay_price=float(r[19]) if r[19] is not None else None,
+            ebay_currency=r[20],
+            ebay_condition=r[21],
+            ebay_seller=r[22],
+            ebay_url=r[23],
+        ))
+
+    return MatchListResponse(page=page, page_size=page_size, total=total, items=items)
