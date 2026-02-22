@@ -8,7 +8,7 @@ from sqlalchemy import text
 from lib.config import make_engine
 from api.models import MatchListResponse, MatchItem
 
-app = FastAPI(title="miner-ecom API", version="0.4.0")
+app = FastAPI(title="miner-ecom API", version="0.4.1")
 
 # Regex mais robusta (pega "Movies & TV", "Blu Ray", "Video Games", etc.)
 DEFAULT_MEDIA_REGEX = r"(movie|movies|dvd|blu(\s|-)?ray|book|books|kindle|music|cd|vinyl|video\s?game|video\s?games|tv)"
@@ -25,15 +25,15 @@ def health() -> Dict[str, Any]:
 
 @app.get("/matches", response_model=MatchListResponse)
 def list_matches(
-    # paginação
+    # Paginação
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
 
-    # regras de distância
+    # Regras de distância
     max_image_distance: int = Query(8, ge=0, le=20),          # para métodos não-GTIN (IMAGE)
     gtin_max_dist: int = Query(15, ge=0, le=40),              # para GTIN quando há imagem
 
-    # filtros Amazon (DB-first)
+    # Filtros Amazon (DB-first)
     keyword: Optional[str] = None,
     source_root_name: Optional[str] = None,
     source_child_name: Optional[str] = None,
@@ -43,15 +43,15 @@ def list_matches(
     amazon_fulfillment: Optional[str] = None,                 # ANY/FBA/FBM ou valor exato do DB
     prime_only: Optional[int] = Query(None, ge=0, le=1),       # 1 = só Prime
 
-    # filtros eBay (DB-first)
+    # Filtros eBay (DB-first)
     ebay_price_min: Optional[float] = None,
     ebay_price_max: Optional[float] = None,
     ebay_condition: Optional[str] = None,                     # ANY/NEW/USED/REFURB ou valor exato
 
-    # ordenação (depois de escolher a oferta mais barata por ASIN)
-    sort: str = Query("recent"),                              # recent|spread_desc|spread_pct_desc|ebay_price_asc|amazon_bsr_asc|match_score_desc
+    # Ordenação (depois de escolher a oferta mais barata por ASIN)
+    sort: str = Query("recent"),  # recent|spread_desc|spread_pct_desc|ebay_price_asc|amazon_bsr_asc|match_score_desc
 
-    # controle: mostrar mídia?
+    # Controle: mostrar mídia?
     include_media: int = Query(0, ge=0, le=1),
 ):
     page_size = _clamp_int(page_size, 1, 200)
@@ -67,22 +67,25 @@ def list_matches(
     }
 
     # Regra final de validade:
-    # - GTIN: aceita se dist for NULL (não tem imagem) OU dist <= gtin_max_dist
-    # - NÃO-GTIN (IMAGE): aceita somente se dist existe e dist <= max_dist
+    # - Se método for GTIN (ou método NULL mas Amazon tem GTIN):
+    #     passa se dist é NULL (sem imagem) OU dist <= gtin_max_dist
+    # - Caso contrário (IMAGE):
+    #     passa somente se dist existe e dist <= max_image_distance
     where.append(
-    "("
-    " ("
-    "   (mo.validated_method = 'GTIN' OR (mo.validated_method IS NULL AND ap.gtin IS NOT NULL))"
-    "   AND (mo.image_distance IS NULL OR mo.image_distance <= :gtin_max_dist)"
-    " )"
-    " OR "
-    " ("
-    "   (mo.validated_method <> 'GTIN' OR (mo.validated_method IS NULL AND ap.gtin IS NULL))"
-    "   AND mo.image_distance IS NOT NULL AND mo.image_distance <= :max_dist"
-    " )"
-    ")"
-)
-    # filtro default: esconder mídia por REGEXP
+        "("
+        " ("
+        "   (mo.validated_method = 'GTIN' OR (mo.validated_method IS NULL AND ap.gtin IS NOT NULL))"
+        "   AND (mo.image_distance IS NULL OR mo.image_distance <= :gtin_max_dist)"
+        " )"
+        " OR "
+        " ("
+        "   (mo.validated_method <> 'GTIN' OR (mo.validated_method IS NULL AND ap.gtin IS NULL))"
+        "   AND mo.image_distance IS NOT NULL AND mo.image_distance <= :max_dist"
+        " )"
+        ")"
+    )
+
+    # Default: esconder mídia por REGEXP
     if include_media != 1:
         where.append("(ap.browse_node_name IS NULL OR LOWER(ap.browse_node_name) NOT REGEXP :media_re)")
 
@@ -181,7 +184,7 @@ def list_matches(
         "amazon_bsr_asc": "amazon_bsr ASC, created_at DESC",
         "match_score_desc": "match_score DESC, created_at DESC",
     }
-    order_by = sort_map.get(sort.strip().lower(), sort_map["recent"])
+    order_by = sort_map.get((sort or "").strip().lower(), sort_map["recent"])
 
     sql_total = text(f"""
         SELECT COUNT(DISTINCT mo.asin)
