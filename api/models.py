@@ -27,6 +27,13 @@ class MatchItem(BaseModel):
     amazon_image_url: Optional[str] = None
     amazon_url: Optional[str] = None
 
+    # Categoria/Subcategoria (do DB)
+    amazon_category_root: Optional[str] = None
+    amazon_category_child: Optional[str] = None
+
+    # Vendedor Amazon (se você ainda não tem no DB, vem NULL)
+    amazon_seller: Optional[str] = None
+
     item_id: str
     ebay_title: Optional[str] = None
     ebay_price: Optional[float] = None
@@ -35,7 +42,7 @@ class MatchItem(BaseModel):
     ebay_seller: Optional[str] = None
     ebay_url: Optional[str] = None
 
-    # Arbitragem (Keepa-like): Amazon - eBay
+    # Arbitragem
     spread: Optional[float] = None
     spread_pct: Optional[float] = None
 

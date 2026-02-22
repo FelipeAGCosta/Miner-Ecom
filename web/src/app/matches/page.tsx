@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -37,6 +37,10 @@ type MatchItem = {
   amazon_image_url: string | null;
   amazon_url: string | null;
 
+  amazon_category_root?: string | null;
+  amazon_category_child?: string | null;
+  amazon_seller?: string | null;
+
   item_id: string;
   ebay_title: string | null;
   ebay_price: number | null;
@@ -56,54 +60,111 @@ type MatchesResponse = {
   items: MatchItem[];
 };
 
-function toNumberOrNull(v: string): number | null {
+type Filters = {
+  palavraChave: string;
+  categoria: string;
+  subcategoria: string;
+
+  precoAmazonMin: string;
+  precoAmazonMax: string;
+  somentePrime: boolean;
+  logisticaAmazon: "QUALQUER" | "FBA" | "FBM";
+  condicaoAmazon: "QUALQUER" | "NOVO" | "USADO" | "RECONDICIONADO" | "DESCONHECIDA";
+
+  precoEbayMin: string;
+  precoEbayMax: string;
+  condicaoEbay: "QUALQUER" | "NOVO" | "USADO" | "RECONDICIONADO";
+
+  ordenarPor: "recent" | "spread_desc" | "spread_pct_desc" | "ebay_price_asc" | "amazon_bsr_asc" | "match_score_desc";
+};
+
+const PAGE_SIZE = 50;
+
+function parseNumberOrNull(v: string): number | null {
   const s = (v ?? "").trim();
   if (!s) return null;
   const n = Number(s.replace(",", "."));
   return Number.isFinite(n) ? n : null;
 }
 
-function money(n: number | null, cur: string | null) {
-  if (n === null || n === undefined) return "-";
-  const c = cur || "USD";
-  return `${c} ${n.toFixed(2)}`;
+function fmtUSD(n: number | null, currency: string | null) {
+  if (n == null) return "—";
+  const cur = currency || "USD";
+  try {
+    return new Intl.NumberFormat("pt-BR", { style: "currency", currency: cur }).format(n);
+  } catch {
+    return `${cur} ${n.toFixed(2)}`;
+  }
+}
+
+function mapAmazonCondPtToApi(v: Filters["condicaoAmazon"]): string | null {
+  if (v === "QUALQUER") return null;
+  if (v === "NOVO") return "NEW";
+  if (v === "USADO") return "USED";
+  if (v === "RECONDICIONADO") return "REFURB";
+  if (v === "DESCONHECIDA") return "UNKNOWN";
+  return null;
+}
+
+function mapEbayCondPtToApi(v: Filters["condicaoEbay"]): string | null {
+  if (v === "QUALQUER") return null;
+  if (v === "NOVO") return "NEW";
+  if (v === "USADO") return "USED";
+  if (v === "RECONDICIONADO") return "REFURB";
+  return null;
+}
+
+function prettyCondPt(v: string | null) {
+  const s = (v || "").toLowerCase();
+  if (!s) return "—";
+  if (s.startsWith("new")) return "Novo";
+  if (s.startsWith("used")) return "Usado";
+  if (s.includes("refurb") || s.includes("renew") || s.includes("recond")) return "Recondicionado";
+  if (s === "new") return "Novo";
+  if (s === "used") return "Usado";
+  return v!;
+}
+
+function amazonFbaFbmLabel(v: string | null) {
+  const s = (v || "").toUpperCase().trim();
+  if (!s) return "—";
+  if (["FBA", "AMAZON", "AFN"].includes(s)) return "FBA";
+  if (["FBM", "MFN", "MERCHANT", "SELLER"].includes(s)) return "FBM";
+  return s; // fallback
+}
+
+function cn(...classes: Array<string | false | null | undefined>) {
+  return classes.filter(Boolean).join(" ");
 }
 
 export default function MatchesPage() {
-  // paginação
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
 
-  // regras de qualidade (gates)
-  const [gtinMaxDist, setGtinMaxDist] = useState(15);
-  const [maxImageDistance, setMaxImageDistance] = useState(8);
+  const [filters, setFilters] = useState<Filters>({
+    palavraChave: "",
+    categoria: "",
+    subcategoria: "",
 
-  // filtros (baseado no Streamlit)
-  const [keyword, setKeyword] = useState("");
-  const [amazonPriceMin, setAmazonPriceMin] = useState<string>("");
-  const [amazonPriceMax, setAmazonPriceMax] = useState<string>("");
-  const [primeOnly, setPrimeOnly] = useState(false);
-  const [amazonFulfillment, setAmazonFulfillment] = useState<"ANY" | "FBA" | "FBM">("ANY");
-  const [amazonCondition, setAmazonCondition] = useState<"ANY" | "NEW" | "USED" | "REFURB" | "UNKNOWN">("ANY");
-  const [sourceRootName, setSourceRootName] = useState<string>("");
-  const [sourceChildName, setSourceChildName] = useState<string>("");
+    precoAmazonMin: "",
+    precoAmazonMax: "",
+    somentePrime: false,
+    logisticaAmazon: "QUALQUER",
+    condicaoAmazon: "QUALQUER",
 
-  const [ebayPriceMin, setEbayPriceMin] = useState<string>("");
-  const [ebayPriceMax, setEbayPriceMax] = useState<string>("");
-  const [ebayCondition, setEbayCondition] = useState<"ANY" | "NEW" | "USED" | "REFURB">("ANY");
+    precoEbayMin: "",
+    precoEbayMax: "",
+    condicaoEbay: "QUALQUER",
 
-  const [includeMedia, setIncludeMedia] = useState(false);
+    ordenarPor: "recent",
+  });
 
-  const [sort, setSort] = useState<
-    "recent" | "spread_desc" | "spread_pct_desc" | "ebay_price_asc" | "amazon_bsr_asc" | "match_score_desc"
-  >("recent");
+  const [applied, setApplied] = useState<Filters>(filters);
 
-  // state de dados
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<MatchesResponse>({
     page: 1,
-    page_size: 25,
+    page_size: PAGE_SIZE,
     total: 0,
     items: [],
   });
@@ -111,66 +172,48 @@ export default function MatchesPage() {
   const query = useMemo(() => {
     const qs = new URLSearchParams();
     qs.set("page", String(page));
-    qs.set("page_size", String(pageSize));
+    qs.set("page_size", String(PAGE_SIZE));
 
-    qs.set("gtin_max_dist", String(gtinMaxDist));
-    qs.set("max_image_distance", String(maxImageDistance));
+    // padrões internos (usuário não controla)
+    qs.set("gtin_max_dist", "15");
+    qs.set("max_image_distance", "8");
 
-    const apMin = toNumberOrNull(amazonPriceMin);
-    const apMax = toNumberOrNull(amazonPriceMax);
-    const ebMin = toNumberOrNull(ebayPriceMin);
-    const ebMax = toNumberOrNull(ebayPriceMax);
+    // filtros
+    const apMin = parseNumberOrNull(applied.precoAmazonMin);
+    const apMax = parseNumberOrNull(applied.precoAmazonMax);
+    const ebMin = parseNumberOrNull(applied.precoEbayMin);
+    const ebMax = parseNumberOrNull(applied.precoEbayMax);
 
-    if (keyword.trim()) qs.set("keyword", keyword.trim());
-    if (sourceRootName.trim()) qs.set("source_root_name", sourceRootName.trim());
-    if (sourceChildName.trim()) qs.set("source_child_name", sourceChildName.trim());
+    if (applied.palavraChave.trim()) qs.set("keyword", applied.palavraChave.trim());
+    if (applied.categoria.trim()) qs.set("source_root_name", applied.categoria.trim());
+    if (applied.subcategoria.trim()) qs.set("source_child_name", applied.subcategoria.trim());
 
-    if (apMin !== null) qs.set("amazon_price_min", String(apMin));
-    if (apMax !== null) qs.set("amazon_price_max", String(apMax));
+    if (apMin != null) qs.set("amazon_price_min", String(apMin));
+    if (apMax != null) qs.set("amazon_price_max", String(apMax));
 
-    if (primeOnly) qs.set("prime_only", "1");
-    if (amazonFulfillment !== "ANY") qs.set("amazon_fulfillment", amazonFulfillment);
-    if (amazonCondition !== "ANY") qs.set("amazon_condition", amazonCondition);
+    if (applied.somentePrime) qs.set("prime_only", "1");
+    if (applied.logisticaAmazon !== "QUALQUER") qs.set("amazon_fulfillment", applied.logisticaAmazon);
 
-    if (ebMin !== null) qs.set("ebay_price_min", String(ebMin));
-    if (ebMax !== null) qs.set("ebay_price_max", String(ebMax));
-    if (ebayCondition !== "ANY") qs.set("ebay_condition", ebayCondition);
+    const ac = mapAmazonCondPtToApi(applied.condicaoAmazon);
+    if (ac) qs.set("amazon_condition", ac);
 
-    if (includeMedia) qs.set("include_media", "1");
+    if (ebMin != null) qs.set("ebay_price_min", String(ebMin));
+    if (ebMax != null) qs.set("ebay_price_max", String(ebMax));
 
-    qs.set("sort", sort);
+    const ec = mapEbayCondPtToApi(applied.condicaoEbay);
+    if (ec) qs.set("ebay_condition", ec);
+
+    qs.set("sort", applied.ordenarPor);
 
     return qs.toString();
-  }, [
-    page,
-    pageSize,
-    gtinMaxDist,
-    maxImageDistance,
-    keyword,
-    sourceRootName,
-    sourceChildName,
-    amazonPriceMin,
-    amazonPriceMax,
-    primeOnly,
-    amazonFulfillment,
-    amazonCondition,
-    ebayPriceMin,
-    ebayPriceMax,
-    ebayCondition,
-    includeMedia,
-    sort,
-  ]);
+  }, [applied, page]);
 
   async function load() {
     setLoading(true);
     setError(null);
-
     try {
       const r = await fetch(`/api/matches?${query}`, { cache: "no-store" });
-      if (!r.ok) {
-        const t = await r.text();
-        throw new Error(`HTTP ${r.status}: ${t}`);
-      }
+      if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
       const json = (await r.json()) as MatchesResponse;
       setData(json);
     } catch (e: any) {
@@ -186,447 +229,453 @@ export default function MatchesPage() {
   }, [query]);
 
   const total = data.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const items = data.items ?? [];
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  const canPrev = page > 1;
+  const canNext = page < totalPages;
+
+  function applyFilters() {
+    setPage(1);
+    setApplied(filters);
+  }
+
+  function clearFilters() {
+    const reset: Filters = {
+      palavraChave: "",
+      categoria: "",
+      subcategoria: "",
+
+      precoAmazonMin: "",
+      precoAmazonMax: "",
+      somentePrime: false,
+      logisticaAmazon: "QUALQUER",
+      condicaoAmazon: "QUALQUER",
+
+      precoEbayMin: "",
+      precoEbayMax: "",
+      condicaoEbay: "QUALQUER",
+
+      ordenarPor: "recent",
+    };
+    setPage(1);
+    setFilters(reset);
+    setApplied(reset);
+  }
 
   return (
-    <div className="min-h-screen p-6">
-      <div className="mx-auto max-w-7xl">
-        <div className="mb-6 flex items-center justify-between gap-4">
+    <div className="min-h-screen overflow-x-hidden bg-[radial-gradient(1200px_circle_at_20%_0%,rgba(147,51,234,0.25),transparent_55%),radial-gradient(900px_circle_at_80%_10%,rgba(34,211,238,0.12),transparent_55%),radial-gradient(700px_circle_at_60%_90%,rgba(99,102,241,0.12),transparent_55%)] bg-[#06010a] text-slate-100">
+      <div className="mx-auto max-w-7xl px-4 py-6">
+        {/* Header */}
+        <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div>
-            <h1 className="text-2xl font-semibold">Matches (Amazon ↔ eBay)</h1>
-            <p className="text-sm text-muted-foreground">
-              Oferta mais barata do eBay por ASIN (DB-first, confiável).
-            </p>
+            <h1 className="text-2xl font-semibold tracking-tight">
+              Mineração de Produtos MinerEcom
+            </h1>
           </div>
 
           <div className="flex items-center gap-2">
-            <Badge variant="secondary">total: {total}</Badge>
-            <Button variant="outline" onClick={load} disabled={loading}>
-              Recarregar
-            </Button>
+            <Badge className="border border-white/10 bg-white/5 text-slate-100">
+              Encontrados: {total}
+            </Badge>
+            <Badge className="border border-white/10 bg-white/5 text-slate-100">
+              Página {page} / {totalPages}
+            </Badge>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[340px_1fr]">
-          {/* Sidebar */}
-          <Card className="h-fit">
-            <CardHeader>
-              <CardTitle>Filtros</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {/* keyword */}
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[340px_1fr]">
+          {/* Sidebar filtros */}
+          <Card className="border-white/10 bg-white/5 backdrop-blur-xl">
+            <CardContent className="space-y-4 p-4">
+              <div className="text-sm font-semibold text-slate-100">Filtros</div>
+              <Separator className="bg-white/10" />
+
               <div className="space-y-2">
-                <div className="text-sm font-medium">keyword</div>
+                <div className="text-xs text-slate-300">Palavra-chave</div>
                 <Input
-                  value={keyword}
-                  onChange={(e) => {
-                    setPage(1);
-                    setKeyword(e.target.value);
-                  }}
+                  value={filters.palavraChave}
+                  onChange={(e) => setFilters((f) => ({ ...f, palavraChave: e.target.value }))}
                   placeholder="ex: honda, sifangke..."
+                  className="border-white/10 bg-white/5 text-slate-100 placeholder:text-slate-400"
                 />
               </div>
 
-              <Separator />
-
-              {/* categoria/subcategoria */}
               <div className="space-y-2">
-                <div className="text-sm font-medium">Categoria (root)</div>
+                <div className="text-xs text-slate-300">Categoria</div>
                 <Input
-                  value={sourceRootName}
-                  onChange={(e) => {
-                    setPage(1);
-                    setSourceRootName(e.target.value);
-                  }}
+                  value={filters.categoria}
+                  onChange={(e) => setFilters((f) => ({ ...f, categoria: e.target.value }))}
                   placeholder="ex: Casa & Cozinha"
+                  className="border-white/10 bg-white/5 text-slate-100 placeholder:text-slate-400"
                 />
               </div>
 
               <div className="space-y-2">
-                <div className="text-sm font-medium">Subcategoria (child)</div>
+                <div className="text-xs text-slate-300">Subcategoria</div>
                 <Input
-                  value={sourceChildName}
-                  onChange={(e) => {
-                    setPage(1);
-                    setSourceChildName(e.target.value);
-                  }}
+                  value={filters.subcategoria}
+                  onChange={(e) => setFilters((f) => ({ ...f, subcategoria: e.target.value }))}
                   placeholder="ex: Utensílios de Cozinha"
+                  className="border-white/10 bg-white/5 text-slate-100 placeholder:text-slate-400"
                 />
               </div>
 
-              <Separator />
+              <Separator className="bg-white/10" />
 
               {/* Amazon */}
+              <div className="text-xs font-semibold text-slate-200">Amazon</div>
+
               <div className="space-y-2">
-                <div className="text-sm font-medium">Preço Amazon (min/max)</div>
+                <div className="text-xs text-slate-300">Preço (mín / máx)</div>
                 <div className="grid grid-cols-2 gap-2">
                   <Input
                     inputMode="decimal"
-                    value={amazonPriceMin}
-                    onChange={(e) => {
-                      setPage(1);
-                      setAmazonPriceMin(e.target.value);
-                    }}
-                    placeholder="min"
+                    value={filters.precoAmazonMin}
+                    onChange={(e) => setFilters((f) => ({ ...f, precoAmazonMin: e.target.value }))}
+                    placeholder="mín"
+                    className="border-white/10 bg-white/5 text-slate-100 placeholder:text-slate-400"
                   />
                   <Input
                     inputMode="decimal"
-                    value={amazonPriceMax}
-                    onChange={(e) => {
-                      setPage(1);
-                      setAmazonPriceMax(e.target.value);
-                    }}
-                    placeholder="max"
+                    value={filters.precoAmazonMax}
+                    onChange={(e) => setFilters((f) => ({ ...f, precoAmazonMax: e.target.value }))}
+                    placeholder="máx"
+                    className="border-white/10 bg-white/5 text-slate-100 placeholder:text-slate-400"
                   />
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              <label className="flex items-center gap-2 text-sm text-slate-200">
                 <input
                   type="checkbox"
-                  checked={primeOnly}
-                  onChange={(e) => {
-                    setPage(1);
-                    setPrimeOnly(e.target.checked);
-                  }}
+                  checked={filters.somentePrime}
+                  onChange={(e) => setFilters((f) => ({ ...f, somentePrime: e.target.checked }))}
                 />
-                <span className="text-sm">Somente Prime</span>
-              </div>
+                Somente Prime
+              </label>
 
               <div className="space-y-2">
-                <div className="text-sm font-medium">Fulfillment (Amazon)</div>
+                <div className="text-xs text-slate-300">Logística</div>
                 <select
-                  className="w-full rounded-md border px-3 py-2 text-sm"
-                  value={amazonFulfillment}
-                  onChange={(e) => {
-                    setPage(1);
-                    setAmazonFulfillment(e.target.value as any);
-                  }}
+                  className="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100"
+                  value={filters.logisticaAmazon}
+                  onChange={(e) => setFilters((f) => ({ ...f, logisticaAmazon: e.target.value as any }))}
                 >
-                  <option value="ANY">Qualquer</option>
-                  <option value="FBA">FBA (Amazon)</option>
-                  <option value="FBM">FBM (Seller)</option>
+                  <option value="QUALQUER">Qualquer</option>
+                  <option value="FBA">FBA</option>
+                  <option value="FBM">FBM</option>
                 </select>
               </div>
 
               <div className="space-y-2">
-                <div className="text-sm font-medium">Condição (Amazon)</div>
+                <div className="text-xs text-slate-300">Condição</div>
                 <select
-                  className="w-full rounded-md border px-3 py-2 text-sm"
-                  value={amazonCondition}
-                  onChange={(e) => {
-                    setPage(1);
-                    setAmazonCondition(e.target.value as any);
-                  }}
+                  className="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100"
+                  value={filters.condicaoAmazon}
+                  onChange={(e) => setFilters((f) => ({ ...f, condicaoAmazon: e.target.value as any }))}
                 >
-                  <option value="ANY">Qualquer</option>
-                  <option value="NEW">Novo</option>
-                  <option value="USED">Usado</option>
-                  <option value="REFURB">Recondicionado</option>
-                  <option value="UNKNOWN">Desconhecida</option>
+                  <option value="QUALQUER">Qualquer</option>
+                  <option value="NOVO">Novo</option>
+                  <option value="USADO">Usado</option>
+                  <option value="RECONDICIONADO">Recondicionado</option>
+                  <option value="DESCONHECIDA">Desconhecida</option>
                 </select>
               </div>
 
-              <Separator />
+              <Separator className="bg-white/10" />
 
               {/* eBay */}
+              <div className="text-xs font-semibold text-slate-200">eBay</div>
+
               <div className="space-y-2">
-                <div className="text-sm font-medium">Preço eBay (min/max)</div>
+                <div className="text-xs text-slate-300">Preço (mín / máx)</div>
                 <div className="grid grid-cols-2 gap-2">
                   <Input
                     inputMode="decimal"
-                    value={ebayPriceMin}
-                    onChange={(e) => {
-                      setPage(1);
-                      setEbayPriceMin(e.target.value);
-                    }}
-                    placeholder="min"
+                    value={filters.precoEbayMin}
+                    onChange={(e) => setFilters((f) => ({ ...f, precoEbayMin: e.target.value }))}
+                    placeholder="mín"
+                    className="border-white/10 bg-white/5 text-slate-100 placeholder:text-slate-400"
                   />
                   <Input
                     inputMode="decimal"
-                    value={ebayPriceMax}
-                    onChange={(e) => {
-                      setPage(1);
-                      setEbayPriceMax(e.target.value);
-                    }}
-                    placeholder="max"
+                    value={filters.precoEbayMax}
+                    onChange={(e) => setFilters((f) => ({ ...f, precoEbayMax: e.target.value }))}
+                    placeholder="máx"
+                    className="border-white/10 bg-white/5 text-slate-100 placeholder:text-slate-400"
                   />
                 </div>
               </div>
 
               <div className="space-y-2">
-                <div className="text-sm font-medium">Condição (eBay)</div>
+                <div className="text-xs text-slate-300">Condição</div>
                 <select
-                  className="w-full rounded-md border px-3 py-2 text-sm"
-                  value={ebayCondition}
-                  onChange={(e) => {
-                    setPage(1);
-                    setEbayCondition(e.target.value as any);
-                  }}
+                  className="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100"
+                  value={filters.condicaoEbay}
+                  onChange={(e) => setFilters((f) => ({ ...f, condicaoEbay: e.target.value as any }))}
                 >
-                  <option value="ANY">Qualquer</option>
-                  <option value="NEW">Novo</option>
-                  <option value="USED">Usado</option>
-                  <option value="REFURB">Recondicionado</option>
+                  <option value="QUALQUER">Qualquer</option>
+                  <option value="NOVO">Novo</option>
+                  <option value="USADO">Usado</option>
+                  <option value="RECONDICIONADO">Recondicionado</option>
                 </select>
               </div>
 
-              <Separator />
-
-              {/* gates */}
-              <div className="space-y-2">
-                <div className="text-sm font-medium">gtin_max_dist</div>
-                <Input
-                  type="number"
-                  min={0}
-                  max={64}
-                  value={gtinMaxDist}
-                  onChange={(e) => {
-                    setPage(1);
-                    setGtinMaxDist(Number(e.target.value || 15));
-                  }}
-                />
-                <p className="text-xs text-muted-foreground">
-                  GTIN só passa se a imagem bater (distância ≤ limite).
-                </p>
-              </div>
+              <Separator className="bg-white/10" />
 
               <div className="space-y-2">
-                <div className="text-sm font-medium">max_image_distance</div>
-                <Input
-                  type="number"
-                  min={0}
-                  max={64}
-                  value={maxImageDistance}
-                  onChange={(e) => {
-                    setPage(1);
-                    setMaxImageDistance(Number(e.target.value || 8));
-                  }}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Gate do match por imagem (quanto menor, mais rígido).
-                </p>
-              </div>
-
-              <Separator />
-
-              {/* sort */}
-              <div className="space-y-2">
-                <div className="text-sm font-medium">Ordenar por</div>
+                <div className="text-xs text-slate-300">Ordenar por</div>
                 <select
-                  className="w-full rounded-md border px-3 py-2 text-sm"
-                  value={sort}
-                  onChange={(e) => {
-                    setPage(1);
-                    setSort(e.target.value as any);
-                  }}
+                  className="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-100"
+                  value={filters.ordenarPor}
+                  onChange={(e) => setFilters((f) => ({ ...f, ordenarPor: e.target.value as any }))}
                 >
                   <option value="recent">Mais recentes</option>
-                  <option value="spread_desc">Maior spread ($)</option>
-                  <option value="spread_pct_desc">Maior spread (%)</option>
+                  <option value="spread_desc">Maior diferença ($)</option>
+                  <option value="spread_pct_desc">Maior diferença (%)</option>
                   <option value="ebay_price_asc">eBay mais barato</option>
                   <option value="amazon_bsr_asc">Melhor BSR (menor)</option>
                   <option value="match_score_desc">Maior score</option>
                 </select>
               </div>
 
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={includeMedia}
-                  onChange={(e) => {
-                    setPage(1);
-                    setIncludeMedia(e.target.checked);
-                  }}
-                />
-                <span className="text-sm">Incluir mídia (Movies/Books/etc.)</span>
-              </div>
-
-              <Separator />
-
-              {/* paginação */}
-              <div className="space-y-2">
-                <div className="text-sm font-medium">page_size</div>
-                <Input
-                  type="number"
-                  min={5}
-                  max={200}
-                  value={pageSize}
-                  onChange={(e) => {
-                    setPage(1);
-                    setPageSize(Number(e.target.value || 25));
-                  }}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <div className="text-sm font-medium">Paginação</div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    disabled={loading || page <= 1}
-                  >
-                    ←
-                  </Button>
-                  <div className="text-sm">
-                    Página <b>{page}</b> / {totalPages}
-                  </div>
-                  <Button
-                    variant="outline"
-                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                    disabled={loading || page >= totalPages}
-                  >
-                    →
-                  </Button>
-                </div>
+              <div className="grid grid-cols-2 gap-2 pt-2">
+                <Button
+                  onClick={applyFilters}
+                  disabled={loading}
+                  className="bg-violet-600/80 hover:bg-violet-600 text-white"
+                >
+                  Aplicar
+                </Button>
+                <Button
+                  onClick={clearFilters}
+                  disabled={loading}
+                  variant="outline"
+                  className="border-white/10 bg-white/5 text-slate-100 hover:bg-white/10"
+                >
+                  Limpar
+                </Button>
               </div>
 
               {error && (
-                <div className="rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">
+                <div className="rounded-md border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-200">
                   {error}
                 </div>
               )}
             </CardContent>
           </Card>
 
-          {/* Main */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Resultados</CardTitle>
-            </CardHeader>
+          {/* Conteúdo */}
+          <Card className="min-w-0 border-white/10 bg-white/5 backdrop-blur-xl">
+            <CardContent className="p-0">
+              <div className="flex items-center justify-between gap-3 px-4 py-3">
+                <div className="text-sm font-semibold text-slate-100">Produtos</div>
 
-            <CardContent>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    className="border-white/10 bg-white/5 text-slate-100 hover:bg-white/10"
+                    disabled={!canPrev || loading}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  >
+                    ←
+                  </Button>
+                  <div className="text-xs text-slate-300">
+                    Página <b className="text-slate-100">{page}</b> / {totalPages}
+                  </div>
+                  <Button
+                    variant="outline"
+                    className="border-white/10 bg-white/5 text-slate-100 hover:bg-white/10"
+                    disabled={!canNext || loading}
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  >
+                    →
+                  </Button>
+                </div>
+              </div>
+
+              <Separator className="bg-white/10" />
+
               {loading ? (
-                <div className="text-sm text-muted-foreground">Carregando…</div>
+                <div className="px-4 py-6 text-sm text-slate-300">Carregando…</div>
               ) : items.length === 0 ? (
-                <div className="text-sm text-muted-foreground">
+                <div className="px-4 py-10 text-sm text-slate-300">
                   Nenhum resultado com os filtros atuais.
                 </div>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-[90px]">Imagem</TableHead>
-                      <TableHead>Produto</TableHead>
-                      <TableHead className="w-[140px]">Amazon</TableHead>
-                      <TableHead className="w-[140px]">eBay</TableHead>
-                      <TableHead className="w-[160px]">Spread</TableHead>
-                      <TableHead className="w-[180px]">Gates</TableHead>
-                      <TableHead className="w-[160px]">Links</TableHead>
-                    </TableRow>
-                  </TableHeader>
+                <div className="min-w-0 overflow-x-hidden">
+                  <Table className="w-full table-fixed">
+                    <TableHeader>
+                      <TableRow className="border-white/10">
+                        <TableHead className="w-[420px] text-slate-200">Produto</TableHead>
+                        <TableHead className="w-[240px] text-slate-200">Amazon</TableHead>
+                        <TableHead className="w-[240px] text-slate-200">eBay</TableHead>
+                        <TableHead className="w-[140px] text-slate-200">Links</TableHead>
+                      </TableRow>
+                    </TableHeader>
 
-                  <TableBody>
-                    {items.map((it) => {
-                      return (
-                        <TableRow key={`${it.asin}-${it.item_id}`}>
-                          <TableCell>
-                            {it.amazon_image_url ? (
-                              <img
-                                src={it.amazon_image_url}
-                                alt={it.amazon_title ?? it.asin}
-                                className="h-16 w-16 rounded-md object-cover"
-                                loading="lazy"
-                                referrerPolicy="no-referrer"
-                              />
-                            ) : (
-                              <div className="h-16 w-16 rounded-md bg-muted" />
-                            )}
-                          </TableCell>
+                    <TableBody>
+                      {items.map((it) => {
+                        const prime = it.amazon_is_prime === 1;
+                        const fb = amazonFbaFbmLabel(it.amazon_fulfillment);
+                        const cat = it.amazon_category_root || "—";
+                        const sub = it.amazon_category_child || "—";
 
-                          <TableCell>
-                            <div className="space-y-1">
-                              <div className="text-sm font-medium leading-snug">
-                                {it.amazon_title ?? it.ebay_title ?? it.asin}
+                        return (
+                          <TableRow
+                            key={`${it.asin}-${it.item_id}`}
+                            className="border-white/10 transition-colors hover:bg-white/5"
+                          >
+                            {/* Produto */}
+                            <TableCell className="py-2 align-top">
+                              <div className="flex min-w-0 gap-3">
+                                <div className="shrink-0">
+                                  {it.amazon_image_url ? (
+                                    <img
+                                      src={it.amazon_image_url}
+                                      alt={it.amazon_title ?? it.asin}
+                                      className="h-11 w-11 rounded-md object-cover ring-1 ring-white/10"
+                                      loading="lazy"
+                                      referrerPolicy="no-referrer"
+                                    />
+                                  ) : (
+                                    <div className="h-11 w-11 rounded-md bg-white/5 ring-1 ring-white/10" />
+                                  )}
+                                </div>
+
+                                <div className="min-w-0">
+                                  <div
+                                    className="truncate text-sm font-medium text-slate-100"
+                                    title={it.amazon_title ?? ""}
+                                  >
+                                    {it.amazon_title ?? it.ebay_title ?? it.asin}
+                                  </div>
+
+                                  <div className="mt-1 flex flex-wrap gap-2 text-xs text-slate-300">
+                                    <span>
+                                      ASIN: <b className="text-slate-100">{it.asin}</b>
+                                    </span>
+                                    <span>
+                                      Marca: <b className="text-slate-100">{it.amazon_brand ?? "—"}</b>
+                                    </span>
+                                    <span>
+                                      BSR: <b className="text-slate-100">{it.amazon_bsr ?? "—"}</b>
+                                    </span>
+                                  </div>
+
+                                  <div className="mt-1 text-xs text-slate-300">
+                                    Categoria: <b className="text-slate-100">{cat}</b> • Sub:{" "}
+                                    <b className="text-slate-100">{sub}</b>
+                                  </div>
+                                </div>
                               </div>
-                              <div className="text-xs text-muted-foreground">
-                                ASIN: <b>{it.asin}</b> • eBay: <b>{it.item_id}</b>
+                            </TableCell>
+
+                            {/* Amazon */}
+                            <TableCell className="py-2 align-top">
+                              <div className="space-y-1 text-xs">
+                                <div className="text-sm font-semibold text-slate-100">
+                                  {fmtUSD(it.amazon_price, it.amazon_currency)}
+                                </div>
+
+                                <div className="text-slate-300">
+                                  Condição: <b className="text-slate-100">{prettyCondPt(it.amazon_condition)}</b>
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-2">
+                                  {prime ? (
+                                    <Badge className="border border-emerald-400/20 bg-emerald-400/10 text-emerald-200">
+                                      PRIME
+                                    </Badge>
+                                  ) : (
+                                    <Badge className="border border-white/10 bg-white/5 text-slate-200">
+                                      NÃO PRIME
+                                    </Badge>
+                                  )}
+
+                                  <Badge className="border border-white/10 bg-white/5 text-slate-200">
+                                    {fb}
+                                  </Badge>
+                                </div>
+
+                                <div className="text-slate-300">
+                                  Vendedor: <b className="text-slate-100">{it.amazon_seller ?? "—"}</b>
+                                </div>
                               </div>
-                              <div className="text-xs text-muted-foreground">
-                                {it.amazon_brand ? <>Marca: <b>{it.amazon_brand}</b></> : null}
-                                {it.amazon_browse_node_name ? <> • Node: <b>{it.amazon_browse_node_name}</b></> : null}
+                            </TableCell>
+
+                            {/* eBay */}
+                            <TableCell className="py-2 align-top">
+                              <div className="space-y-1 text-xs">
+                                <div className="text-sm font-semibold text-slate-100">
+                                  {fmtUSD(it.ebay_price, it.ebay_currency)}
+                                </div>
+
+                                <div className="text-slate-300">
+                                  Condição: <b className="text-slate-100">{prettyCondPt(it.ebay_condition)}</b>
+                                </div>
+
+                                <div className="text-slate-300">
+                                  Vendedor: <b className="text-slate-100">{it.ebay_seller ?? "—"}</b>
+                                </div>
                               </div>
-                            </div>
-                          </TableCell>
+                            </TableCell>
 
-                          <TableCell>
-                            <div className="text-sm font-semibold">
-                              {money(it.amazon_price, it.amazon_currency)}
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                              {it.amazon_condition ?? "—"} • {it.amazon_is_prime === 1 ? "Prime" : "—"} • {it.amazon_fulfillment ?? "—"}
-                            </div>
-                          </TableCell>
+                            {/* Links */}
+                            <TableCell className="py-2 align-top">
+                              <div className="flex flex-col gap-2">
+                                <Button
+                                  asChild
+                                  variant="outline"
+                                  className="h-8 border-white/10 bg-white/5 px-2 text-xs text-slate-100 hover:bg-white/10"
+                                >
+                                  <Link href={it.amazon_url ?? "#"} target="_blank">
+                                    Amazon
+                                  </Link>
+                                </Button>
 
-                          <TableCell>
-                            <div className="text-sm font-semibold">
-                              {money(it.ebay_price, it.ebay_currency)}
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                              {it.ebay_condition ?? "—"} • {it.ebay_seller ? `seller: ${it.ebay_seller}` : ""}
-                            </div>
-                          </TableCell>
-
-                          <TableCell>
-                            <div className="text-sm font-semibold">
-                              {it.spread == null
-  ? "-"
-  : `${it.amazon_currency ?? it.ebay_currency ?? "USD"} ${Number(it.spread).toFixed(2)}`}
-
-{it.spread_pct == null
-  ? "-"
-  : `${Number(it.spread_pct).toFixed(2)}%`}
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                              {it.spread_pct == null
-  ? "-"
-  : `${Number(it.spread_pct).toFixed(2)}%`}
-                            </div>
-                          </TableCell>
-
-                          <TableCell>
-                            <div className="flex flex-wrap gap-2">
-                              <Badge variant="secondary">{it.match_method}</Badge>
-                              <Badge variant="outline">score: {it.match_score.toFixed(2)}</Badge>
-                              <Badge variant="outline">
-                                dist: {it.image_distance === null ? "null" : it.image_distance}
-                              </Badge>
-                            </div>
-                          </TableCell>
-
-                          <TableCell>
-                            <div className="flex flex-col gap-2">
-                              {it.amazon_url ? (
-                                <Link className="text-sm underline underline-offset-4" href={it.amazon_url} target="_blank">
-                                  Amazon
-                                </Link>
-                              ) : (
-                                <span className="text-sm text-muted-foreground">Amazon -</span>
-                              )}
-                              {it.ebay_url ? (
-                                <Link className="text-sm underline underline-offset-4" href={it.ebay_url} target="_blank">
-                                  eBay
-                                </Link>
-                              ) : (
-                                <span className="text-sm text-muted-foreground">eBay -</span>
-                              )}
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
+                                <Button
+                                  asChild
+                                  variant="outline"
+                                  className="h-8 border-white/10 bg-white/5 px-2 text-xs text-slate-100 hover:bg-white/10"
+                                >
+                                  <Link href={it.ebay_url ?? "#"} target="_blank">
+                                    eBay
+                                  </Link>
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
               )}
 
-              <div className="mt-4 flex items-center justify-between text-sm text-muted-foreground">
-                <div>
-                  Página <b>{page}</b> de {totalPages} • {items.length} itens nesta página
+              <div className="flex items-center justify-between gap-3 px-4 py-3">
+                <div className="text-xs text-slate-300">
+                  {total > 0 ? `Mostrando ${items.length} itens nesta página.` : ""}
                 </div>
-                <div>
-                  (Oferta selecionada = eBay mais barato por ASIN)
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    className="border-white/10 bg-white/5 text-slate-100 hover:bg-white/10"
+                    disabled={!canPrev || loading}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  >
+                    ← Voltar
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="border-white/10 bg-white/5 text-slate-100 hover:bg-white/10"
+                    disabled={!canNext || loading}
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  >
+                    Próxima →
+                  </Button>
                 </div>
               </div>
             </CardContent>
