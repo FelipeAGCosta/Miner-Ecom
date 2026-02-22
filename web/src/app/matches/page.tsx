@@ -24,14 +24,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  Menu,
-  X,
-  User,
-  CreditCard,
-  BadgeCheck,
-  Search,
-} from "lucide-react";
+import { Menu, X, User, CreditCard, BadgeCheck, Search, ChevronsLeft, ChevronsRight, ChevronLeft, ChevronRight } from "lucide-react";
 
 type CategoryTree = {
   categories: Array<{ name: string; children: string[] }>;
@@ -373,7 +366,9 @@ export default function MatchesPage() {
   const triggerCls =
     "border-white/10 bg-white/5 text-slate-100 cursor-pointer transition-all duration-150 hover:border-white/20 hover:bg-white/10 focus:ring-2 focus:ring-indigo-400/35 focus:ring-offset-0";
   const outlineBtnCls =
-    "h-8 border-white/10 bg-white/5 px-3 text-xs text-slate-100 hover:bg-white/10 hover:border-white/20 transition-all duration-150";
+    "border-white/10 bg-white/5 text-slate-100 hover:bg-white/10 hover:border-white/20 transition-all duration-150 cursor-pointer";
+  const iconBtnCls =
+    "h-10 w-10 px-0 grid place-items-center";
 
   const navItems = [
     { label: "Minerar", icon: Search, href: "/matches", enabled: true },
@@ -392,25 +387,25 @@ export default function MatchesPage() {
         )}
       >
         <div className="flex items-center justify-between px-4 py-4">
-          <div className="flex items-center gap-2">
-            <div className="grid h-9 w-9 place-items-center rounded-xl bg-white/5 ring-1 ring-white/10">
-              <span className="text-xs font-extrabold text-indigo-200">ME</span>
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 place-items-center rounded-xl bg-white/5 ring-1 ring-white/10">
+              <span className="text-sm font-extrabold text-indigo-200">ME</span>
             </div>
             <div className="leading-tight">
-              <div className="text-sm font-semibold text-slate-100">
+              <div className="text-base font-semibold text-slate-100">
                 Miner<span className="text-indigo-200">Ecom</span>
               </div>
-              <div className="text-[11px] text-slate-400">Menu</div>
+              <div className="text-xs text-slate-400">Menu</div>
             </div>
           </div>
 
           <Button
             variant="outline"
-            className={cn(outlineBtnCls, "h-9 px-2")}
+            className={cn(outlineBtnCls, iconBtnCls, "group")}
             onClick={() => setNavOpen(false)}
             aria-label="Fechar menu"
           >
-            <X className="h-4 w-4" />
+            <X className="h-4 w-4 text-slate-100 opacity-95 transition-transform duration-150 group-hover:scale-105" />
           </Button>
         </div>
 
@@ -473,23 +468,24 @@ export default function MatchesPage() {
         )}
       >
         {/* Header */}
-        <div className="mb-4 grid grid-cols-[320px_1fr_220px] items-center gap-3">
+        <div className="mb-4 grid grid-cols-[340px_1fr_220px] items-center gap-3">
           {/* Brand + hamburger */}
           <div className="flex items-center gap-3">
             <Button
               variant="outline"
-              className={cn(outlineBtnCls, "h-10 px-2")}
+              className={cn(outlineBtnCls, iconBtnCls, "group")}
               onClick={() => setNavOpen((v) => !v)}
               aria-label="Abrir menu"
             >
-              <Menu className="h-4 w-4" />
+              <Menu className="h-4 w-4 text-slate-100 opacity-95 transition-transform duration-150 group-hover:scale-105" />
             </Button>
 
             <div className="grid h-10 w-10 place-items-center rounded-xl bg-white/5 ring-1 ring-white/10 shadow-[0_10px_30px_rgba(0,0,0,0.35)] transition-transform duration-200 hover:scale-[1.02]">
               <span className="text-sm font-extrabold text-indigo-200">ME</span>
             </div>
+
             <div className="leading-tight">
-              <div className="text-sm font-semibold tracking-wide text-slate-100">
+              <div className="text-base font-semibold tracking-wide text-slate-100">
                 Miner<span className="text-indigo-200">Ecom</span>
               </div>
               <div className="text-xs text-slate-400">Minerar</div>
@@ -520,7 +516,7 @@ export default function MatchesPage() {
           {/* Filters */}
           <Card className="h-fit border-white/10 bg-white/5 lg:sticky lg:top-3">
             <CardContent className="space-y-4 p-4">
-              <div className="text-sm font-semibold text-slate-100">Filtros</div>
+              <div className="text-base font-semibold text-slate-100 text-center">Filtros</div>
               <Separator className="bg-white/10" />
 
               <div className="space-y-2">
@@ -604,12 +600,18 @@ export default function MatchesPage() {
                   </div>
                 </div>
 
-                <div className="mt-2 flex items-center gap-2">
+                <div className="mt-3 flex items-center gap-2">
                   <Checkbox
+                    id="primeOnly"
                     checked={filters.somentePrime}
                     onCheckedChange={(v) => setFilters((f) => ({ ...f, somentePrime: Boolean(v) }))}
                   />
-                  <Label className="text-sm text-slate-200 cursor-pointer">Somente Prime</Label>
+                  <Label
+                    htmlFor="primeOnly"
+                    className="text-sm text-slate-200 cursor-pointer select-none"
+                  >
+                    Somente Prime
+                  </Label>
                 </div>
 
                 <div className="mt-2 space-y-2">
@@ -733,7 +735,7 @@ export default function MatchesPage() {
                 <Button
                   onClick={applyFilters}
                   disabled={loading}
-                  className="bg-indigo-500 hover:bg-indigo-400 text-white transition-all duration-150 hover:shadow-[0_10px_25px_rgba(99,102,241,0.18)]"
+                  className="bg-indigo-500 hover:bg-indigo-400 text-white transition-all duration-150 hover:shadow-[0_10px_25px_rgba(99,102,241,0.18)] cursor-pointer"
                 >
                   Aplicar
                 </Button>
@@ -742,7 +744,7 @@ export default function MatchesPage() {
                   disabled={loading}
                   variant="outline"
                   className={cn(
-                    "border-white/10 bg-white/5 text-slate-100 hover:bg-white/10 transition-all duration-150",
+                    "border-white/10 bg-white/5 text-slate-100 hover:bg-white/10 transition-all duration-150 cursor-pointer",
                     "hover:border-white/20"
                   )}
                 >
@@ -763,74 +765,80 @@ export default function MatchesPage() {
             <CardContent className="p-0">
               <div className="grid grid-cols-[1fr_auto_1fr] items-center px-4 py-3">
                 <div />
-                <div className="text-sm font-semibold text-slate-100 text-center">Produtos</div>
+                <div className="text-sm font-semibold text-slate-100 text-center"></div>
 
                 <div className="flex items-center justify-end gap-2">
-                  <div className="text-xs text-slate-300">
+                  <div className="text-xs text-slate-300 mr-1">
                     Página <b className="text-slate-100">{page}</b> / {Math.max(1, totalPages)}
                   </div>
 
-                  {/* Jump controls */}
-                  <Button
-                    variant="outline"
-                    className={cn(outlineBtnCls, "px-2")}
-                    disabled={page <= 1 || loading}
-                    onClick={goFirst}
-                    aria-label="Ir para primeira página"
-                    title="Primeira"
-                  >
-                    «
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className={cn(outlineBtnCls, "px-2")}
-                    disabled={page <= 1 || loading}
-                    onClick={goPrev10}
-                    aria-label="Voltar 10 páginas"
-                    title="Voltar 10"
-                  >
-                    ‹‹
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className={cn(outlineBtnCls, "px-2")}
-                    disabled={!canPrev || loading}
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    aria-label="Página anterior"
-                    title="Anterior"
-                  >
-                    ←
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className={cn(outlineBtnCls, "px-2")}
-                    disabled={!canNext || loading}
-                    onClick={() => setPage((p) => Math.min(Math.max(1, totalPages), p + 1))}
-                    aria-label="Próxima página"
-                    title="Próxima"
-                  >
-                    →
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className={cn(outlineBtnCls, "px-2")}
-                    disabled={page >= totalPages || loading}
-                    onClick={goNext10}
-                    aria-label="Avançar 10 páginas"
-                    title="Avançar 10"
-                  >
-                    ››
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className={cn(outlineBtnCls, "px-2")}
-                    disabled={page >= totalPages || loading}
-                    onClick={goLast}
-                    aria-label="Ir para última página"
-                    title="Última"
-                  >
-                    »
-                  </Button>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline"
+                      className={cn(outlineBtnCls, "h-9 w-9 p-0 grid place-items-center")}
+                      disabled={page <= 1 || loading}
+                      onClick={goFirst}
+                      aria-label="Ir para primeira página"
+                      title="Primeira"
+                    >
+                      <ChevronsLeft className="h-4 w-4 text-slate-100 opacity-95" />
+                    </Button>
+
+                    <Button
+                      variant="outline"
+                      className={cn(outlineBtnCls, "h-9 w-9 p-0 grid place-items-center")}
+                      disabled={page <= 1 || loading}
+                      onClick={goPrev10}
+                      aria-label="Voltar 10 páginas"
+                      title="Voltar 10"
+                    >
+                      <ChevronsLeft className="h-4 w-4 text-slate-100 opacity-95 -translate-x-[1px]" />
+                    </Button>
+
+                    <Button
+                      variant="outline"
+                      className={cn(outlineBtnCls, "h-9 w-9 p-0 grid place-items-center")}
+                      disabled={!canPrev || loading}
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      aria-label="Página anterior"
+                      title="Anterior"
+                    >
+                      <ChevronLeft className="h-4 w-4 text-slate-100 opacity-95" />
+                    </Button>
+
+                    <Button
+                      variant="outline"
+                      className={cn(outlineBtnCls, "h-9 w-9 p-0 grid place-items-center")}
+                      disabled={!canNext || loading}
+                      onClick={() => setPage((p) => Math.min(Math.max(1, totalPages), p + 1))}
+                      aria-label="Próxima página"
+                      title="Próxima"
+                    >
+                      <ChevronRight className="h-4 w-4 text-slate-100 opacity-95" />
+                    </Button>
+
+                    <Button
+                      variant="outline"
+                      className={cn(outlineBtnCls, "h-9 w-9 p-0 grid place-items-center")}
+                      disabled={page >= totalPages || loading}
+                      onClick={goNext10}
+                      aria-label="Avançar 10 páginas"
+                      title="Avançar 10"
+                    >
+                      <ChevronsRight className="h-4 w-4 text-slate-100 opacity-95 translate-x-[1px]" />
+                    </Button>
+
+                    <Button
+                      variant="outline"
+                      className={cn(outlineBtnCls, "h-9 w-9 p-0 grid place-items-center")}
+                      disabled={page >= totalPages || loading}
+                      onClick={goLast}
+                      aria-label="Ir para última página"
+                      title="Última"
+                    >
+                      <ChevronsRight className="h-4 w-4 text-slate-100 opacity-95" />
+                    </Button>
+                  </div>
                 </div>
               </div>
 
@@ -858,8 +866,8 @@ export default function MatchesPage() {
                     <TableHeader>
                       <TableRow className="border-white/10">
                         <TableHead className="w-[560px] text-slate-200">Produto</TableHead>
-                        <TableHead className="w-[320px] text-slate-200">Amazon</TableHead>
-                        <TableHead className="w-[320px] text-slate-200">eBay</TableHead>
+                        <TableHead className="w-[320px] text-slate-200 text-center">Amazon</TableHead>
+                        <TableHead className="w-[320px] text-slate-200 text-center">eBay</TableHead>
                         <TableHead className="w-[140px] text-slate-200 text-center">Links</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -905,30 +913,31 @@ export default function MatchesPage() {
                             key={`${it.asin}-${it.item_id}`}
                             className="border-white/10 transition-colors hover:bg-white/5"
                           >
-                            <TableCell className="py-2 align-top">
-                              <div className="flex min-w-0 gap-3">
+                            <TableCell className="py-3 align-top">
+                              <div className="flex min-w-0 gap-4">
                                 <div className="shrink-0">
                                   {it.amazon_image_url ? (
                                     <img
                                       src={it.amazon_image_url}
                                       alt={it.amazon_title ?? it.asin}
-                                      className="h-12 w-12 rounded-md object-cover ring-1 ring-white/10"
+                                      className="h-24 w-24 rounded-lg object-cover ring-1 ring-white/10"
                                       loading="lazy"
                                       referrerPolicy="no-referrer"
                                     />
                                   ) : (
-                                    <div className="h-12 w-12 rounded-md bg-white/5 ring-1 ring-white/10" />
+                                    <div className="h-24 w-24 rounded-lg bg-white/5 ring-1 ring-white/10" />
                                   )}
                                 </div>
 
                                 <div className="min-w-0">
                                   <div
-                                    className="truncate text-sm font-medium text-slate-100"
+                                    className="truncate text-sm font-semibold text-slate-100"
                                     title={it.amazon_title ?? ""}
                                   >
                                     {it.amazon_title ?? it.asin}
                                   </div>
-                                  <div className="mt-1 flex flex-wrap gap-2 text-xs text-slate-300">
+
+                                  <div className="mt-2 flex flex-wrap gap-3 text-xs text-slate-300">
                                     <span>
                                       ASIN: <b className="text-slate-100">{it.asin}</b>
                                     </span>
@@ -939,7 +948,8 @@ export default function MatchesPage() {
                                       BSR: <b className="text-slate-100">{it.amazon_bsr ?? "—"}</b>
                                     </span>
                                   </div>
-                                  <div className="mt-1 text-xs text-slate-300">
+
+                                  <div className="mt-2 text-xs text-slate-300">
                                     Categoria: <b className="text-slate-100">{cat}</b> • Sub:{" "}
                                     <b className="text-slate-100">{sub}</b>
                                   </div>
@@ -947,8 +957,8 @@ export default function MatchesPage() {
                               </div>
                             </TableCell>
 
-                            <TableCell className="py-2 align-top">
-                              <div className="space-y-1 text-xs">
+                            <TableCell className="py-3 align-top">
+                              <div className="space-y-3 text-xs text-center">
                                 <div className="text-sm font-semibold text-slate-100">
                                   Amazon: {fmtMoney(it.amazon_price, it.amazon_currency)}
                                 </div>
@@ -956,15 +966,15 @@ export default function MatchesPage() {
                                   Condição:{" "}
                                   <b className="text-slate-100">{prettyCondPt(it.amazon_condition)}</b>
                                 </div>
-                                <div className="flex flex-wrap gap-2">
+                                <div className="flex flex-wrap gap-2 justify-center">
                                   {badgePrime}
                                   {badgeFB}
                                 </div>
                               </div>
                             </TableCell>
 
-                            <TableCell className="py-2 align-top">
-                              <div className="space-y-1 text-xs">
+                            <TableCell className="py-3 align-top">
+                              <div className="space-y-3 text-xs text-center">
                                 <div className="text-sm font-semibold text-slate-100">
                                   eBay: {fmtMoney(it.ebay_price, it.ebay_currency)}
                                 </div>
@@ -978,13 +988,13 @@ export default function MatchesPage() {
                               </div>
                             </TableCell>
 
-                            <TableCell className="py-2 align-top">
+                            <TableCell className="py-3 align-top">
                               <div className="flex flex-col gap-2">
                                 <Button
                                   asChild
                                   variant="outline"
                                   className={cn(
-                                    "h-8 border-white/10 bg-white/5 px-2 text-xs text-slate-100 hover:bg-white/10 hover:border-white/20 transition-all duration-150 cursor-pointer",
+                                    "h-9 border-white/10 bg-white/5 px-2 text-xs text-slate-100 hover:bg-white/10 hover:border-white/20 transition-all duration-150 cursor-pointer",
                                     !it.amazon_url && "opacity-50 pointer-events-none"
                                   )}
                                 >
@@ -997,7 +1007,7 @@ export default function MatchesPage() {
                                   asChild
                                   variant="outline"
                                   className={cn(
-                                    "h-8 border-white/10 bg-white/5 px-2 text-xs text-slate-100 hover:bg-white/10 hover:border-white/20 transition-all duration-150 cursor-pointer",
+                                    "h-9 border-white/10 bg-white/5 px-2 text-xs text-slate-100 hover:bg-white/10 hover:border-white/20 transition-all duration-150 cursor-pointer",
                                     !it.ebay_url && "opacity-50 pointer-events-none"
                                   )}
                                 >
@@ -1009,10 +1019,10 @@ export default function MatchesPage() {
                                 <Button
                                   asChild
                                   variant="outline"
-                                  className="h-8 border-indigo-400/20 bg-indigo-400/10 px-2 text-xs text-indigo-100 hover:bg-indigo-400/15 hover:border-indigo-300/30 transition-all duration-150 cursor-pointer"
+                                  className="h-9 border-indigo-400/20 bg-indigo-400/10 px-2 text-xs font-bold text-indigo-100 hover:bg-indigo-400/15 hover:border-indigo-300/30 transition-all duration-150 cursor-pointer"
                                 >
                                   <Link href={ebayOffersUrl} target="_blank">
-                                    + ofertas
+                                    + Ofertas
                                   </Link>
                                 </Button>
                               </div>
