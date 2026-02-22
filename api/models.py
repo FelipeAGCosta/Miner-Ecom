@@ -21,18 +21,14 @@ class MatchItem(BaseModel):
     amazon_currency: Optional[str] = None
     amazon_bsr: Optional[int] = None
     amazon_gtin: Optional[str] = None
-    amazon_is_prime: Optional[int] = None  # tri-state (1/0/None)
+    amazon_is_prime: Optional[int] = None
     amazon_fulfillment: Optional[str] = None
     amazon_browse_node_name: Optional[str] = None
     amazon_image_url: Optional[str] = None
     amazon_url: Optional[str] = None
 
-    # Categoria/Subcategoria (do DB)
     amazon_category_root: Optional[str] = None
     amazon_category_child: Optional[str] = None
-
-    # Vendedor Amazon (se você ainda não tem no DB, vem NULL)
-    amazon_seller: Optional[str] = None
 
     item_id: str
     ebay_title: Optional[str] = None
@@ -42,7 +38,6 @@ class MatchItem(BaseModel):
     ebay_seller: Optional[str] = None
     ebay_url: Optional[str] = None
 
-    # Arbitragem
     spread: Optional[float] = None
     spread_pct: Optional[float] = None
 

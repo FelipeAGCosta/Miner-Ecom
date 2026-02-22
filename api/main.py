@@ -21,6 +21,46 @@ def _clamp_int(v: int, lo: int, hi: int) -> int:
 def health() -> Dict[str, Any]:
     return {"ok": True}
 
+@app.get("/filters/categories")
+def list_categories() -> Dict[str, Any]:
+    """
+    Retorna categorias e subcategorias existentes no DB (amazon_products),
+    no formato:
+    {
+      "categories": [
+        {"name": "Casa & Cozinha", "children": ["Utensílios", "..." ]},
+        ...
+      ]
+    }
+    """
+    sql = text("""
+        SELECT
+          source_root_name AS root,
+          source_child_name AS child
+        FROM amazon_products
+        WHERE source_root_name IS NOT NULL AND source_root_name <> ''
+    """)
+    engine = make_engine()
+    with engine.begin() as conn:
+        rows = conn.execute(sql).fetchall()
+
+    # montar árvore root -> set(children)
+    tree: Dict[str, set] = {}
+    for r in rows:
+        root = (r[0] or "").strip()
+        child = (r[1] or "").strip()
+        if not root:
+            continue
+        tree.setdefault(root, set())
+        if child:
+            tree[root].add(child)
+
+    categories = []
+    for root in sorted(tree.keys(), key=lambda x: x.lower()):
+        children = sorted(tree[root], key=lambda x: x.lower())
+        categories.append({"name": root, "children": children})
+
+    return {"categories": categories}
 
 @app.get("/matches", response_model=MatchListResponse)
 def list_matches(
@@ -206,8 +246,6 @@ def list_matches(
 
             ap.source_root_name AS amazon_category_root,
             ap.source_child_name AS amazon_category_child,
-
-            NULL AS amazon_seller,
 
             el.item_id AS item_id,
             el.title AS ebay_title,
