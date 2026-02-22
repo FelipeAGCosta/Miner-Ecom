@@ -45,8 +45,8 @@ type MatchItem = {
   ebay_seller: string | null;
   ebay_url: string | null;
 
-  spread: number | null;
-  spread_pct: number | null;
+  spread?: number | null;
+  spread_pct?: number | null;
 };
 
 type MatchesResponse = {
@@ -571,10 +571,18 @@ export default function MatchesPage() {
 
                           <TableCell>
                             <div className="text-sm font-semibold">
-                              {it.spread === null ? "-" : `${it.amazon_currency ?? it.ebay_currency ?? "USD"} ${it.spread.toFixed(2)}`}
+                              {it.spread == null
+  ? "-"
+  : `${it.amazon_currency ?? it.ebay_currency ?? "USD"} ${Number(it.spread).toFixed(2)}`}
+
+{it.spread_pct == null
+  ? "-"
+  : `${Number(it.spread_pct).toFixed(2)}%`}
                             </div>
                             <div className="text-xs text-muted-foreground">
-                              {it.spread_pct === null ? "-" : `${it.spread_pct.toFixed(2)}%`}
+                              {it.spread_pct == null
+  ? "-"
+  : `${Number(it.spread_pct).toFixed(2)}%`}
                             </div>
                           </TableCell>
 

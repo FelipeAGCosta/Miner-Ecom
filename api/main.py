@@ -70,13 +70,18 @@ def list_matches(
     # - GTIN: aceita se dist for NULL (não tem imagem) OU dist <= gtin_max_dist
     # - NÃO-GTIN (IMAGE): aceita somente se dist existe e dist <= max_dist
     where.append(
-        "("
-        "(mo.validated_method = 'GTIN' AND (mo.image_distance IS NULL OR mo.image_distance <= :gtin_max_dist))"
-        " OR "
-        "(mo.validated_method <> 'GTIN' AND mo.image_distance IS NOT NULL AND mo.image_distance <= :max_dist)"
-        ")"
-    )
-
+    "("
+    " ("
+    "   (mo.validated_method = 'GTIN' OR (mo.validated_method IS NULL AND ap.gtin IS NOT NULL))"
+    "   AND (mo.image_distance IS NULL OR mo.image_distance <= :gtin_max_dist)"
+    " )"
+    " OR "
+    " ("
+    "   (mo.validated_method <> 'GTIN' OR (mo.validated_method IS NULL AND ap.gtin IS NULL))"
+    "   AND mo.image_distance IS NOT NULL AND mo.image_distance <= :max_dist"
+    " )"
+    ")"
+)
     # filtro default: esconder mídia por REGEXP
     if include_media != 1:
         where.append("(ap.browse_node_name IS NULL OR LOWER(ap.browse_node_name) NOT REGEXP :media_re)")
@@ -189,8 +194,8 @@ def list_matches(
     sql_items = text(f"""
         WITH filtered AS (
           SELECT
-            COALESCE(mo.updated_at, mo.created_at) AS created_at,
-            mo.validated_method AS match_method,
+            mo.updated_at AS created_at,
+            COALESCE(mo.validated_method, CASE WHEN ap.gtin IS NOT NULL THEN 'GTIN' ELSE 'IMAGE' END) AS match_method,
             COALESCE(mo.validated_score, 0) AS match_score,
             mo.image_distance AS image_distance,
 
