@@ -41,6 +41,9 @@ class MatchItem(BaseModel):
     spread: Optional[float] = None
     spread_pct: Optional[float] = None
 
+    class Config:
+        extra = "ignore"  # evita 500 se SQL devolver campo a mais
+
 
 class MatchListResponse(BaseModel):
     page: int

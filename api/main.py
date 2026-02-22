@@ -8,7 +8,7 @@ from sqlalchemy import text
 from lib.config import make_engine
 from api.models import MatchListResponse, MatchItem
 
-app = FastAPI(title="miner-ecom API", version="0.4.2")
+app = FastAPI(title="miner-ecom API", version="0.4.3")
 
 DEFAULT_MEDIA_REGEX = r"(movie|movies|dvd|blu(\s|-)?ray|book|books|kindle|music|cd|vinyl|video\s?game|video\s?games|tv)"
 
@@ -21,22 +21,22 @@ def _clamp_int(v: int, lo: int, hi: int) -> int:
 def health() -> Dict[str, Any]:
     return {"ok": True}
 
+
 @app.get("/filters/categories")
 def list_categories() -> Dict[str, Any]:
     """
-    Retorna categorias e subcategorias existentes no DB (amazon_products),
-    no formato:
+    Retorna categorias/subcategorias existentes na amazon_products:
     {
       "categories": [
-        {"name": "Casa & Cozinha", "children": ["Utensílios", "..." ]},
+        {"name": "Casa & Cozinha", "children": ["Utensílios ...", ...]},
         ...
       ]
     }
+
+    Remove AUTO - Browse Nodes.
     """
     sql = text("""
-        SELECT
-          source_root_name AS root,
-          source_child_name AS child
+        SELECT source_root_name AS root, source_child_name AS child
         FROM amazon_products
         WHERE source_root_name IS NOT NULL AND source_root_name <> ''
     """)
@@ -44,13 +44,19 @@ def list_categories() -> Dict[str, Any]:
     with engine.begin() as conn:
         rows = conn.execute(sql).fetchall()
 
-    # montar árvore root -> set(children)
+    IGNORE = {"AUTO - BROWSE NODES", "AUTO - BROWSE NODE", "AUTO - BROWSE", "AUTO"}
     tree: Dict[str, set] = {}
+
     for r in rows:
         root = (r[0] or "").strip()
         child = (r[1] or "").strip()
         if not root:
             continue
+
+        root_up = root.upper()
+        if root_up in IGNORE or "BROWSE NODE" in root_up or root_up.startswith("AUTO"):
+            continue
+
         tree.setdefault(root, set())
         if child:
             tree[root].add(child)
@@ -62,13 +68,14 @@ def list_categories() -> Dict[str, Any]:
 
     return {"categories": categories}
 
+
 @app.get("/matches", response_model=MatchListResponse)
 def list_matches(
     # paginação
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
 
-    # regras de distância (não expor na UI, mas mantém na API)
+    # regras (UI não expõe, mas a API suporta)
     max_image_distance: int = Query(8, ge=0, le=20),
     gtin_max_dist: int = Query(15, ge=0, le=40),
 
@@ -78,14 +85,14 @@ def list_matches(
     source_child_name: Optional[str] = None,
     amazon_price_min: Optional[float] = None,
     amazon_price_max: Optional[float] = None,
-    amazon_condition: Optional[str] = None,   # ANY/NEW/USED/REFURB/UNKNOWN ou valor exato
-    amazon_fulfillment: Optional[str] = None, # ANY/FBA/FBM ou valor exato
+    amazon_condition: Optional[str] = None,
+    amazon_fulfillment: Optional[str] = None,
     prime_only: Optional[int] = Query(None, ge=0, le=1),
 
     # filtros eBay
     ebay_price_min: Optional[float] = None,
     ebay_price_max: Optional[float] = None,
-    ebay_condition: Optional[str] = None,     # ANY/NEW/USED/REFURB ou valor exato
+    ebay_condition: Optional[str] = None,
 
     # ordenação
     sort: str = Query("recent"),
@@ -105,9 +112,7 @@ def list_matches(
         "media_re": DEFAULT_MEDIA_REGEX,
     }
 
-    # Regra final de validade:
-    # - GTIN (ou validated_method NULL mas Amazon tem GTIN): dist NULL OU dist <= gtin_max_dist
-    # - IMAGE: dist existe e dist <= max_image_distance
+    # Gate de validade (mesma lógica de antes)
     where.append(
         "("
         " ("
@@ -222,11 +227,12 @@ def list_matches(
         WHERE {where_sql}
     """)
 
+    # NOTE: removido amazon_seller (não existe no seu schema)
     sql_items = text(f"""
         WITH filtered AS (
           SELECT
             mo.updated_at AS created_at,
-            COALESCE(mo.validated_method, CASE WHEN ap.gtin IS NOT NULL THEN 'GTIN' ELSE 'IMAGE' END) AS match_method,
+            mo.validated_method AS match_method,
             COALESCE(mo.validated_score, 0) AS match_score,
             mo.image_distance AS image_distance,
 
@@ -294,7 +300,6 @@ def list_matches(
 
           amazon_category_root,
           amazon_category_child,
-          amazon_seller,
 
           item_id,
           ebay_title,
