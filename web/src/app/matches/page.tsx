@@ -70,9 +70,15 @@ type Filters = {
   logisticaAmazon: "QUALQUER" | "FBA" | "FBM";
   condicaoAmazon: "QUALQUER" | "NOVO" | "USADO" | "RECONDICIONADO" | "DESCONHECIDA";
 
+  // (placeholder UI) Quantidade de vendas nos últimos 30 dias (mínimo)
+  amazon_sales_30d_min: string;
+
   precoEbayMin: string;
   precoEbayMax: string;
   condicaoEbay: "QUALQUER" | "NOVO" | "USADO" | "RECONDICIONADO";
+
+  // (placeholder UI) Quantidade mínima em estoque
+  ebay_stock_min: string;
 
   ordenarPor:
     | "recent"
@@ -83,7 +89,7 @@ type Filters = {
     | "match_score_desc";
 };
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 15;
 const GTIN_MAX_DIST = 15;
 const MAX_IMAGE_DISTANCE = 8;
 
@@ -156,9 +162,13 @@ export default function MatchesPage() {
     logisticaAmazon: "QUALQUER",
     condicaoAmazon: "QUALQUER",
 
+    amazon_sales_30d_min: "",
+
     precoEbayMin: "",
     precoEbayMax: "",
     condicaoEbay: "QUALQUER",
+
+    ebay_stock_min: "",
 
     ordenarPor: "recent",
   });
@@ -181,10 +191,20 @@ export default function MatchesPage() {
   const rootOptions = catTree.categories;
   const selectedRoot = filters.categoria === "__ALL__" ? "" : filters.categoria;
 
-  const rootChildren = useMemo(() => {
+  const rootChildrenRaw = useMemo(() => {
     const found = rootOptions.find((c) => c.name === selectedRoot);
     return found?.children ?? [];
   }, [rootOptions, selectedRoot]);
+
+  // remove entradas inválidas (ex: "-" que estava aparecendo)
+  const rootChildren = useMemo(() => {
+    const cleaned = rootChildrenRaw
+      .map((x) => (x ?? "").toString())
+      .map((x) => x.trim())
+      .filter((x) => x && x !== "-" && x !== "—");
+
+    return Array.from(new Set(cleaned));
+  }, [rootChildrenRaw]);
 
   // reset subcategoria quando troca categoria
   useEffect(() => {
@@ -230,6 +250,9 @@ export default function MatchesPage() {
     const ebMin = parseNumberOrNull(applied.precoEbayMin);
     const ebMax = parseNumberOrNull(applied.precoEbayMax);
 
+    const amazonSales30dMin = parseNumberOrNull(applied.amazon_sales_30d_min);
+    const ebayStockMin = parseNumberOrNull(applied.ebay_stock_min);
+
     if (applied.palavraChave.trim()) qs.set("keyword", applied.palavraChave.trim());
 
     if (applied.categoria !== "__ALL__") qs.set("source_root_name", applied.categoria);
@@ -244,11 +267,17 @@ export default function MatchesPage() {
     const ac = mapAmazonCondPtToApi(applied.condicaoAmazon);
     if (ac) qs.set("amazon_condition", ac);
 
+    // placeholders (backend ainda não usa; seguros para já deixar no front)
+    if (amazonSales30dMin != null) qs.set("amazon_sales_30d_min", String(amazonSales30dMin));
+
     if (ebMin != null) qs.set("ebay_price_min", String(ebMin));
     if (ebMax != null) qs.set("ebay_price_max", String(ebMax));
 
     const ec = mapEbayCondPtToApi(applied.condicaoEbay);
     if (ec) qs.set("ebay_condition", ec);
+
+    // placeholder (backend ainda não usa; seguro para já deixar no front)
+    if (ebayStockMin != null) qs.set("ebay_stock_min", String(ebayStockMin));
 
     qs.set("sort", applied.ordenarPor);
     return qs.toString();
@@ -298,9 +327,13 @@ export default function MatchesPage() {
       logisticaAmazon: "QUALQUER",
       condicaoAmazon: "QUALQUER",
 
+      amazon_sales_30d_min: "",
+
       precoEbayMin: "",
       precoEbayMax: "",
       condicaoEbay: "QUALQUER",
+
+      ebay_stock_min: "",
 
       ordenarPor: "recent",
     };
@@ -313,8 +346,7 @@ export default function MatchesPage() {
     <div
       className="
         min-h-screen w-full overflow-x-hidden
-        bg-[radial-gradient(900px_circle_at_18%_0%,rgba(16,185,129,0.20),transparent_60%),radial-gradient(900px_circle_at_82%_10%,rgba(34,197,94,0.14),transparent_60%),radial-gradient(700px_circle_at_55%_95%,rgba(59,130,246,0.08),transparent_60%)]
-        bg-[#07120c] text-slate-100
+        bg-[#0b2417] text-slate-100
       "
     >
       <div className="w-full px-2 py-4">
@@ -322,26 +354,26 @@ export default function MatchesPage() {
         <div className="mb-4 grid grid-cols-[320px_1fr_220px] items-center gap-3">
           {/* Brand */}
           <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-xl bg-white/5 ring-1 ring-white/10 shadow-[0_10px_30px_rgba(0,0,0,0.35)]">
+            <div className="grid h-10 w-10 place-items-center rounded-xl bg-white/5 ring-1 ring-white/10 shadow-[0_10px_30px_rgba(0,0,0,0.35)] transition-transform duration-200 hover:scale-[1.02]">
               <span className="text-sm font-extrabold text-emerald-200">ME</span>
             </div>
             <div className="leading-tight">
               <div className="text-sm font-semibold tracking-wide text-slate-100">
                 Miner<span className="text-emerald-200">Ecom</span>
               </div>
-              <div className="text-xs text-slate-300">SaaS Dashboard</div>
+              <div className="text-xs text-slate-300">Dashboard</div>
             </div>
           </div>
 
           {/* Title */}
           <div className="text-center">
             <h1 className="text-2xl font-semibold tracking-tight">
-              <span className="bg-gradient-to-r from-emerald-200 via-white to-emerald-100 bg-clip-text text-transparent drop-shadow-[0_0_22px_rgba(16,185,129,0.22)]">
-                Mineração de Produtos MinerEcom
+              <span className="text-slate-100">
+                Mineração de Produtos <span className="text-emerald-200">MinerEcom</span>
               </span>
             </h1>
             <div className="mt-1 text-xs text-slate-300">
-              Encontre produtos com match exato Amazon ↔ eBay (sem candidatos).
+              Encontre produtos com match exato Amazon ↔ eBay
             </div>
           </div>
 
@@ -362,7 +394,8 @@ export default function MatchesPage() {
 
               <div className="space-y-2">
                 <div className="text-xs text-slate-300">
-                  Palavra-chave <span className="text-slate-400">(Recomendação: escreva em inglês)</span>
+                  Palavra-chave{" "}
+                  <span className="text-slate-400">(Recomendação: escreva em inglês)</span>
                 </div>
                 <Input
                   value={filters.palavraChave}
@@ -375,7 +408,10 @@ export default function MatchesPage() {
               {/* Categoria/Subcategoria */}
               <div className="space-y-2">
                 <div className="text-xs text-slate-300">Categoria</div>
-                <Select value={filters.categoria} onValueChange={(v) => setFilters((f) => ({ ...f, categoria: v }))}>
+                <Select
+                  value={filters.categoria}
+                  onValueChange={(v) => setFilters((f) => ({ ...f, categoria: v }))}
+                >
                   <SelectTrigger className="border-white/10 bg-white/5 text-slate-100">
                     <SelectValue placeholder={catLoading ? "Carregando..." : "Todas"} />
                   </SelectTrigger>
@@ -398,7 +434,9 @@ export default function MatchesPage() {
                   disabled={filters.categoria === "__ALL__"}
                 >
                   <SelectTrigger className="border-white/10 bg-white/5 text-slate-100">
-                    <SelectValue placeholder={filters.categoria === "__ALL__" ? "Selecione uma categoria" : "Todas"} />
+                    <SelectValue
+                      placeholder={filters.categoria === "__ALL__" ? "Selecione uma categoria" : "Todas"}
+                    />
                   </SelectTrigger>
                   <SelectContent className="border-white/10 bg-[#0b1a12] text-slate-100">
                     <SelectItem value="__ALL__">Todas</SelectItem>
@@ -417,11 +455,13 @@ export default function MatchesPage() {
               <div className="rounded-xl border border-emerald-500/15 bg-white/5 p-3">
                 <div className="mb-2 flex items-center justify-between">
                   <div className="text-xs font-semibold text-slate-100">Filtros Amazon</div>
-                  <Badge className="border border-emerald-500/20 bg-emerald-500/10 text-emerald-100">Amazon</Badge>
+                  <Badge className="border border-white/10 bg-white/5 text-slate-100">
+                    Amazon
+                  </Badge>
                 </div>
 
                 <div className="space-y-2">
-                  <div className="text-xs text-slate-300">Preço (mín / máx)</div>
+                  <div className="text-xs text-slate-300">Preço (mínimo / máximo)</div>
                   <div className="grid grid-cols-2 gap-2">
                     <Input
                       inputMode="decimal"
@@ -450,7 +490,10 @@ export default function MatchesPage() {
 
                 <div className="mt-2 space-y-2">
                   <div className="text-xs text-slate-300">Logística</div>
-                  <Select value={filters.logisticaAmazon} onValueChange={(v) => setFilters((f) => ({ ...f, logisticaAmazon: v as any }))}>
+                  <Select
+                    value={filters.logisticaAmazon}
+                    onValueChange={(v) => setFilters((f) => ({ ...f, logisticaAmazon: v as any }))}
+                  >
                     <SelectTrigger className="border-white/10 bg-white/5 text-slate-100">
                       <SelectValue placeholder="Qualquer" />
                     </SelectTrigger>
@@ -464,7 +507,10 @@ export default function MatchesPage() {
 
                 <div className="mt-2 space-y-2">
                   <div className="text-xs text-slate-300">Condição</div>
-                  <Select value={filters.condicaoAmazon} onValueChange={(v) => setFilters((f) => ({ ...f, condicaoAmazon: v as any }))}>
+                  <Select
+                    value={filters.condicaoAmazon}
+                    onValueChange={(v) => setFilters((f) => ({ ...f, condicaoAmazon: v as any }))}
+                  >
                     <SelectTrigger className="border-white/10 bg-white/5 text-slate-100">
                       <SelectValue placeholder="Qualquer" />
                     </SelectTrigger>
@@ -477,6 +523,18 @@ export default function MatchesPage() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                {/* Placeholder: Vendas 30 dias */}
+                <div className="mt-2 space-y-2">
+                  <div className="text-xs text-slate-300">Quantidade de vendas nos últimos 30 dias:</div>
+                  <Input
+                    inputMode="numeric"
+                    value={filters.amazon_sales_30d_min}
+                    onChange={(e) => setFilters((f) => ({ ...f, amazon_sales_30d_min: e.target.value }))}
+                    placeholder="mín"
+                    className="border-white/10 bg-white/5 text-slate-100 placeholder:text-slate-400"
+                  />
+                </div>
               </div>
 
               {/* eBay box */}
@@ -487,7 +545,7 @@ export default function MatchesPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <div className="text-xs text-slate-300">Preço (mín / máx)</div>
+                  <div className="text-xs text-slate-300">Preço (mínimo / máximo)</div>
                   <div className="grid grid-cols-2 gap-2">
                     <Input
                       inputMode="decimal"
@@ -508,7 +566,10 @@ export default function MatchesPage() {
 
                 <div className="mt-2 space-y-2">
                   <div className="text-xs text-slate-300">Condição</div>
-                  <Select value={filters.condicaoEbay} onValueChange={(v) => setFilters((f) => ({ ...f, condicaoEbay: v as any }))}>
+                  <Select
+                    value={filters.condicaoEbay}
+                    onValueChange={(v) => setFilters((f) => ({ ...f, condicaoEbay: v as any }))}
+                  >
                     <SelectTrigger className="border-white/10 bg-white/5 text-slate-100">
                       <SelectValue placeholder="Qualquer" />
                     </SelectTrigger>
@@ -520,13 +581,28 @@ export default function MatchesPage() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                {/* Placeholder: Estoque mínimo */}
+                <div className="mt-2 space-y-2">
+                  <div className="text-xs text-slate-300">Quantidade mínima em estoque:</div>
+                  <Input
+                    inputMode="numeric"
+                    value={filters.ebay_stock_min}
+                    onChange={(e) => setFilters((f) => ({ ...f, ebay_stock_min: e.target.value }))}
+                    placeholder="mín"
+                    className="border-white/10 bg-white/5 text-slate-100 placeholder:text-slate-400"
+                  />
+                </div>
               </div>
 
               <Separator className="bg-white/10" />
 
               <div className="space-y-2">
                 <div className="text-xs text-slate-300">Ordenar por</div>
-                <Select value={filters.ordenarPor} onValueChange={(v) => setFilters((f) => ({ ...f, ordenarPor: v as any }))}>
+                <Select
+                  value={filters.ordenarPor}
+                  onValueChange={(v) => setFilters((f) => ({ ...f, ordenarPor: v as any }))}
+                >
                   <SelectTrigger className="border-white/10 bg-white/5 text-slate-100">
                     <SelectValue placeholder="Mais recentes" />
                   </SelectTrigger>
@@ -542,7 +618,11 @@ export default function MatchesPage() {
               </div>
 
               <div className="grid grid-cols-2 gap-2 pt-2">
-                <Button onClick={applyFilters} disabled={loading} className="bg-emerald-600 hover:bg-emerald-500 text-white">
+                <Button
+                  onClick={applyFilters}
+                  disabled={loading}
+                  className="bg-emerald-500 hover:bg-emerald-400 text-white"
+                >
                   Aplicar
                 </Button>
                 <Button
@@ -564,11 +644,12 @@ export default function MatchesPage() {
           </Card>
 
           {/* Results */}
-          <Card className="min-w-0 border-white/10 bg-white/5 backdrop-blur-xl">
+          <Card className="min-w-0 border-white/10 bg-white/5">
             <CardContent className="p-0">
-              <div className="flex items-center justify-between px-4 py-3">
-                <div className="text-sm font-semibold text-slate-100">Produtos</div>
-                <div className="flex items-center gap-2">
+              <div className="grid grid-cols-[1fr_auto_1fr] items-center px-4 py-3">
+                <div />
+                <div className="text-sm font-semibold text-slate-100 text-center">Produtos</div>
+                <div className="flex items-center justify-end gap-2">
                   <div className="text-xs text-slate-300">
                     Página <b className="text-slate-100">{page}</b> / {Math.max(1, totalPages)}
                   </div>
@@ -605,7 +686,8 @@ export default function MatchesPage() {
                 <div className="px-4 py-10 text-sm text-slate-300">
                   Nenhum resultado com os filtros atuais.
                   <div className="mt-2 text-xs text-slate-400">
-                    Dica: clique em <b className="text-slate-200">Limpar</b> e depois <b className="text-slate-200">Aplicar</b>.
+                    Dica: clique em <b className="text-slate-200">Limpar</b> e depois{" "}
+                    <b className="text-slate-200">Aplicar</b>.
                   </div>
                 </div>
               ) : (
@@ -616,7 +698,7 @@ export default function MatchesPage() {
                         <TableHead className="w-[560px] text-slate-200">Produto</TableHead>
                         <TableHead className="w-[320px] text-slate-200">Amazon</TableHead>
                         <TableHead className="w-[320px] text-slate-200">eBay</TableHead>
-                        <TableHead className="w-[140px] text-slate-200">Links</TableHead>
+                        <TableHead className="w-[140px] text-slate-200 text-center">Links</TableHead>
                       </TableRow>
                     </TableHeader>
 
@@ -626,25 +708,38 @@ export default function MatchesPage() {
                         const fb = amazonFbaFbmLabel(it.amazon_fulfillment);
 
                         const badgePrime = prime ? (
-                          <Badge className="border border-emerald-400/20 bg-emerald-400/10 text-emerald-200">PRIME</Badge>
+                          <Badge className="border border-emerald-400/20 bg-emerald-400/10 text-emerald-200">
+                            PRIME
+                          </Badge>
                         ) : (
-                          <Badge className="border border-red-400/20 bg-red-400/10 text-red-200">NÃO PRIME</Badge>
+                          <Badge className="border border-red-400/20 bg-red-400/10 text-red-200">
+                            NÃO PRIME
+                          </Badge>
                         );
 
                         const badgeFB =
                           fb === "FBA" ? (
-                            <Badge className="border border-sky-400/20 bg-sky-400/10 text-sky-200">FBA</Badge>
+                            <Badge className="border border-sky-400/20 bg-sky-400/10 text-sky-200">
+                              FBA
+                            </Badge>
                           ) : fb === "FBM" ? (
-                            <Badge className="border border-amber-400/25 bg-amber-400/10 text-amber-200">FBM</Badge>
+                            <Badge className="border border-amber-400/25 bg-amber-400/10 text-amber-200">
+                              FBM
+                            </Badge>
                           ) : (
-                            <Badge className="border border-white/10 bg-white/5 text-slate-200">{fb}</Badge>
+                            <Badge className="border border-white/10 bg-white/5 text-slate-200">
+                              {fb}
+                            </Badge>
                           );
 
                         const cat = it.amazon_category_root || "—";
                         const sub = it.amazon_category_child || "—";
 
                         return (
-                          <TableRow key={`${it.asin}-${it.item_id}`} className="border-white/10 transition-colors hover:bg-white/5">
+                          <TableRow
+                            key={`${it.asin}-${it.item_id}`}
+                            className="border-white/10 transition-colors hover:bg-white/5"
+                          >
                             <TableCell className="py-2 align-top">
                               <div className="flex min-w-0 gap-3">
                                 <div className="shrink-0">
@@ -662,16 +757,26 @@ export default function MatchesPage() {
                                 </div>
 
                                 <div className="min-w-0">
-                                  <div className="truncate text-sm font-medium text-slate-100" title={it.amazon_title ?? ""}>
+                                  <div
+                                    className="truncate text-sm font-medium text-slate-100"
+                                    title={it.amazon_title ?? ""}
+                                  >
                                     {it.amazon_title ?? it.asin}
                                   </div>
                                   <div className="mt-1 flex flex-wrap gap-2 text-xs text-slate-300">
-                                    <span>ASIN: <b className="text-slate-100">{it.asin}</b></span>
-                                    <span>Marca: <b className="text-slate-100">{it.amazon_brand ?? "—"}</b></span>
-                                    <span>BSR: <b className="text-slate-100">{it.amazon_bsr ?? "—"}</b></span>
+                                    <span>
+                                      ASIN: <b className="text-slate-100">{it.asin}</b>
+                                    </span>
+                                    <span>
+                                      Marca: <b className="text-slate-100">{it.amazon_brand ?? "—"}</b>
+                                    </span>
+                                    <span>
+                                      BSR: <b className="text-slate-100">{it.amazon_bsr ?? "—"}</b>
+                                    </span>
                                   </div>
                                   <div className="mt-1 text-xs text-slate-300">
-                                    Categoria: <b className="text-slate-100">{cat}</b> • Sub: <b className="text-slate-100">{sub}</b>
+                                    Categoria: <b className="text-slate-100">{cat}</b> • Sub:{" "}
+                                    <b className="text-slate-100">{sub}</b>
                                   </div>
                                 </div>
                               </div>
@@ -683,7 +788,8 @@ export default function MatchesPage() {
                                   Amazon: {fmtMoney(it.amazon_price, it.amazon_currency)}
                                 </div>
                                 <div className="text-slate-300">
-                                  Condição: <b className="text-slate-100">{prettyCondPt(it.amazon_condition)}</b>
+                                  Condição:{" "}
+                                  <b className="text-slate-100">{prettyCondPt(it.amazon_condition)}</b>
                                 </div>
                                 <div className="flex flex-wrap gap-2">
                                   {badgePrime}
@@ -698,7 +804,8 @@ export default function MatchesPage() {
                                   eBay: {fmtMoney(it.ebay_price, it.ebay_currency)}
                                 </div>
                                 <div className="text-slate-300">
-                                  Condição: <b className="text-slate-100">{prettyCondPt(it.ebay_condition)}</b>
+                                  Condição:{" "}
+                                  <b className="text-slate-100">{prettyCondPt(it.ebay_condition)}</b>
                                 </div>
                                 <div className="text-slate-300">
                                   Vendedor: <b className="text-slate-100">{it.ebay_seller ?? "—"}</b>
