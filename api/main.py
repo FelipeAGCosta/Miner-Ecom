@@ -8,10 +8,10 @@ from sqlalchemy import text
 from lib.config import make_engine
 from api.models import MatchListResponse, MatchItem
 
-app = FastAPI(title="miner-ecom API", version="0.3.1")
+app = FastAPI(title="miner-ecom API", version="0.4.0")
 
 # Regex mais robusta (pega "Movies & TV", "Blu Ray", "Video Games", etc.)
-DEFAULT_MEDIA_REGEX = r"(movie|movies|dvd|blu(\s|-)?ray|blu-ray|book|books|kindle|music|cd|vinyl|video\s?game|video\s?games|tv)"
+DEFAULT_MEDIA_REGEX = r"(movie|movies|dvd|blu(\s|-)?ray|book|books|kindle|music|cd|vinyl|video\s?game|video\s?games|tv)"
 
 
 def _clamp_int(v: int, lo: int, hi: int) -> int:
@@ -33,17 +33,23 @@ def list_matches(
     max_image_distance: int = Query(8, ge=0, le=20),          # para métodos não-GTIN (IMAGE)
     gtin_max_dist: int = Query(15, ge=0, le=40),              # para GTIN quando há imagem
 
-    # filtros Amazon
+    # filtros Amazon (DB-first)
+    keyword: Optional[str] = None,
+    source_root_name: Optional[str] = None,
+    source_child_name: Optional[str] = None,
     amazon_price_min: Optional[float] = None,
     amazon_price_max: Optional[float] = None,
-    amazon_condition: Optional[str] = None,
-    amazon_fulfillment: Optional[str] = None,
-    amazon_is_prime: Optional[int] = None,
+    amazon_condition: Optional[str] = None,                   # ANY/NEW/USED/REFURB/UNKNOWN ou valor exato do DB
+    amazon_fulfillment: Optional[str] = None,                 # ANY/FBA/FBM ou valor exato do DB
+    prime_only: Optional[int] = Query(None, ge=0, le=1),       # 1 = só Prime
 
-    # filtros eBay
+    # filtros eBay (DB-first)
     ebay_price_min: Optional[float] = None,
     ebay_price_max: Optional[float] = None,
-    ebay_condition: Optional[str] = None,
+    ebay_condition: Optional[str] = None,                     # ANY/NEW/USED/REFURB ou valor exato
+
+    # ordenação (depois de escolher a oferta mais barata por ASIN)
+    sort: str = Query("recent"),                              # recent|spread_desc|spread_pct_desc|ebay_price_asc|amazon_bsr_asc|match_score_desc
 
     # controle: mostrar mídia?
     include_media: int = Query(0, ge=0, le=1),
@@ -60,9 +66,9 @@ def list_matches(
         "media_re": DEFAULT_MEDIA_REGEX,
     }
 
-    # Regra final:
+    # Regra final de validade:
     # - GTIN: aceita se dist for NULL (não tem imagem) OU dist <= gtin_max_dist
-    # - NÃO-GTIN: aceita somente se dist existe e dist <= max_dist
+    # - NÃO-GTIN (IMAGE): aceita somente se dist existe e dist <= max_dist
     where.append(
         "("
         "(mo.validated_method = 'GTIN' AND (mo.image_distance IS NULL OR mo.image_distance <= :gtin_max_dist))"
@@ -71,39 +77,106 @@ def list_matches(
         ")"
     )
 
-    # filtro default: esconder mídia por REGEXP (mais robusto que NOT IN)
+    # filtro default: esconder mídia por REGEXP
     if include_media != 1:
         where.append("(ap.browse_node_name IS NULL OR LOWER(ap.browse_node_name) NOT REGEXP :media_re)")
 
-    # filtros Amazon
+    # -----------------------------
+    # Filtros Amazon
+    # -----------------------------
+    if keyword:
+        kw = keyword.strip().lower()
+        if kw:
+            where.append("(LOWER(ap.title) LIKE :kw OR LOWER(ap.brand) LIKE :kw)")
+            params["kw"] = f"%{kw}%"
+
+    if source_root_name:
+        where.append("ap.source_root_name = :root")
+        params["root"] = str(source_root_name).strip()
+
+    if source_child_name:
+        where.append("ap.source_child_name = :child")
+        params["child"] = str(source_child_name).strip()
+
     if amazon_price_min is not None:
         where.append("ap.price >= :ap_min")
         params["ap_min"] = float(amazon_price_min)
+
     if amazon_price_max is not None:
         where.append("ap.price <= :ap_max")
         params["ap_max"] = float(amazon_price_max)
-    if amazon_condition:
-        where.append("ap.item_condition = :ap_cond")
-        params["ap_cond"] = str(amazon_condition)
-    if amazon_fulfillment:
-        where.append("ap.fulfillment_channel = :ap_fc")
-        params["ap_fc"] = str(amazon_fulfillment)
-    if amazon_is_prime in (0, 1):
-        where.append("ap.is_prime = :ap_prime")
-        params["ap_prime"] = int(amazon_is_prime)
 
-    # filtros eBay
+    if prime_only == 1:
+        where.append("ap.is_prime = 1")
+
+    # amazon_fulfillment: aceita ANY/FBA/FBM ou valor exato
+    if amazon_fulfillment:
+        fc = str(amazon_fulfillment).strip().upper()
+        if fc in ("ANY", ""):
+            pass
+        elif fc == "FBA":
+            where.append("(UPPER(ap.fulfillment_channel) IN ('FBA','AMAZON','AFN'))")
+        elif fc == "FBM":
+            where.append("(UPPER(ap.fulfillment_channel) IN ('FBM','MFN','MERCHANT','SELLER'))")
+        else:
+            where.append("ap.fulfillment_channel = :ap_fc")
+            params["ap_fc"] = str(amazon_fulfillment).strip()
+
+    # amazon_condition: aceita ANY/NEW/USED/REFURB/UNKNOWN ou valor exato
+    if amazon_condition:
+        ac = str(amazon_condition).strip().upper()
+        if ac in ("ANY", ""):
+            pass
+        elif ac == "NEW":
+            where.append("ap.item_condition = 'New'")
+        elif ac == "USED":
+            where.append("ap.item_condition = 'Used'")
+        elif ac == "REFURB":
+            where.append("ap.item_condition IN ('Refurbished','Renewed','Reconditioned')")
+        elif ac == "UNKNOWN":
+            where.append("(ap.item_condition IS NULL OR ap.item_condition = '')")
+        else:
+            where.append("ap.item_condition = :ap_cond")
+            params["ap_cond"] = str(amazon_condition).strip()
+
+    # -----------------------------
+    # Filtros eBay
+    # -----------------------------
     if ebay_price_min is not None:
         where.append("el.price >= :eb_min")
         params["eb_min"] = float(ebay_price_min)
+
     if ebay_price_max is not None:
         where.append("el.price <= :eb_max")
         params["eb_max"] = float(ebay_price_max)
+
+    # ebay_condition: aceita ANY/NEW/USED/REFURB ou valor exato
     if ebay_condition:
-        where.append("el.`condition` = :eb_cond")
-        params["eb_cond"] = str(ebay_condition)
+        ec = str(ebay_condition).strip().upper()
+        if ec in ("ANY", ""):
+            pass
+        elif ec == "NEW":
+            where.append("LOWER(el.`condition`) LIKE 'new%'")
+        elif ec == "USED":
+            where.append("LOWER(el.`condition`) LIKE 'used%'")
+        elif ec == "REFURB":
+            where.append("(LOWER(el.`condition`) LIKE '%refurb%' OR LOWER(el.`condition`) LIKE '%renew%')")
+        else:
+            where.append("el.`condition` = :eb_cond")
+            params["eb_cond"] = str(ebay_condition).strip()
 
     where_sql = " AND ".join(where) if where else "1=1"
+
+    # ORDER BY seguro (sem SQL injection)
+    sort_map = {
+        "recent": "created_at DESC",
+        "spread_desc": "spread DESC, created_at DESC",
+        "spread_pct_desc": "spread_pct DESC, created_at DESC",
+        "ebay_price_asc": "ebay_price ASC, created_at DESC",
+        "amazon_bsr_asc": "amazon_bsr ASC, created_at DESC",
+        "match_score_desc": "match_score DESC, created_at DESC",
+    }
+    order_by = sort_map.get(sort.strip().lower(), sort_map["recent"])
 
     sql_total = text(f"""
         SELECT COUNT(DISTINCT mo.asin)
@@ -116,12 +189,12 @@ def list_matches(
     sql_items = text(f"""
         WITH filtered AS (
           SELECT
-            mo.updated_at AS mo_updated_at,
-            mo.validated_method,
-            COALESCE(mo.validated_score, 0) AS validated_score,
-            mo.image_distance,
+            COALESCE(mo.updated_at, mo.created_at) AS created_at,
+            mo.validated_method AS match_method,
+            COALESCE(mo.validated_score, 0) AS match_score,
+            mo.image_distance AS image_distance,
 
-            ap.asin,
+            ap.asin AS asin,
             ap.title AS amazon_title,
             ap.brand AS amazon_brand,
             ap.item_condition AS amazon_condition,
@@ -135,13 +208,20 @@ def list_matches(
             ap.image_url AS amazon_image_url,
             CONCAT('https://www.amazon.com/dp/', ap.asin) AS amazon_url,
 
-            el.item_id,
+            el.item_id AS item_id,
             el.title AS ebay_title,
             el.price AS ebay_price,
             el.currency AS ebay_currency,
             el.`condition` AS ebay_condition,
             el.seller AS ebay_seller,
-            el.item_url AS ebay_url
+            el.item_url AS ebay_url,
+
+            (ap.price - el.price) AS spread,
+            CASE
+              WHEN el.price IS NOT NULL AND el.price > 0 AND ap.price IS NOT NULL
+              THEN ((ap.price - el.price) / el.price) * 100
+              ELSE NULL
+            END AS spread_pct
           FROM match_offers mo
           JOIN amazon_products ap ON ap.asin = mo.asin
           JOIN ebay_listing el ON el.item_id = mo.item_id
@@ -154,9 +234,9 @@ def list_matches(
           FROM filtered
         )
         SELECT
-          mo_updated_at,
-          validated_method,
-          validated_score,
+          created_at,
+          match_method,
+          match_score,
           image_distance,
 
           asin,
@@ -179,47 +259,20 @@ def list_matches(
           ebay_currency,
           ebay_condition,
           ebay_seller,
-          ebay_url
+          ebay_url,
+
+          spread,
+          spread_pct
         FROM ranked
         WHERE rn = 1
-        ORDER BY mo_updated_at DESC
+        ORDER BY {order_by}
         LIMIT :lim OFFSET :off
     """)
 
     engine = make_engine()
     with engine.begin() as conn:
         total = int(conn.execute(sql_total, params).scalar() or 0)
-        rows = conn.execute(sql_items, params).fetchall()
+        rows = conn.execute(sql_items, params).mappings().all()
 
-    items = []
-    for r in rows:
-        items.append(MatchItem(
-            created_at=r[0],
-            match_method=r[1],
-            match_score=float(r[2]),
-            image_distance=r[3],
-
-            asin=r[4],
-            amazon_title=r[5],
-            amazon_brand=r[6],
-            amazon_condition=r[7],
-            amazon_price=float(r[8]) if r[8] is not None else None,
-            amazon_currency=r[9],
-            amazon_bsr=int(r[10]) if r[10] is not None else None,
-            amazon_gtin=r[11],
-            amazon_is_prime=int(r[12]) if r[12] is not None else None,
-            amazon_fulfillment=r[13],
-            amazon_browse_node_name=r[14],
-            amazon_image_url=r[15],
-            amazon_url=r[16],
-
-            item_id=r[17],
-            ebay_title=r[18],
-            ebay_price=float(r[19]) if r[19] is not None else None,
-            ebay_currency=r[20],
-            ebay_condition=r[21],
-            ebay_seller=r[22],
-            ebay_url=r[23],
-        ))
-
+    items = [MatchItem(**dict(r)) for r in rows]
     return MatchListResponse(page=page, page_size=page_size, total=total, items=items)
