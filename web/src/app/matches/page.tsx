@@ -24,6 +24,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Menu,
+  X,
+  User,
+  CreditCard,
+  BadgeCheck,
+  Search,
+} from "lucide-react";
 
 type CategoryTree = {
   categories: Array<{ name: string; children: string[] }>;
@@ -89,7 +97,7 @@ type Filters = {
     | "match_score_desc";
 };
 
-const PAGE_SIZE = 15;
+const PAGE_SIZE = 10;
 const GTIN_MAX_DIST = 15;
 const MAX_IMAGE_DISTANCE = 8;
 
@@ -148,8 +156,14 @@ function cn(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
+function makeEbaySearchUrl(q: string) {
+  const kw = encodeURIComponent((q || "").trim());
+  return `https://www.ebay.com/sch/i.html?_nkw=${kw}`;
+}
+
 export default function MatchesPage() {
   const [page, setPage] = useState(1);
+  const [navOpen, setNavOpen] = useState(false);
 
   const [filters, setFilters] = useState<Filters>({
     palavraChave: "",
@@ -202,7 +216,6 @@ export default function MatchesPage() {
       .map((x) => (x ?? "").toString())
       .map((x) => x.trim())
       .filter((x) => x && x !== "-" && x !== "—");
-
     return Array.from(new Set(cleaned));
   }, [rootChildrenRaw]);
 
@@ -342,26 +355,144 @@ export default function MatchesPage() {
     setApplied(reset);
   }
 
+  function goFirst() {
+    setPage(1);
+  }
+  function goLast() {
+    setPage(Math.max(1, totalPages));
+  }
+  function goPrev10() {
+    setPage((p) => Math.max(1, p - 10));
+  }
+  function goNext10() {
+    setPage((p) => Math.min(Math.max(1, totalPages), p + 10));
+  }
+
+  const inputCls =
+    "border-white/10 bg-white/5 text-slate-100 placeholder:text-slate-400 transition-all duration-150 hover:border-white/20 focus-visible:ring-2 focus-visible:ring-indigo-400/35 focus-visible:ring-offset-0";
+  const triggerCls =
+    "border-white/10 bg-white/5 text-slate-100 cursor-pointer transition-all duration-150 hover:border-white/20 hover:bg-white/10 focus:ring-2 focus:ring-indigo-400/35 focus:ring-offset-0";
+  const outlineBtnCls =
+    "h-8 border-white/10 bg-white/5 px-3 text-xs text-slate-100 hover:bg-white/10 hover:border-white/20 transition-all duration-150";
+
+  const navItems = [
+    { label: "Minerar", icon: Search, href: "/matches", enabled: true },
+    { label: "Perfil", icon: User, href: "/perfil", enabled: false },
+    { label: "Assinatura", icon: CreditCard, href: "/assinatura", enabled: false },
+    { label: "Aprovações", icon: BadgeCheck, href: "/aprovacoes", enabled: false },
+  ];
+
   return (
-    <div
-      className="
-        min-h-screen w-full overflow-x-hidden
-        bg-[#0b2417] text-slate-100
-      "
-    >
-      <div className="w-full px-2 py-4">
+    <div className="min-h-screen w-full overflow-x-hidden bg-[#0b1020] text-slate-100">
+      {/* Side nav */}
+      <div
+        className={cn(
+          "fixed inset-y-0 left-0 z-40 w-[260px] border-r border-white/10 bg-[#0a0f1d] transition-transform duration-300",
+          navOpen ? "translate-x-0" : "-translate-x-full"
+        )}
+      >
+        <div className="flex items-center justify-between px-4 py-4">
+          <div className="flex items-center gap-2">
+            <div className="grid h-9 w-9 place-items-center rounded-xl bg-white/5 ring-1 ring-white/10">
+              <span className="text-xs font-extrabold text-indigo-200">ME</span>
+            </div>
+            <div className="leading-tight">
+              <div className="text-sm font-semibold text-slate-100">
+                Miner<span className="text-indigo-200">Ecom</span>
+              </div>
+              <div className="text-[11px] text-slate-400">Menu</div>
+            </div>
+          </div>
+
+          <Button
+            variant="outline"
+            className={cn(outlineBtnCls, "h-9 px-2")}
+            onClick={() => setNavOpen(false)}
+            aria-label="Fechar menu"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        <Separator className="bg-white/10" />
+
+        <div className="p-3">
+          <div className="space-y-1">
+            {navItems.map((it) => {
+              const Icon = it.icon;
+              const base =
+                "flex items-center justify-between rounded-xl px-3 py-2 transition-all duration-150";
+              const left =
+                "flex items-center gap-2 text-sm";
+              const enabledCls =
+                "cursor-pointer hover:bg-white/5 hover:ring-1 hover:ring-white/10";
+              const disabledCls =
+                "opacity-60 cursor-not-allowed";
+
+              const content = (
+                <div className={cn(base, it.enabled ? enabledCls : disabledCls)}>
+                  <div className={left}>
+                    <Icon className="h-4 w-4 text-slate-300" />
+                    <span className="text-slate-100">{it.label}</span>
+                  </div>
+                  {!it.enabled && (
+                    <span className="text-[10px] text-slate-400">Em breve</span>
+                  )}
+                </div>
+              );
+
+              return it.enabled ? (
+                <Link
+                  key={it.label}
+                  href={it.href}
+                  onClick={() => setNavOpen(false)}
+                >
+                  {content}
+                </Link>
+              ) : (
+                <div key={it.label}>{content}</div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {/* Overlay */}
+      {navOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-black/50"
+          onClick={() => setNavOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
+      <div
+        className={cn(
+          "w-full px-2 py-4 transition-[padding] duration-300",
+          navOpen ? "lg:pl-[276px]" : "lg:pl-2"
+        )}
+      >
         {/* Header */}
         <div className="mb-4 grid grid-cols-[320px_1fr_220px] items-center gap-3">
-          {/* Brand */}
+          {/* Brand + hamburger */}
           <div className="flex items-center gap-3">
+            <Button
+              variant="outline"
+              className={cn(outlineBtnCls, "h-10 px-2")}
+              onClick={() => setNavOpen((v) => !v)}
+              aria-label="Abrir menu"
+            >
+              <Menu className="h-4 w-4" />
+            </Button>
+
             <div className="grid h-10 w-10 place-items-center rounded-xl bg-white/5 ring-1 ring-white/10 shadow-[0_10px_30px_rgba(0,0,0,0.35)] transition-transform duration-200 hover:scale-[1.02]">
-              <span className="text-sm font-extrabold text-emerald-200">ME</span>
+              <span className="text-sm font-extrabold text-indigo-200">ME</span>
             </div>
             <div className="leading-tight">
               <div className="text-sm font-semibold tracking-wide text-slate-100">
-                Miner<span className="text-emerald-200">Ecom</span>
+                Miner<span className="text-indigo-200">Ecom</span>
               </div>
-              <div className="text-xs text-slate-300">Dashboard</div>
+              <div className="text-xs text-slate-400">Minerar</div>
             </div>
           </div>
 
@@ -369,10 +500,10 @@ export default function MatchesPage() {
           <div className="text-center">
             <h1 className="text-2xl font-semibold tracking-tight">
               <span className="text-slate-100">
-                Mineração de Produtos <span className="text-emerald-200">MinerEcom</span>
+                Mineração de Produtos <span className="text-indigo-200">MinerEcom</span>
               </span>
             </h1>
-            <div className="mt-1 text-xs text-slate-300">
+            <div className="mt-1 text-xs text-slate-400">
               Encontre produtos com match exato Amazon ↔ eBay
             </div>
           </div>
@@ -401,21 +532,18 @@ export default function MatchesPage() {
                   value={filters.palavraChave}
                   onChange={(e) => setFilters((f) => ({ ...f, palavraChave: e.target.value }))}
                   placeholder="ex: kitchen brush, patio, lawn..."
-                  className="border-white/10 bg-white/5 text-slate-100 placeholder:text-slate-400"
+                  className={cn(inputCls, "cursor-text")}
                 />
               </div>
 
               {/* Categoria/Subcategoria */}
               <div className="space-y-2">
                 <div className="text-xs text-slate-300">Categoria</div>
-                <Select
-                  value={filters.categoria}
-                  onValueChange={(v) => setFilters((f) => ({ ...f, categoria: v }))}
-                >
-                  <SelectTrigger className="border-white/10 bg-white/5 text-slate-100">
+                <Select value={filters.categoria} onValueChange={(v) => setFilters((f) => ({ ...f, categoria: v }))}>
+                  <SelectTrigger className={cn(triggerCls, "group")}>
                     <SelectValue placeholder={catLoading ? "Carregando..." : "Todas"} />
                   </SelectTrigger>
-                  <SelectContent className="border-white/10 bg-[#0b1a12] text-slate-100">
+                  <SelectContent className="border-white/10 bg-[#0a0f1d] text-slate-100">
                     <SelectItem value="__ALL__">Todas</SelectItem>
                     {rootOptions.map((c) => (
                       <SelectItem key={c.name} value={c.name}>
@@ -433,12 +561,10 @@ export default function MatchesPage() {
                   onValueChange={(v) => setFilters((f) => ({ ...f, subcategoria: v }))}
                   disabled={filters.categoria === "__ALL__"}
                 >
-                  <SelectTrigger className="border-white/10 bg-white/5 text-slate-100">
-                    <SelectValue
-                      placeholder={filters.categoria === "__ALL__" ? "Selecione uma categoria" : "Todas"}
-                    />
+                  <SelectTrigger className={cn(triggerCls, filters.categoria === "__ALL__" && "opacity-60 cursor-not-allowed")}>
+                    <SelectValue placeholder={filters.categoria === "__ALL__" ? "Selecione uma categoria" : "Todas"} />
                   </SelectTrigger>
-                  <SelectContent className="border-white/10 bg-[#0b1a12] text-slate-100">
+                  <SelectContent className="border-white/10 bg-[#0a0f1d] text-slate-100">
                     <SelectItem value="__ALL__">Todas</SelectItem>
                     {rootChildren.map((ch) => (
                       <SelectItem key={ch} value={ch}>
@@ -452,12 +578,10 @@ export default function MatchesPage() {
               <Separator className="bg-white/10" />
 
               {/* Amazon box */}
-              <div className="rounded-xl border border-emerald-500/15 bg-white/5 p-3">
+              <div className="rounded-xl border border-white/10 bg-white/5 p-3">
                 <div className="mb-2 flex items-center justify-between">
                   <div className="text-xs font-semibold text-slate-100">Filtros Amazon</div>
-                  <Badge className="border border-white/10 bg-white/5 text-slate-100">
-                    Amazon
-                  </Badge>
+                  <Badge className="border border-white/10 bg-white/5 text-slate-100">Amazon</Badge>
                 </div>
 
                 <div className="space-y-2">
@@ -468,14 +592,14 @@ export default function MatchesPage() {
                       value={filters.precoAmazonMin}
                       onChange={(e) => setFilters((f) => ({ ...f, precoAmazonMin: e.target.value }))}
                       placeholder="mín"
-                      className="border-white/10 bg-white/5 text-slate-100 placeholder:text-slate-400"
+                      className={cn(inputCls, "cursor-text")}
                     />
                     <Input
                       inputMode="decimal"
                       value={filters.precoAmazonMax}
                       onChange={(e) => setFilters((f) => ({ ...f, precoAmazonMax: e.target.value }))}
                       placeholder="máx"
-                      className="border-white/10 bg-white/5 text-slate-100 placeholder:text-slate-400"
+                      className={cn(inputCls, "cursor-text")}
                     />
                   </div>
                 </div>
@@ -485,19 +609,16 @@ export default function MatchesPage() {
                     checked={filters.somentePrime}
                     onCheckedChange={(v) => setFilters((f) => ({ ...f, somentePrime: Boolean(v) }))}
                   />
-                  <Label className="text-sm text-slate-200">Somente Prime</Label>
+                  <Label className="text-sm text-slate-200 cursor-pointer">Somente Prime</Label>
                 </div>
 
                 <div className="mt-2 space-y-2">
                   <div className="text-xs text-slate-300">Logística</div>
-                  <Select
-                    value={filters.logisticaAmazon}
-                    onValueChange={(v) => setFilters((f) => ({ ...f, logisticaAmazon: v as any }))}
-                  >
-                    <SelectTrigger className="border-white/10 bg-white/5 text-slate-100">
+                  <Select value={filters.logisticaAmazon} onValueChange={(v) => setFilters((f) => ({ ...f, logisticaAmazon: v as any }))}>
+                    <SelectTrigger className={triggerCls}>
                       <SelectValue placeholder="Qualquer" />
                     </SelectTrigger>
-                    <SelectContent className="border-white/10 bg-[#0b1a12] text-slate-100">
+                    <SelectContent className="border-white/10 bg-[#0a0f1d] text-slate-100">
                       <SelectItem value="QUALQUER">Qualquer</SelectItem>
                       <SelectItem value="FBA">FBA</SelectItem>
                       <SelectItem value="FBM">FBM</SelectItem>
@@ -507,14 +628,11 @@ export default function MatchesPage() {
 
                 <div className="mt-2 space-y-2">
                   <div className="text-xs text-slate-300">Condição</div>
-                  <Select
-                    value={filters.condicaoAmazon}
-                    onValueChange={(v) => setFilters((f) => ({ ...f, condicaoAmazon: v as any }))}
-                  >
-                    <SelectTrigger className="border-white/10 bg-white/5 text-slate-100">
+                  <Select value={filters.condicaoAmazon} onValueChange={(v) => setFilters((f) => ({ ...f, condicaoAmazon: v as any }))}>
+                    <SelectTrigger className={triggerCls}>
                       <SelectValue placeholder="Qualquer" />
                     </SelectTrigger>
-                    <SelectContent className="border-white/10 bg-[#0b1a12] text-slate-100">
+                    <SelectContent className="border-white/10 bg-[#0a0f1d] text-slate-100">
                       <SelectItem value="QUALQUER">Qualquer</SelectItem>
                       <SelectItem value="NOVO">Novo</SelectItem>
                       <SelectItem value="USADO">Usado</SelectItem>
@@ -532,7 +650,7 @@ export default function MatchesPage() {
                     value={filters.amazon_sales_30d_min}
                     onChange={(e) => setFilters((f) => ({ ...f, amazon_sales_30d_min: e.target.value }))}
                     placeholder="mín"
-                    className="border-white/10 bg-white/5 text-slate-100 placeholder:text-slate-400"
+                    className={cn(inputCls, "cursor-text")}
                   />
                 </div>
               </div>
@@ -552,28 +670,25 @@ export default function MatchesPage() {
                       value={filters.precoEbayMin}
                       onChange={(e) => setFilters((f) => ({ ...f, precoEbayMin: e.target.value }))}
                       placeholder="mín"
-                      className="border-white/10 bg-white/5 text-slate-100 placeholder:text-slate-400"
+                      className={cn(inputCls, "cursor-text")}
                     />
                     <Input
                       inputMode="decimal"
                       value={filters.precoEbayMax}
                       onChange={(e) => setFilters((f) => ({ ...f, precoEbayMax: e.target.value }))}
                       placeholder="máx"
-                      className="border-white/10 bg-white/5 text-slate-100 placeholder:text-slate-400"
+                      className={cn(inputCls, "cursor-text")}
                     />
                   </div>
                 </div>
 
                 <div className="mt-2 space-y-2">
                   <div className="text-xs text-slate-300">Condição</div>
-                  <Select
-                    value={filters.condicaoEbay}
-                    onValueChange={(v) => setFilters((f) => ({ ...f, condicaoEbay: v as any }))}
-                  >
-                    <SelectTrigger className="border-white/10 bg-white/5 text-slate-100">
+                  <Select value={filters.condicaoEbay} onValueChange={(v) => setFilters((f) => ({ ...f, condicaoEbay: v as any }))}>
+                    <SelectTrigger className={triggerCls}>
                       <SelectValue placeholder="Qualquer" />
                     </SelectTrigger>
-                    <SelectContent className="border-white/10 bg-[#0b1a12] text-slate-100">
+                    <SelectContent className="border-white/10 bg-[#0a0f1d] text-slate-100">
                       <SelectItem value="QUALQUER">Qualquer</SelectItem>
                       <SelectItem value="NOVO">Novo</SelectItem>
                       <SelectItem value="USADO">Usado</SelectItem>
@@ -590,7 +705,7 @@ export default function MatchesPage() {
                     value={filters.ebay_stock_min}
                     onChange={(e) => setFilters((f) => ({ ...f, ebay_stock_min: e.target.value }))}
                     placeholder="mín"
-                    className="border-white/10 bg-white/5 text-slate-100 placeholder:text-slate-400"
+                    className={cn(inputCls, "cursor-text")}
                   />
                 </div>
               </div>
@@ -599,14 +714,11 @@ export default function MatchesPage() {
 
               <div className="space-y-2">
                 <div className="text-xs text-slate-300">Ordenar por</div>
-                <Select
-                  value={filters.ordenarPor}
-                  onValueChange={(v) => setFilters((f) => ({ ...f, ordenarPor: v as any }))}
-                >
-                  <SelectTrigger className="border-white/10 bg-white/5 text-slate-100">
+                <Select value={filters.ordenarPor} onValueChange={(v) => setFilters((f) => ({ ...f, ordenarPor: v as any }))}>
+                  <SelectTrigger className={triggerCls}>
                     <SelectValue placeholder="Mais recentes" />
                   </SelectTrigger>
-                  <SelectContent className="border-white/10 bg-[#0b1a12] text-slate-100">
+                  <SelectContent className="border-white/10 bg-[#0a0f1d] text-slate-100">
                     <SelectItem value="recent">Mais recentes</SelectItem>
                     <SelectItem value="spread_desc">Maior diferença ($)</SelectItem>
                     <SelectItem value="spread_pct_desc">Maior diferença (%)</SelectItem>
@@ -621,7 +733,7 @@ export default function MatchesPage() {
                 <Button
                   onClick={applyFilters}
                   disabled={loading}
-                  className="bg-emerald-500 hover:bg-emerald-400 text-white"
+                  className="bg-indigo-500 hover:bg-indigo-400 text-white transition-all duration-150 hover:shadow-[0_10px_25px_rgba(99,102,241,0.18)]"
                 >
                   Aplicar
                 </Button>
@@ -629,7 +741,10 @@ export default function MatchesPage() {
                   onClick={clearFilters}
                   disabled={loading}
                   variant="outline"
-                  className="border-white/10 bg-white/5 text-slate-100 hover:bg-white/10"
+                  className={cn(
+                    "border-white/10 bg-white/5 text-slate-100 hover:bg-white/10 transition-all duration-150",
+                    "hover:border-white/20"
+                  )}
                 >
                   Limpar
                 </Button>
@@ -649,25 +764,72 @@ export default function MatchesPage() {
               <div className="grid grid-cols-[1fr_auto_1fr] items-center px-4 py-3">
                 <div />
                 <div className="text-sm font-semibold text-slate-100 text-center">Produtos</div>
+
                 <div className="flex items-center justify-end gap-2">
                   <div className="text-xs text-slate-300">
                     Página <b className="text-slate-100">{page}</b> / {Math.max(1, totalPages)}
                   </div>
+
+                  {/* Jump controls */}
                   <Button
                     variant="outline"
-                    className="h-8 border-white/10 bg-white/5 px-3 text-xs text-slate-100 hover:bg-white/10"
+                    className={cn(outlineBtnCls, "px-2")}
+                    disabled={page <= 1 || loading}
+                    onClick={goFirst}
+                    aria-label="Ir para primeira página"
+                    title="Primeira"
+                  >
+                    «
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className={cn(outlineBtnCls, "px-2")}
+                    disabled={page <= 1 || loading}
+                    onClick={goPrev10}
+                    aria-label="Voltar 10 páginas"
+                    title="Voltar 10"
+                  >
+                    ‹‹
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className={cn(outlineBtnCls, "px-2")}
                     disabled={!canPrev || loading}
                     onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    aria-label="Página anterior"
+                    title="Anterior"
                   >
                     ←
                   </Button>
                   <Button
                     variant="outline"
-                    className="h-8 border-white/10 bg-white/5 px-3 text-xs text-slate-100 hover:bg-white/10"
+                    className={cn(outlineBtnCls, "px-2")}
                     disabled={!canNext || loading}
                     onClick={() => setPage((p) => Math.min(Math.max(1, totalPages), p + 1))}
+                    aria-label="Próxima página"
+                    title="Próxima"
                   >
                     →
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className={cn(outlineBtnCls, "px-2")}
+                    disabled={page >= totalPages || loading}
+                    onClick={goNext10}
+                    aria-label="Avançar 10 páginas"
+                    title="Avançar 10"
+                  >
+                    ››
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className={cn(outlineBtnCls, "px-2")}
+                    disabled={page >= totalPages || loading}
+                    onClick={goLast}
+                    aria-label="Ir para última página"
+                    title="Última"
+                  >
+                    »
                   </Button>
                 </div>
               </div>
@@ -734,6 +896,9 @@ export default function MatchesPage() {
 
                         const cat = it.amazon_category_root || "—";
                         const sub = it.amazon_category_child || "—";
+
+                        const offersQuery = `${it.amazon_brand ?? ""} ${it.amazon_title ?? it.asin}`.trim();
+                        const ebayOffersUrl = makeEbaySearchUrl(offersQuery);
 
                         return (
                           <TableRow
@@ -819,7 +984,7 @@ export default function MatchesPage() {
                                   asChild
                                   variant="outline"
                                   className={cn(
-                                    "h-8 border-white/10 bg-white/5 px-2 text-xs text-slate-100 hover:bg-white/10",
+                                    "h-8 border-white/10 bg-white/5 px-2 text-xs text-slate-100 hover:bg-white/10 hover:border-white/20 transition-all duration-150 cursor-pointer",
                                     !it.amazon_url && "opacity-50 pointer-events-none"
                                   )}
                                 >
@@ -832,12 +997,22 @@ export default function MatchesPage() {
                                   asChild
                                   variant="outline"
                                   className={cn(
-                                    "h-8 border-white/10 bg-white/5 px-2 text-xs text-slate-100 hover:bg-white/10",
+                                    "h-8 border-white/10 bg-white/5 px-2 text-xs text-slate-100 hover:bg-white/10 hover:border-white/20 transition-all duration-150 cursor-pointer",
                                     !it.ebay_url && "opacity-50 pointer-events-none"
                                   )}
                                 >
                                   <Link href={it.ebay_url ?? "#"} target="_blank">
                                     eBay
+                                  </Link>
+                                </Button>
+
+                                <Button
+                                  asChild
+                                  variant="outline"
+                                  className="h-8 border-indigo-400/20 bg-indigo-400/10 px-2 text-xs text-indigo-100 hover:bg-indigo-400/15 hover:border-indigo-300/30 transition-all duration-150 cursor-pointer"
+                                >
+                                  <Link href={ebayOffersUrl} target="_blank">
+                                    + ofertas
                                   </Link>
                                 </Button>
                               </div>
