@@ -9,7 +9,8 @@ from pydantic import BaseModel
 class MatchItem(BaseModel):
     created_at: datetime
 
-    match_method: str
+    # pode vir NULL do banco dependendo do caso (validated_method)
+    match_method: Optional[str] = None
     match_score: float
     image_distance: Optional[int] = None
 
