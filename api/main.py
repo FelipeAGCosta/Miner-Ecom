@@ -8,7 +8,7 @@ from sqlalchemy import text
 from lib.config import make_engine
 from api.models import MatchListResponse, MatchItem
 
-app = FastAPI(title="miner-ecom API", version="0.4.3")
+app = FastAPI(title="miner-ecom API", version="0.4.4")
 
 DEFAULT_MEDIA_REGEX = r"(movie|movies|dvd|blu(\s|-)?ray|book|books|kindle|music|cd|vinyl|video\s?game|video\s?games|tv)"
 
@@ -93,6 +93,9 @@ def list_matches(
     ebay_price_min: Optional[float] = None,
     ebay_price_max: Optional[float] = None,
     ebay_condition: Optional[str] = None,
+
+    # NOVO: estoque eBay (min_available_qty)
+    ebay_stock_min: Optional[int] = Query(None, ge=0),
 
     # ordenação
     sort: str = Query("recent"),
@@ -207,6 +210,11 @@ def list_matches(
             where.append("el.`condition` = :eb_cond")
             params["eb_cond"] = str(ebay_condition).strip()
 
+    # -------- eBay stock filter (novo) --------
+    if ebay_stock_min is not None:
+        where.append("el.min_available_qty >= :eb_stock_min")
+        params["eb_stock_min"] = int(ebay_stock_min)
+
     where_sql = " AND ".join(where) if where else "1=1"
 
     sort_map = {
@@ -227,7 +235,6 @@ def list_matches(
         WHERE {where_sql}
     """)
 
-    # NOTE: removido amazon_seller (não existe no seu schema)
     sql_items = text(f"""
         WITH filtered AS (
           SELECT
@@ -260,6 +267,15 @@ def list_matches(
             el.`condition` AS ebay_condition,
             el.seller AS ebay_seller,
             el.item_url AS ebay_url,
+
+            -- NOVO: estoque
+            el.available_qty AS ebay_available_qty,
+            el.qty_flag AS ebay_qty_flag,
+            el.min_available_qty AS ebay_min_available_qty,
+            el.availability_status AS ebay_availability_status,
+            el.availability_threshold_type AS ebay_availability_threshold_type,
+            el.availability_threshold AS ebay_availability_threshold,
+            el.availability_updated_at AS ebay_availability_updated_at,
 
             (ap.price - el.price) AS spread,
             CASE
@@ -308,6 +324,14 @@ def list_matches(
           ebay_condition,
           ebay_seller,
           ebay_url,
+
+          ebay_available_qty,
+          ebay_qty_flag,
+          ebay_min_available_qty,
+          ebay_availability_status,
+          ebay_availability_threshold_type,
+          ebay_availability_threshold,
+          ebay_availability_updated_at,
 
           spread,
           spread_pct
