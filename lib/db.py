@@ -150,7 +150,7 @@ def sql_safe_frame(df: pd.DataFrame) -> pd.DataFrame:
     Normaliza DataFrame de listings do eBay para inserção na tabela ebay_listing.
 
     - Garante que todas as colunas esperadas existam.
-    - Converte valores numéricos (price, available_qty, category_id).
+    - Converte valores numéricos (price, available_qty, category_id, thresholds, min_available_qty).
     - Normaliza `condition` e `currency` (fallback USD).
     - Converte NaN/NA para None (compatível com drivers MySQL).
     """
@@ -166,6 +166,11 @@ def sql_safe_frame(df: pd.DataFrame) -> pd.DataFrame:
         "currency",
         "available_qty",
         "qty_flag",
+        "availability_threshold_type",
+        "availability_threshold",
+        "availability_status",
+        "min_available_qty",
+        "availability_updated_at",
         "condition",
         "seller",
         "category_id",
@@ -183,6 +188,13 @@ def sql_safe_frame(df: pd.DataFrame) -> pd.DataFrame:
 
     qty = pd.to_numeric(df["available_qty"], errors="coerce")
     df["available_qty"] = qty.where(qty.notna(), None)
+
+    thr = pd.to_numeric(df["availability_threshold"], errors="coerce")
+    df["availability_threshold"] = thr.where(thr.notna(), None)
+
+    minq = pd.to_numeric(df["min_available_qty"], errors="coerce")
+    # default: 1 quando vazio
+    df["min_available_qty"] = minq.where(minq.notna(), 1).astype("Int64")
 
     cat = pd.to_numeric(df["category_id"], errors="coerce").astype("Int64")
     df["category_id"] = cat.where(cat.notna(), None)
@@ -214,9 +226,23 @@ def sql_safe_frame(df: pd.DataFrame) -> pd.DataFrame:
 
     df["currency"] = df["currency"].apply(_norm_currency)
 
+    def _norm_upper(v: Any) -> Optional[str]:
+        if v is None or v is pd.NA:
+            return None
+        if isinstance(v, float) and np.isnan(v):
+            return None
+        s = str(v).strip()
+        if not s:
+            return None
+        return s.upper()
+
+    df["qty_flag"] = df["qty_flag"].apply(_norm_upper)
+    df["availability_threshold_type"] = df["availability_threshold_type"].apply(_norm_upper)
+    df["availability_status"] = df["availability_status"].apply(_norm_upper)
+
     df["image_url"] = df["image_url"].apply(lambda v: _clean_scalar(v))
 
-    for c in ("first_seen_at", "fetched_at"):
+    for c in ("first_seen_at", "fetched_at", "availability_updated_at"):
         df[c] = pd.to_datetime(df[c], errors="coerce")
         df[c] = df[c].where(df[c].notna(), None)
 
@@ -233,6 +259,7 @@ def upsert_ebay_listings(engine, df: pd.DataFrame, chunk_size: int = 500) -> int
     Fix importante:
     - Para colunas NUMÉRICAS (DECIMAL/INT/etc), NÃO usar NULLIF(...,'') no UPDATE,
       pois MySQL pode dar "Truncated incorrect DECIMAL value: ''".
+    - Para DATETIME/TIMESTAMP/DATE, também não usar NULLIF(...,'') (trata como "não-texto").
     """
     if df is None or df.empty:
         return 0
@@ -250,11 +277,16 @@ def upsert_ebay_listings(engine, df: pd.DataFrame, chunk_size: int = 500) -> int
         "int", "bigint", "smallint", "mediumint", "tinyint",
         "year",
     }
+    datetime_types = {"datetime", "timestamp", "date"}
+
     numeric_cols = {c for c, t in cols_info.items() if t in numeric_types}
+    datetime_cols = {c for c, t in cols_info.items() if t in datetime_types}
 
     wanted = [
         "item_id", "title", "brand", "mpn", "gtin",
         "price", "currency", "available_qty", "qty_flag",
+        "availability_threshold_type", "availability_threshold",
+        "availability_status", "min_available_qty", "availability_updated_at",
         "condition", "seller", "category_id",
         "item_url", "image_url",
         "first_seen_at", "fetched_at",
@@ -287,7 +319,7 @@ def upsert_ebay_listings(engine, df: pd.DataFrame, chunk_size: int = 500) -> int
     def _upd_keep_text(col: str) -> str:
         return f"`{col}` = COALESCE(NULLIF(VALUES(`{col}`), ''), `{col}`)"
 
-    def _upd_keep_numeric(col: str) -> str:
+    def _upd_keep_nontext(col: str) -> str:
         return f"`{col}` = COALESCE(VALUES(`{col}`), `{col}`)"
 
     update_parts: List[str] = []
@@ -301,8 +333,8 @@ def upsert_ebay_listings(engine, df: pd.DataFrame, chunk_size: int = 500) -> int
     for c in cols:
         if c in ("item_id", "first_seen_at", "fetched_at"):
             continue
-        if c in numeric_cols:
-            update_parts.append(_upd_keep_numeric(c))
+        if c in numeric_cols or c in datetime_cols:
+            update_parts.append(_upd_keep_nontext(c))
         else:
             update_parts.append(_upd_keep_text(c))
 
