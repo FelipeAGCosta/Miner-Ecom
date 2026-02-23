@@ -8,7 +8,7 @@ from sqlalchemy import text
 from lib.config import make_engine
 from api.models import MatchListResponse, MatchItem
 
-app = FastAPI(title="miner-ecom API", version="0.4.4")
+app = FastAPI(title="miner-ecom API", version="0.4.5")
 
 DEFAULT_MEDIA_REGEX = r"(movie|movies|dvd|blu(\s|-)?ray|book|books|kindle|music|cd|vinyl|video\s?game|video\s?games|tv)"
 
@@ -94,11 +94,12 @@ def list_matches(
     ebay_price_max: Optional[float] = None,
     ebay_condition: Optional[str] = None,
 
-    # NOVO: estoque eBay (min_available_qty)
+    # estoque eBay (min_available_qty)
     ebay_stock_min: Optional[int] = Query(None, ge=0),
 
     # ordenação
-    sort: str = Query("recent"),
+    # default agora alinhado com o comportamento desejado da UI (Amazon menor -> maior)
+    sort: str = Query("amazon_price_asc"),
 
     # mostrar mídia?
     include_media: int = Query(0, ge=0, le=1),
@@ -119,13 +120,13 @@ def list_matches(
     where.append(
         "("
         " ("
-        "   (mo.validated_method = 'GTIN' OR (mo.validated_method IS NULL AND ap.gtin IS NOT NULL))"
-        "   AND (mo.image_distance IS NULL OR mo.image_distance <= :gtin_max_dist)"
+        "   ((mo.validated_method = 'GTIN' OR (mo.validated_method IS NULL AND ap.gtin IS NOT NULL))"
+        "    AND (mo.image_distance IS NULL OR mo.image_distance <= :gtin_max_dist))"
         " )"
         " OR "
         " ("
-        "   (mo.validated_method <> 'GTIN' OR (mo.validated_method IS NULL AND ap.gtin IS NULL))"
-        "   AND mo.image_distance IS NOT NULL AND mo.image_distance <= :max_dist"
+        "   ((mo.validated_method <> 'GTIN' OR (mo.validated_method IS NULL AND ap.gtin IS NULL))"
+        "    AND mo.image_distance IS NOT NULL AND mo.image_distance <= :max_dist)"
         " )"
         ")"
     )
@@ -210,22 +211,39 @@ def list_matches(
             where.append("el.`condition` = :eb_cond")
             params["eb_cond"] = str(ebay_condition).strip()
 
-    # -------- eBay stock filter (novo) --------
+    # -------- eBay stock filter --------
     if ebay_stock_min is not None:
         where.append("el.min_available_qty >= :eb_stock_min")
         params["eb_stock_min"] = int(ebay_stock_min)
 
     where_sql = " AND ".join(where) if where else "1=1"
 
+    # -----------------------------------------
+    # Ordenação
+    # - NULLs por último (campo IS NULL ASC => não-null primeiro)
+    # - tie-breaker asin ASC pra ficar determinístico (evitar “embaralhar”)
+    # -----------------------------------------
     sort_map = {
-        "recent": "created_at DESC",
-        "spread_desc": "spread DESC, created_at DESC",
-        "spread_pct_desc": "spread_pct DESC, created_at DESC",
-        "ebay_price_asc": "ebay_price ASC, created_at DESC",
-        "amazon_bsr_asc": "amazon_bsr ASC, created_at DESC",
-        "match_score_desc": "match_score DESC, created_at DESC",
+        # antigos
+        "recent": "created_at DESC, asin ASC",
+        "spread_desc": "spread IS NULL ASC, spread DESC, asin ASC",
+        "spread_pct_desc": "spread_pct IS NULL ASC, spread_pct DESC, asin ASC",
+        "ebay_price_asc": "ebay_price IS NULL ASC, ebay_price ASC, asin ASC",
+        "amazon_bsr_asc": "amazon_bsr IS NULL ASC, amazon_bsr ASC, asin ASC",
+        "match_score_desc": "match_score DESC, created_at DESC, asin ASC",
+
+        # novos (necessários pro sort automático do front)
+        "amazon_price_asc": "amazon_price IS NULL ASC, amazon_price ASC, asin ASC",
+        "amazon_price_desc": "amazon_price IS NULL ASC, amazon_price DESC, asin ASC",
+        "ebay_price_desc": "ebay_price IS NULL ASC, ebay_price DESC, asin ASC",
+        "ebay_stock_asc": (
+            "ebay_min_available_qty IS NULL ASC, ebay_min_available_qty ASC, "
+            "amazon_price IS NULL ASC, amazon_price ASC, asin ASC"
+        ),
     }
-    order_by = sort_map.get((sort or "").strip().lower(), sort_map["recent"])
+
+    sort_key = (sort or "").strip().lower()
+    order_by = sort_map.get(sort_key, sort_map["amazon_price_asc"])
 
     sql_total = text(f"""
         SELECT COUNT(DISTINCT mo.asin)
@@ -268,7 +286,7 @@ def list_matches(
             el.seller AS ebay_seller,
             el.item_url AS ebay_url,
 
-            -- NOVO: estoque
+            -- estoque
             el.available_qty AS ebay_available_qty,
             el.qty_flag AS ebay_qty_flag,
             el.min_available_qty AS ebay_min_available_qty,
