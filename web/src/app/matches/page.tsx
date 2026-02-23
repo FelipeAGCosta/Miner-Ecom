@@ -24,7 +24,18 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Menu, X, User, CreditCard, BadgeCheck, Search, ChevronsLeft, ChevronsRight, ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  Menu,
+  X,
+  User,
+  CreditCard,
+  BadgeCheck,
+  Search,
+  ChevronsLeft,
+  ChevronsRight,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
 
 type CategoryTree = {
   categories: Array<{ name: string; children: string[] }>;
@@ -32,6 +43,7 @@ type CategoryTree = {
 
 type MatchItem = {
   asin: string;
+
   amazon_title: string | null;
   amazon_brand: string | null;
   amazon_condition: string | null;
@@ -42,6 +54,7 @@ type MatchItem = {
   amazon_fulfillment: string | null;
   amazon_image_url: string | null;
   amazon_url: string | null;
+
   amazon_category_root?: string | null;
   amazon_category_child?: string | null;
 
@@ -51,6 +64,9 @@ type MatchItem = {
   ebay_condition: string | null;
   ebay_seller: string | null;
   ebay_url: string | null;
+
+  // vem do backend (FastAPI): el.min_available_qty AS ebay_min_available_qty
+  ebay_min_available_qty?: number | null;
 };
 
 type MatchesResponse = {
@@ -62,6 +78,7 @@ type MatchesResponse = {
 
 type Filters = {
   palavraChave: string;
+
   categoria: string; // "__ALL__" = todas
   subcategoria: string; // "__ALL__" = todas
 
@@ -69,25 +86,22 @@ type Filters = {
   precoAmazonMax: string;
   somentePrime: boolean;
   logisticaAmazon: "QUALQUER" | "FBA" | "FBM";
-  condicaoAmazon: "QUALQUER" | "NOVO" | "USADO" | "RECONDICIONADO" | "DESCONHECIDA";
+  condicaoAmazon:
+    | "QUALQUER"
+    | "NOVO"
+    | "USADO"
+    | "RECONDICIONADO"
+    | "DESCONHECIDA";
 
-  // (placeholder UI) Quantidade de vendas nos últimos 30 dias (mínimo)
+  // (placeholder UI) ainda existe, mas NÃO influencia ordenação/badge
   amazon_sales_30d_min: string;
 
   precoEbayMin: string;
   precoEbayMax: string;
   condicaoEbay: "QUALQUER" | "NOVO" | "USADO" | "RECONDICIONADO";
 
-  // (placeholder UI) Quantidade mínima em estoque
+  // ✅ esse aqui liga badge + ordenação por estoque
   ebay_stock_min: string;
-
-  ordenarPor:
-    | "recent"
-    | "spread_desc"
-    | "spread_pct_desc"
-    | "ebay_price_asc"
-    | "amazon_bsr_asc"
-    | "match_score_desc";
 };
 
 const PAGE_SIZE = 10;
@@ -105,7 +119,10 @@ function fmtMoney(n: number | null, currency: string | null) {
   if (n == null) return "—";
   const cur = currency || "USD";
   try {
-    return new Intl.NumberFormat("pt-BR", { style: "currency", currency: cur }).format(n);
+    return new Intl.NumberFormat("pt-BR", {
+      style: "currency",
+      currency: cur,
+    }).format(n);
   } catch {
     return `${cur} ${n.toFixed(2)}`;
   }
@@ -133,7 +150,8 @@ function prettyCondPt(v: string | null) {
   if (!s) return "—";
   if (s.startsWith("new")) return "Novo";
   if (s.startsWith("used")) return "Usado";
-  if (s.includes("refurb") || s.includes("renew") || s.includes("recond")) return "Recondicionado";
+  if (s.includes("refurb") || s.includes("renew") || s.includes("recond"))
+    return "Recondicionado";
   return v!;
 }
 
@@ -168,7 +186,6 @@ export default function MatchesPage() {
     somentePrime: false,
     logisticaAmazon: "QUALQUER",
     condicaoAmazon: "QUALQUER",
-
     amazon_sales_30d_min: "",
 
     precoEbayMin: "",
@@ -176,8 +193,6 @@ export default function MatchesPage() {
     condicaoEbay: "QUALQUER",
 
     ebay_stock_min: "",
-
-    ordenarPor: "recent",
   });
 
   const [applied, setApplied] = useState<Filters>(filters);
@@ -203,7 +218,6 @@ export default function MatchesPage() {
     return found?.children ?? [];
   }, [rootOptions, selectedRoot]);
 
-  // remove entradas inválidas (ex: "-" que estava aparecendo)
   const rootChildren = useMemo(() => {
     const cleaned = rootChildrenRaw
       .map((x) => (x ?? "").toString())
@@ -212,13 +226,16 @@ export default function MatchesPage() {
     return Array.from(new Set(cleaned));
   }, [rootChildrenRaw]);
 
-  // reset subcategoria quando troca categoria
   useEffect(() => {
     if (filters.categoria === "__ALL__") {
-      if (filters.subcategoria !== "__ALL__") setFilters((f) => ({ ...f, subcategoria: "__ALL__" }));
+      if (filters.subcategoria !== "__ALL__")
+        setFilters((f) => ({ ...f, subcategoria: "__ALL__" }));
       return;
     }
-    if (filters.subcategoria !== "__ALL__" && !rootChildren.includes(filters.subcategoria)) {
+    if (
+      filters.subcategoria !== "__ALL__" &&
+      !rootChildren.includes(filters.subcategoria)
+    ) {
       setFilters((f) => ({ ...f, subcategoria: "__ALL__" }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -242,12 +259,36 @@ export default function MatchesPage() {
     loadCategories();
   }, []);
 
+  // ✅ ordenação automática (interna, sem opção pro usuário)
+  const effectiveSort = useMemo(() => {
+    const stockFilled = (applied.ebay_stock_min ?? "").trim() !== "";
+
+    const apMinFilled = (applied.precoAmazonMin ?? "").trim() !== "";
+    const apMaxFilled = (applied.precoAmazonMax ?? "").trim() !== "";
+
+    const ebMinFilled = (applied.precoEbayMin ?? "").trim() !== "";
+    const ebMaxFilled = (applied.precoEbayMax ?? "").trim() !== "";
+
+    // prioridade 1: estoque (quando usuário define mínimo)
+    if (stockFilled) return "ebay_stock_asc";
+
+    // prioridade 2: preço Amazon (se usuário mexeu em min/max da Amazon)
+    if (apMaxFilled && !apMinFilled) return "amazon_price_desc";
+    if (apMinFilled) return "amazon_price_asc";
+
+    // prioridade 3: preço eBay (se mexeu em min/max do eBay)
+    if (ebMaxFilled && !ebMinFilled) return "ebay_price_desc";
+    if (ebMinFilled) return "ebay_price_asc";
+
+    // default (sem filtros): Amazon menor → maior
+    return "amazon_price_asc";
+  }, [applied]);
+
   const query = useMemo(() => {
     const qs = new URLSearchParams();
     qs.set("page", String(page));
     qs.set("page_size", String(PAGE_SIZE));
 
-    // defaults internos
     qs.set("gtin_max_dist", String(GTIN_MAX_DIST));
     qs.set("max_image_distance", String(MAX_IMAGE_DISTANCE));
 
@@ -260,7 +301,6 @@ export default function MatchesPage() {
     const ebayStockMin = parseNumberOrNull(applied.ebay_stock_min);
 
     if (applied.palavraChave.trim()) qs.set("keyword", applied.palavraChave.trim());
-
     if (applied.categoria !== "__ALL__") qs.set("source_root_name", applied.categoria);
     if (applied.subcategoria !== "__ALL__") qs.set("source_child_name", applied.subcategoria);
 
@@ -268,12 +308,12 @@ export default function MatchesPage() {
     if (apMax != null) qs.set("amazon_price_max", String(apMax));
 
     if (applied.somentePrime) qs.set("prime_only", "1");
-    if (applied.logisticaAmazon !== "QUALQUER") qs.set("amazon_fulfillment", applied.logisticaAmazon);
+    if (applied.logisticaAmazon !== "QUALQUER")
+      qs.set("amazon_fulfillment", applied.logisticaAmazon);
 
     const ac = mapAmazonCondPtToApi(applied.condicaoAmazon);
     if (ac) qs.set("amazon_condition", ac);
 
-    // placeholders (backend ainda não usa; seguros para já deixar no front)
     if (amazonSales30dMin != null) qs.set("amazon_sales_30d_min", String(amazonSales30dMin));
 
     if (ebMin != null) qs.set("ebay_price_min", String(ebMin));
@@ -282,12 +322,13 @@ export default function MatchesPage() {
     const ec = mapEbayCondPtToApi(applied.condicaoEbay);
     if (ec) qs.set("ebay_condition", ec);
 
-    // placeholder (backend ainda não usa; seguro para já deixar no front)
     if (ebayStockMin != null) qs.set("ebay_stock_min", String(ebayStockMin));
 
-    qs.set("sort", applied.ordenarPor);
+    // ✅ sort automático
+    qs.set("sort", effectiveSort);
+
     return qs.toString();
-  }, [applied, page]);
+  }, [applied, page, effectiveSort]);
 
   async function loadMatches() {
     setLoading(true);
@@ -318,7 +359,14 @@ export default function MatchesPage() {
 
   function applyFilters() {
     setPage(1);
-    setApplied(filters);
+    setApplied({
+      ...filters,
+      precoAmazonMin: (filters.precoAmazonMin ?? "").trim(),
+      precoAmazonMax: (filters.precoAmazonMax ?? "").trim(),
+      precoEbayMin: (filters.precoEbayMin ?? "").trim(),
+      precoEbayMax: (filters.precoEbayMax ?? "").trim(),
+      ebay_stock_min: (filters.ebay_stock_min ?? "").trim(),
+    });
   }
 
   function clearFilters() {
@@ -332,7 +380,6 @@ export default function MatchesPage() {
       somentePrime: false,
       logisticaAmazon: "QUALQUER",
       condicaoAmazon: "QUALQUER",
-
       amazon_sales_30d_min: "",
 
       precoEbayMin: "",
@@ -340,26 +387,16 @@ export default function MatchesPage() {
       condicaoEbay: "QUALQUER",
 
       ebay_stock_min: "",
-
-      ordenarPor: "recent",
     };
     setPage(1);
     setFilters(reset);
     setApplied(reset);
   }
 
-  function goFirst() {
-    setPage(1);
-  }
-  function goLast() {
-    setPage(Math.max(1, totalPages));
-  }
-  function goPrev10() {
-    setPage((p) => Math.max(1, p - 10));
-  }
-  function goNext10() {
-    setPage((p) => Math.min(Math.max(1, totalPages), p + 10));
-  }
+  function goFirst() { setPage(1); }
+  function goLast() { setPage(Math.max(1, totalPages)); }
+  function goPrev10() { setPage((p) => Math.max(1, p - 10)); }
+  function goNext10() { setPage((p) => Math.min(Math.max(1, totalPages), p + 10)); }
 
   const inputCls =
     "border-white/10 bg-white/5 text-slate-100 placeholder:text-slate-400 transition-all duration-150 hover:border-white/20 focus-visible:ring-2 focus-visible:ring-indigo-400/35 focus-visible:ring-offset-0";
@@ -367,8 +404,7 @@ export default function MatchesPage() {
     "border-white/10 bg-white/5 text-slate-100 cursor-pointer transition-all duration-150 hover:border-white/20 hover:bg-white/10 focus:ring-2 focus:ring-indigo-400/35 focus:ring-offset-0";
   const outlineBtnCls =
     "border-white/10 bg-white/5 text-slate-100 hover:bg-white/10 hover:border-white/20 transition-all duration-150 cursor-pointer";
-  const iconBtnCls =
-    "h-10 w-10 px-0 grid place-items-center";
+  const iconBtnCls = "h-10 w-10 px-0 grid place-items-center";
 
   const navItems = [
     { label: "Minerar", icon: Search, href: "/matches", enabled: true },
@@ -376,6 +412,9 @@ export default function MatchesPage() {
     { label: "Assinatura", icon: CreditCard, href: "/assinatura", enabled: false },
     { label: "Aprovações", icon: BadgeCheck, href: "/aprovacoes", enabled: false },
   ];
+
+  // ✅ badge aparece SOMENTE se estoque mínimo estiver preenchido
+  const showStock = (applied.ebay_stock_min ?? "").trim() !== "";
 
   return (
     <div className="min-h-screen w-full overflow-x-hidden bg-[#0b1020] text-slate-100">
@@ -398,7 +437,6 @@ export default function MatchesPage() {
               <div className="text-xs text-slate-400">Menu</div>
             </div>
           </div>
-
           <Button
             variant="outline"
             className={cn(outlineBtnCls, iconBtnCls, "group")}
@@ -417,12 +455,10 @@ export default function MatchesPage() {
               const Icon = it.icon;
               const base =
                 "flex items-center justify-between rounded-xl px-3 py-2 transition-all duration-150";
-              const left =
-                "flex items-center gap-2 text-sm";
+              const left = "flex items-center gap-2 text-sm";
               const enabledCls =
                 "cursor-pointer hover:bg-white/5 hover:ring-1 hover:ring-white/10";
-              const disabledCls =
-                "opacity-60 cursor-not-allowed";
+              const disabledCls = "opacity-60 cursor-not-allowed";
 
               const content = (
                 <div className={cn(base, it.enabled ? enabledCls : disabledCls)}>
@@ -437,11 +473,7 @@ export default function MatchesPage() {
               );
 
               return it.enabled ? (
-                <Link
-                  key={it.label}
-                  href={it.href}
-                  onClick={() => setNavOpen(false)}
-                >
+                <Link key={it.label} href={it.href} onClick={() => setNavOpen(false)}>
                   {content}
                 </Link>
               ) : (
@@ -496,7 +528,8 @@ export default function MatchesPage() {
           <div className="text-center">
             <h1 className="text-2xl font-semibold tracking-tight">
               <span className="text-slate-100">
-                Mineração de Produtos <span className="text-indigo-200">MinerEcom</span>
+                Mineração de Produtos{" "}
+                <span className="text-indigo-200">MinerEcom</span>
               </span>
             </h1>
             <div className="mt-1 text-xs text-slate-400">
@@ -516,17 +549,24 @@ export default function MatchesPage() {
           {/* Filters */}
           <Card className="h-fit border-white/10 bg-white/5 lg:sticky lg:top-3">
             <CardContent className="space-y-4 p-4">
-              <div className="text-base font-semibold text-slate-100 text-center">Filtros</div>
+              <div className="text-base font-semibold text-slate-100 text-center">
+                Filtros
+              </div>
+
               <Separator className="bg-white/10" />
 
               <div className="space-y-2">
                 <div className="text-xs text-slate-300">
                   Palavra-chave{" "}
-                  <span className="text-slate-400">(Recomendação: escreva em inglês)</span>
+                  <span className="text-slate-400">
+                    (Recomendação: escreva em inglês)
+                  </span>
                 </div>
                 <Input
                   value={filters.palavraChave}
-                  onChange={(e) => setFilters((f) => ({ ...f, palavraChave: e.target.value }))}
+                  onChange={(e) =>
+                    setFilters((f) => ({ ...f, palavraChave: e.target.value }))
+                  }
                   placeholder="ex: kitchen brush, patio, lawn..."
                   className={cn(inputCls, "cursor-text")}
                 />
@@ -535,7 +575,10 @@ export default function MatchesPage() {
               {/* Categoria/Subcategoria */}
               <div className="space-y-2">
                 <div className="text-xs text-slate-300">Categoria</div>
-                <Select value={filters.categoria} onValueChange={(v) => setFilters((f) => ({ ...f, categoria: v }))}>
+                <Select
+                  value={filters.categoria}
+                  onValueChange={(v) => setFilters((f) => ({ ...f, categoria: v }))}
+                >
                   <SelectTrigger className={cn(triggerCls, "group")}>
                     <SelectValue placeholder={catLoading ? "Carregando..." : "Todas"} />
                   </SelectTrigger>
@@ -554,11 +597,24 @@ export default function MatchesPage() {
                 <div className="text-xs text-slate-300">Subcategoria</div>
                 <Select
                   value={filters.subcategoria}
-                  onValueChange={(v) => setFilters((f) => ({ ...f, subcategoria: v }))}
+                  onValueChange={(v) =>
+                    setFilters((f) => ({ ...f, subcategoria: v }))
+                  }
                   disabled={filters.categoria === "__ALL__"}
                 >
-                  <SelectTrigger className={cn(triggerCls, filters.categoria === "__ALL__" && "opacity-60 cursor-not-allowed")}>
-                    <SelectValue placeholder={filters.categoria === "__ALL__" ? "Selecione uma categoria" : "Todas"} />
+                  <SelectTrigger
+                    className={cn(
+                      triggerCls,
+                      filters.categoria === "__ALL__" && "opacity-60 cursor-not-allowed"
+                    )}
+                  >
+                    <SelectValue
+                      placeholder={
+                        filters.categoria === "__ALL__"
+                          ? "Selecione uma categoria"
+                          : "Todas"
+                      }
+                    />
                   </SelectTrigger>
                   <SelectContent className="border-white/10 bg-[#0a0f1d] text-slate-100">
                     <SelectItem value="__ALL__">Todas</SelectItem>
@@ -577,7 +633,9 @@ export default function MatchesPage() {
               <div className="rounded-xl border border-white/10 bg-white/5 p-3">
                 <div className="mb-2 flex items-center justify-between">
                   <div className="text-xs font-semibold text-slate-100">Filtros Amazon</div>
-                  <Badge className="border border-white/10 bg-white/5 text-slate-100">Amazon</Badge>
+                  <Badge className="border border-white/10 bg-white/5 text-slate-100">
+                    Amazon
+                  </Badge>
                 </div>
 
                 <div className="space-y-2">
@@ -586,14 +644,18 @@ export default function MatchesPage() {
                     <Input
                       inputMode="decimal"
                       value={filters.precoAmazonMin}
-                      onChange={(e) => setFilters((f) => ({ ...f, precoAmazonMin: e.target.value }))}
+                      onChange={(e) =>
+                        setFilters((f) => ({ ...f, precoAmazonMin: e.target.value }))
+                      }
                       placeholder="mín"
                       className={cn(inputCls, "cursor-text")}
                     />
                     <Input
                       inputMode="decimal"
                       value={filters.precoAmazonMax}
-                      onChange={(e) => setFilters((f) => ({ ...f, precoAmazonMax: e.target.value }))}
+                      onChange={(e) =>
+                        setFilters((f) => ({ ...f, precoAmazonMax: e.target.value }))
+                      }
                       placeholder="máx"
                       className={cn(inputCls, "cursor-text")}
                     />
@@ -604,7 +666,9 @@ export default function MatchesPage() {
                   <Checkbox
                     id="primeOnly"
                     checked={filters.somentePrime}
-                    onCheckedChange={(v) => setFilters((f) => ({ ...f, somentePrime: Boolean(v) }))}
+                    onCheckedChange={(v) =>
+                      setFilters((f) => ({ ...f, somentePrime: Boolean(v) }))
+                    }
                   />
                   <Label
                     htmlFor="primeOnly"
@@ -616,7 +680,12 @@ export default function MatchesPage() {
 
                 <div className="mt-2 space-y-2">
                   <div className="text-xs text-slate-300">Logística</div>
-                  <Select value={filters.logisticaAmazon} onValueChange={(v) => setFilters((f) => ({ ...f, logisticaAmazon: v as any }))}>
+                  <Select
+                    value={filters.logisticaAmazon}
+                    onValueChange={(v) =>
+                      setFilters((f) => ({ ...f, logisticaAmazon: v as any }))
+                    }
+                  >
                     <SelectTrigger className={triggerCls}>
                       <SelectValue placeholder="Qualquer" />
                     </SelectTrigger>
@@ -630,7 +699,12 @@ export default function MatchesPage() {
 
                 <div className="mt-2 space-y-2">
                   <div className="text-xs text-slate-300">Condição</div>
-                  <Select value={filters.condicaoAmazon} onValueChange={(v) => setFilters((f) => ({ ...f, condicaoAmazon: v as any }))}>
+                  <Select
+                    value={filters.condicaoAmazon}
+                    onValueChange={(v) =>
+                      setFilters((f) => ({ ...f, condicaoAmazon: v as any }))
+                    }
+                  >
                     <SelectTrigger className={triggerCls}>
                       <SelectValue placeholder="Qualquer" />
                     </SelectTrigger>
@@ -644,13 +718,14 @@ export default function MatchesPage() {
                   </Select>
                 </div>
 
-                {/* Placeholder: Vendas 30 dias */}
                 <div className="mt-2 space-y-2">
                   <div className="text-xs text-slate-300">Quantidade de vendas nos últimos 30 dias:</div>
                   <Input
                     inputMode="numeric"
                     value={filters.amazon_sales_30d_min}
-                    onChange={(e) => setFilters((f) => ({ ...f, amazon_sales_30d_min: e.target.value }))}
+                    onChange={(e) =>
+                      setFilters((f) => ({ ...f, amazon_sales_30d_min: e.target.value }))
+                    }
                     placeholder="mín"
                     className={cn(inputCls, "cursor-text")}
                   />
@@ -661,7 +736,9 @@ export default function MatchesPage() {
               <div className="rounded-xl border border-white/10 bg-white/5 p-3">
                 <div className="mb-2 flex items-center justify-between">
                   <div className="text-xs font-semibold text-slate-100">Filtros eBay</div>
-                  <Badge className="border border-white/10 bg-white/5 text-slate-100">eBay</Badge>
+                  <Badge className="border border-white/10 bg-white/5 text-slate-100">
+                    eBay
+                  </Badge>
                 </div>
 
                 <div className="space-y-2">
@@ -670,14 +747,18 @@ export default function MatchesPage() {
                     <Input
                       inputMode="decimal"
                       value={filters.precoEbayMin}
-                      onChange={(e) => setFilters((f) => ({ ...f, precoEbayMin: e.target.value }))}
+                      onChange={(e) =>
+                        setFilters((f) => ({ ...f, precoEbayMin: e.target.value }))
+                      }
                       placeholder="mín"
                       className={cn(inputCls, "cursor-text")}
                     />
                     <Input
                       inputMode="decimal"
                       value={filters.precoEbayMax}
-                      onChange={(e) => setFilters((f) => ({ ...f, precoEbayMax: e.target.value }))}
+                      onChange={(e) =>
+                        setFilters((f) => ({ ...f, precoEbayMax: e.target.value }))
+                      }
                       placeholder="máx"
                       className={cn(inputCls, "cursor-text")}
                     />
@@ -686,7 +767,12 @@ export default function MatchesPage() {
 
                 <div className="mt-2 space-y-2">
                   <div className="text-xs text-slate-300">Condição</div>
-                  <Select value={filters.condicaoEbay} onValueChange={(v) => setFilters((f) => ({ ...f, condicaoEbay: v as any }))}>
+                  <Select
+                    value={filters.condicaoEbay}
+                    onValueChange={(v) =>
+                      setFilters((f) => ({ ...f, condicaoEbay: v as any }))
+                    }
+                  >
                     <SelectTrigger className={triggerCls}>
                       <SelectValue placeholder="Qualquer" />
                     </SelectTrigger>
@@ -699,36 +785,18 @@ export default function MatchesPage() {
                   </Select>
                 </div>
 
-                {/* Placeholder: Estoque mínimo */}
                 <div className="mt-2 space-y-2">
                   <div className="text-xs text-slate-300">Quantidade mínima em estoque:</div>
                   <Input
                     inputMode="numeric"
                     value={filters.ebay_stock_min}
-                    onChange={(e) => setFilters((f) => ({ ...f, ebay_stock_min: e.target.value }))}
+                    onChange={(e) =>
+                      setFilters((f) => ({ ...f, ebay_stock_min: e.target.value }))
+                    }
                     placeholder="mín"
                     className={cn(inputCls, "cursor-text")}
                   />
                 </div>
-              </div>
-
-              <Separator className="bg-white/10" />
-
-              <div className="space-y-2">
-                <div className="text-xs text-slate-300">Ordenar por</div>
-                <Select value={filters.ordenarPor} onValueChange={(v) => setFilters((f) => ({ ...f, ordenarPor: v as any }))}>
-                  <SelectTrigger className={triggerCls}>
-                    <SelectValue placeholder="Mais recentes" />
-                  </SelectTrigger>
-                  <SelectContent className="border-white/10 bg-[#0a0f1d] text-slate-100">
-                    <SelectItem value="recent">Mais recentes</SelectItem>
-                    <SelectItem value="spread_desc">Maior diferença ($)</SelectItem>
-                    <SelectItem value="spread_pct_desc">Maior diferença (%)</SelectItem>
-                    <SelectItem value="ebay_price_asc">eBay mais barato</SelectItem>
-                    <SelectItem value="amazon_bsr_asc">Melhor BSR (menor)</SelectItem>
-                    <SelectItem value="match_score_desc">Maior score</SelectItem>
-                  </SelectContent>
-                </Select>
               </div>
 
               <div className="grid grid-cols-2 gap-2 pt-2">
@@ -763,77 +831,65 @@ export default function MatchesPage() {
           {/* Results */}
           <Card className="min-w-0 border-white/10 bg-white/5">
             <CardContent className="p-0">
+              {/* Paginação */}
               <div className="grid grid-cols-[1fr_auto_1fr] items-center px-4 py-3">
                 <div />
-                <div className="text-sm font-semibold text-slate-100 text-center"></div>
-
+                <div />
                 <div className="flex items-center justify-end gap-2">
                   <div className="text-xs text-slate-300 mr-1">
                     Página <b className="text-slate-100">{page}</b> / {Math.max(1, totalPages)}
                   </div>
-
                   <div className="flex items-center gap-1">
                     <Button
                       variant="outline"
                       className={cn(outlineBtnCls, "h-9 w-9 p-0 grid place-items-center")}
                       disabled={page <= 1 || loading}
                       onClick={goFirst}
-                      aria-label="Ir para primeira página"
                       title="Primeira"
                     >
                       <ChevronsLeft className="h-4 w-4 text-slate-100 opacity-95" />
                     </Button>
-
                     <Button
                       variant="outline"
                       className={cn(outlineBtnCls, "h-9 w-9 p-0 grid place-items-center")}
                       disabled={page <= 1 || loading}
                       onClick={goPrev10}
-                      aria-label="Voltar 10 páginas"
                       title="Voltar 10"
                     >
                       <ChevronsLeft className="h-4 w-4 text-slate-100 opacity-95 -translate-x-[1px]" />
                     </Button>
-
                     <Button
                       variant="outline"
                       className={cn(outlineBtnCls, "h-9 w-9 p-0 grid place-items-center")}
                       disabled={!canPrev || loading}
                       onClick={() => setPage((p) => Math.max(1, p - 1))}
-                      aria-label="Página anterior"
                       title="Anterior"
                     >
                       <ChevronLeft className="h-4 w-4 text-slate-100 opacity-95" />
                     </Button>
-
                     <Button
                       variant="outline"
                       className={cn(outlineBtnCls, "h-9 w-9 p-0 grid place-items-center")}
                       disabled={!canNext || loading}
-                      onClick={() => setPage((p) => Math.min(Math.max(1, totalPages), p + 1))}
-                      aria-label="Próxima página"
+                      onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                       title="Próxima"
                     >
                       <ChevronRight className="h-4 w-4 text-slate-100 opacity-95" />
                     </Button>
-
                     <Button
                       variant="outline"
                       className={cn(outlineBtnCls, "h-9 w-9 p-0 grid place-items-center")}
                       disabled={page >= totalPages || loading}
                       onClick={goNext10}
-                      aria-label="Avançar 10 páginas"
                       title="Avançar 10"
                     >
                       <ChevronsRight className="h-4 w-4 text-slate-100 opacity-95 translate-x-[1px]" />
                     </Button>
-
                     <Button
                       variant="outline"
                       className={cn(outlineBtnCls, "h-9 w-9 p-0 grid place-items-center")}
                       disabled={page >= totalPages || loading}
                       onClick={goLast}
-                      aria-label="Ir para última página"
                       title="Última"
                     >
                       <ChevronsRight className="h-4 w-4 text-slate-100 opacity-95" />
@@ -844,21 +900,11 @@ export default function MatchesPage() {
 
               <Separator className="bg-white/10" />
 
-              {error && (
-                <div className="px-4 pt-4 text-sm text-red-200">
-                  Erro ao buscar dados: <span className="text-red-100">{error}</span>
-                </div>
-              )}
-
               {loading ? (
                 <div className="px-4 py-6 text-sm text-slate-300">Carregando…</div>
               ) : items.length === 0 ? (
                 <div className="px-4 py-10 text-sm text-slate-300">
                   Nenhum resultado com os filtros atuais.
-                  <div className="mt-2 text-xs text-slate-400">
-                    Dica: clique em <b className="text-slate-200">Limpar</b> e depois{" "}
-                    <b className="text-slate-200">Aplicar</b>.
-                  </div>
                 </div>
               ) : (
                 <div className="min-w-0 overflow-x-hidden">
@@ -902,11 +948,11 @@ export default function MatchesPage() {
                             </Badge>
                           );
 
-                        const cat = it.amazon_category_root || "—";
-                        const sub = it.amazon_category_child || "—";
-
                         const offersQuery = `${it.amazon_brand ?? ""} ${it.amazon_title ?? it.asin}`.trim();
                         const ebayOffersUrl = makeEbaySearchUrl(offersQuery);
+
+                        const minQty = it.ebay_min_available_qty ?? null;
+                        const shouldShowStockBadge = showStock && minQty != null;
 
                         return (
                           <TableRow
@@ -950,8 +996,10 @@ export default function MatchesPage() {
                                   </div>
 
                                   <div className="mt-2 text-xs text-slate-300">
-                                    Categoria: <b className="text-slate-100">{cat}</b> • Sub:{" "}
-                                    <b className="text-slate-100">{sub}</b>
+                                    Categoria:{" "}
+                                    <b className="text-slate-100">{it.amazon_category_root ?? "—"}</b>{" "}
+                                    • Sub:{" "}
+                                    <b className="text-slate-100">{it.amazon_category_child ?? "—"}</b>
                                   </div>
                                 </div>
                               </div>
@@ -967,8 +1015,7 @@ export default function MatchesPage() {
                                   <b className="text-slate-100">{prettyCondPt(it.amazon_condition)}</b>
                                 </div>
                                 <div className="flex flex-wrap gap-2 justify-center">
-                                  {badgePrime}
-                                  {badgeFB}
+                                  {badgePrime} {badgeFB}
                                 </div>
                               </div>
                             </TableCell>
@@ -985,6 +1032,14 @@ export default function MatchesPage() {
                                 <div className="text-slate-300">
                                   Vendedor: <b className="text-slate-100">{it.ebay_seller ?? "—"}</b>
                                 </div>
+
+                                {shouldShowStockBadge && (
+                                  <div className="flex justify-center">
+                                    <Badge className="border border-pink-400/20 bg-pink-400/10 text-pink-200">
+                                      Estoque: +{minQty}
+                                    </Badge>
+                                  </div>
+                                )}
                               </div>
                             </TableCell>
 
