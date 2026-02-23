@@ -37,6 +37,13 @@ class MatchItem(BaseModel):
     ebay_condition: Optional[str] = None
     ebay_seller: Optional[str] = None
     ebay_url: Optional[str] = None
+    ebay_available_qty: Optional[int] = None
+    ebay_qty_flag: Optional[str] = None
+    ebay_min_available_qty: Optional[int] = None
+    ebay_availability_status: Optional[str] = None
+    ebay_availability_threshold_type: Optional[str] = None
+    ebay_availability_threshold: Optional[int] = None
+    ebay_availability_updated_at: Optional[datetime] = None
 
     spread: Optional[float] = None
     spread_pct: Optional[float] = None
