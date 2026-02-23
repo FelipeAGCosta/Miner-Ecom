@@ -108,6 +108,9 @@ const PAGE_SIZE = 10;
 const GTIN_MAX_DIST = 15;
 const MAX_IMAGE_DISTANCE = 8;
 
+// =====================
+// Helpers (parsing/format)
+// =====================
 function parseNumberOrNull(v: string): number | null {
   const s = (v ?? "").trim();
   if (!s) return null;
@@ -170,6 +173,32 @@ function cn(...classes: Array<string | false | null | undefined>) {
 function makeEbaySearchUrl(q: string) {
   const kw = encodeURIComponent((q || "").trim());
   return `https://www.ebay.com/sch/i.html?_nkw=${kw}`;
+}
+
+// =====================
+// Input sanitization (mantém visual, bloqueia letras/símbolos)
+// - decimais: apenas números + 1 separador (.,)
+// - inteiros: apenas números
+// =====================
+function sanitizeDecimalInput(raw: string) {
+  // mantém somente dígitos e separadores decimais
+  let s = (raw ?? "").replace(/[^\d.,]/g, "");
+
+  // permite somente 1 separador (o primeiro que aparecer)
+  const i = s.search(/[.,]/);
+  if (i !== -1) {
+    const sep = s[i];
+    const left = s.slice(0, i);
+    const right = s
+      .slice(i + 1)
+      .replace(/[.,]/g, ""); // remove separadores extras
+    s = left + sep + right;
+  }
+  return s;
+}
+
+function sanitizeIntInput(raw: string) {
+  return (raw ?? "").replace(/[^\d]/g, "");
 }
 
 export default function MatchesPage() {
@@ -259,28 +288,36 @@ export default function MatchesPage() {
     loadCategories();
   }, []);
 
-  // ✅ ordenação automática (interna, sem opção pro usuário)
+  // ✅ ordenação automática (sem o usuário escolher)
+  // Regras:
+  // - Sem filtros: Amazon menor → maior
+  // - Amazon: MIN => asc | (apenas) MAX => desc | (MIN+MAX) => asc
+  // - eBay:   MIN => asc | (apenas) MAX => desc | (MIN+MAX) => asc
+  // - Estoque mínimo: filtra >= X e ordena por estoque asc (10, 11, 12...)
   const effectiveSort = useMemo(() => {
-    const stockFilled = (applied.ebay_stock_min ?? "").trim() !== "";
+    const trim = (s?: string | null) => (s ?? "").trim();
+    const stockFilled = trim(applied.ebay_stock_min) !== "";
 
-    const apMinFilled = (applied.precoAmazonMin ?? "").trim() !== "";
-    const apMaxFilled = (applied.precoAmazonMax ?? "").trim() !== "";
+    const apMinFilled = trim(applied.precoAmazonMin) !== "";
+    const apMaxFilled = trim(applied.precoAmazonMax) !== "";
 
-    const ebMinFilled = (applied.precoEbayMin ?? "").trim() !== "";
-    const ebMaxFilled = (applied.precoEbayMax ?? "").trim() !== "";
+    const ebMinFilled = trim(applied.precoEbayMin) !== "";
+    const ebMaxFilled = trim(applied.precoEbayMax) !== "";
 
     // prioridade 1: estoque (quando usuário define mínimo)
     if (stockFilled) return "ebay_stock_asc";
 
-    // prioridade 2: preço Amazon (se usuário mexeu em min/max da Amazon)
+    // prioridade 2: preço Amazon
     if (apMaxFilled && !apMinFilled) return "amazon_price_desc";
+    // se min foi preenchido (com ou sem max): asc
     if (apMinFilled) return "amazon_price_asc";
 
-    // prioridade 3: preço eBay (se mexeu em min/max do eBay)
+    // prioridade 3: preço eBay
     if (ebMaxFilled && !ebMinFilled) return "ebay_price_desc";
+    // se min foi preenchido (com ou sem max): asc
     if (ebMinFilled) return "ebay_price_asc";
 
-    // default (sem filtros): Amazon menor → maior
+    // default
     return "amazon_price_asc";
   }, [applied]);
 
@@ -300,9 +337,12 @@ export default function MatchesPage() {
     const amazonSales30dMin = parseNumberOrNull(applied.amazon_sales_30d_min);
     const ebayStockMin = parseNumberOrNull(applied.ebay_stock_min);
 
-    if (applied.palavraChave.trim()) qs.set("keyword", applied.palavraChave.trim());
-    if (applied.categoria !== "__ALL__") qs.set("source_root_name", applied.categoria);
-    if (applied.subcategoria !== "__ALL__") qs.set("source_child_name", applied.subcategoria);
+    if (applied.palavraChave.trim())
+      qs.set("keyword", applied.palavraChave.trim());
+    if (applied.categoria !== "__ALL__")
+      qs.set("source_root_name", applied.categoria);
+    if (applied.subcategoria !== "__ALL__")
+      qs.set("source_child_name", applied.subcategoria);
 
     if (apMin != null) qs.set("amazon_price_min", String(apMin));
     if (apMax != null) qs.set("amazon_price_max", String(apMax));
@@ -314,7 +354,8 @@ export default function MatchesPage() {
     const ac = mapAmazonCondPtToApi(applied.condicaoAmazon);
     if (ac) qs.set("amazon_condition", ac);
 
-    if (amazonSales30dMin != null) qs.set("amazon_sales_30d_min", String(amazonSales30dMin));
+    if (amazonSales30dMin != null)
+      qs.set("amazon_sales_30d_min", String(amazonSales30dMin));
 
     if (ebMin != null) qs.set("ebay_price_min", String(ebMin));
     if (ebMax != null) qs.set("ebay_price_max", String(ebMax));
@@ -324,7 +365,7 @@ export default function MatchesPage() {
 
     if (ebayStockMin != null) qs.set("ebay_stock_min", String(ebayStockMin));
 
-    // ✅ sort automático
+    // ✅ sort automático (organização já na entrada)
     qs.set("sort", effectiveSort);
 
     return qs.toString();
@@ -361,11 +402,13 @@ export default function MatchesPage() {
     setPage(1);
     setApplied({
       ...filters,
-      precoAmazonMin: (filters.precoAmazonMin ?? "").trim(),
-      precoAmazonMax: (filters.precoAmazonMax ?? "").trim(),
-      precoEbayMin: (filters.precoEbayMin ?? "").trim(),
-      precoEbayMax: (filters.precoEbayMax ?? "").trim(),
-      ebay_stock_min: (filters.ebay_stock_min ?? "").trim(),
+      palavraChave: (filters.palavraChave ?? "").trim(),
+      precoAmazonMin: sanitizeDecimalInput(filters.precoAmazonMin ?? "").trim(),
+      precoAmazonMax: sanitizeDecimalInput(filters.precoAmazonMax ?? "").trim(),
+      precoEbayMin: sanitizeDecimalInput(filters.precoEbayMin ?? "").trim(),
+      precoEbayMax: sanitizeDecimalInput(filters.precoEbayMax ?? "").trim(),
+      amazon_sales_30d_min: sanitizeIntInput(filters.amazon_sales_30d_min ?? "").trim(),
+      ebay_stock_min: sanitizeIntInput(filters.ebay_stock_min ?? "").trim(),
     });
   }
 
@@ -393,10 +436,18 @@ export default function MatchesPage() {
     setApplied(reset);
   }
 
-  function goFirst() { setPage(1); }
-  function goLast() { setPage(Math.max(1, totalPages)); }
-  function goPrev10() { setPage((p) => Math.max(1, p - 10)); }
-  function goNext10() { setPage((p) => Math.min(Math.max(1, totalPages), p + 10)); }
+  function goFirst() {
+    setPage(1);
+  }
+  function goLast() {
+    setPage(Math.max(1, totalPages));
+  }
+  function goPrev10() {
+    setPage((p) => Math.max(1, p - 10));
+  }
+  function goNext10() {
+    setPage((p) => Math.min(Math.max(1, totalPages), p + 10));
+  }
 
   const inputCls =
     "border-white/10 bg-white/5 text-slate-100 placeholder:text-slate-400 transition-all duration-150 hover:border-white/20 focus-visible:ring-2 focus-visible:ring-indigo-400/35 focus-visible:ring-offset-0";
@@ -413,8 +464,8 @@ export default function MatchesPage() {
     { label: "Aprovações", icon: BadgeCheck, href: "/aprovacoes", enabled: false },
   ];
 
-  // ✅ badge aparece SOMENTE se estoque mínimo estiver preenchido
-  const showStock = (applied.ebay_stock_min ?? "").trim() !== "";
+  // ✅ badge aparece SOMENTE se estoque mínimo estiver preenchido (gate correto)
+  const showStockGate = (applied.ebay_stock_min ?? "").trim() !== "";
 
   return (
     <div className="min-h-screen w-full overflow-x-hidden bg-[#0b1020] text-slate-100">
@@ -643,18 +694,26 @@ export default function MatchesPage() {
                   <div className="grid grid-cols-2 gap-2">
                     <Input
                       inputMode="decimal"
+                      pattern="^[0-9]*[.,]?[0-9]*$"
                       value={filters.precoAmazonMin}
                       onChange={(e) =>
-                        setFilters((f) => ({ ...f, precoAmazonMin: e.target.value }))
+                        setFilters((f) => ({
+                          ...f,
+                          precoAmazonMin: sanitizeDecimalInput(e.target.value),
+                        }))
                       }
                       placeholder="mín"
                       className={cn(inputCls, "cursor-text")}
                     />
                     <Input
                       inputMode="decimal"
+                      pattern="^[0-9]*[.,]?[0-9]*$"
                       value={filters.precoAmazonMax}
                       onChange={(e) =>
-                        setFilters((f) => ({ ...f, precoAmazonMax: e.target.value }))
+                        setFilters((f) => ({
+                          ...f,
+                          precoAmazonMax: sanitizeDecimalInput(e.target.value),
+                        }))
                       }
                       placeholder="máx"
                       className={cn(inputCls, "cursor-text")}
@@ -719,12 +778,18 @@ export default function MatchesPage() {
                 </div>
 
                 <div className="mt-2 space-y-2">
-                  <div className="text-xs text-slate-300">Quantidade de vendas nos últimos 30 dias:</div>
+                  <div className="text-xs text-slate-300">
+                    Quantidade de vendas nos últimos 30 dias:
+                  </div>
                   <Input
                     inputMode="numeric"
+                    pattern="^[0-9]*$"
                     value={filters.amazon_sales_30d_min}
                     onChange={(e) =>
-                      setFilters((f) => ({ ...f, amazon_sales_30d_min: e.target.value }))
+                      setFilters((f) => ({
+                        ...f,
+                        amazon_sales_30d_min: sanitizeIntInput(e.target.value),
+                      }))
                     }
                     placeholder="mín"
                     className={cn(inputCls, "cursor-text")}
@@ -746,18 +811,26 @@ export default function MatchesPage() {
                   <div className="grid grid-cols-2 gap-2">
                     <Input
                       inputMode="decimal"
+                      pattern="^[0-9]*[.,]?[0-9]*$"
                       value={filters.precoEbayMin}
                       onChange={(e) =>
-                        setFilters((f) => ({ ...f, precoEbayMin: e.target.value }))
+                        setFilters((f) => ({
+                          ...f,
+                          precoEbayMin: sanitizeDecimalInput(e.target.value),
+                        }))
                       }
                       placeholder="mín"
                       className={cn(inputCls, "cursor-text")}
                     />
                     <Input
                       inputMode="decimal"
+                      pattern="^[0-9]*[.,]?[0-9]*$"
                       value={filters.precoEbayMax}
                       onChange={(e) =>
-                        setFilters((f) => ({ ...f, precoEbayMax: e.target.value }))
+                        setFilters((f) => ({
+                          ...f,
+                          precoEbayMax: sanitizeDecimalInput(e.target.value),
+                        }))
                       }
                       placeholder="máx"
                       className={cn(inputCls, "cursor-text")}
@@ -789,9 +862,13 @@ export default function MatchesPage() {
                   <div className="text-xs text-slate-300">Quantidade mínima em estoque:</div>
                   <Input
                     inputMode="numeric"
+                    pattern="^[0-9]*$"
                     value={filters.ebay_stock_min}
                     onChange={(e) =>
-                      setFilters((f) => ({ ...f, ebay_stock_min: e.target.value }))
+                      setFilters((f) => ({
+                        ...f,
+                        ebay_stock_min: sanitizeIntInput(e.target.value),
+                      }))
                     }
                     placeholder="mín"
                     className={cn(inputCls, "cursor-text")}
@@ -837,7 +914,8 @@ export default function MatchesPage() {
                 <div />
                 <div className="flex items-center justify-end gap-2">
                   <div className="text-xs text-slate-300 mr-1">
-                    Página <b className="text-slate-100">{page}</b> / {Math.max(1, totalPages)}
+                    Página <b className="text-slate-100">{page}</b> /{" "}
+                    {Math.max(1, totalPages)}
                   </div>
                   <div className="flex items-center gap-1">
                     <Button
@@ -912,9 +990,15 @@ export default function MatchesPage() {
                     <TableHeader>
                       <TableRow className="border-white/10">
                         <TableHead className="w-[560px] text-slate-200">Produto</TableHead>
-                        <TableHead className="w-[320px] text-slate-200 text-center">Amazon</TableHead>
-                        <TableHead className="w-[320px] text-slate-200 text-center">eBay</TableHead>
-                        <TableHead className="w-[140px] text-slate-200 text-center">Links</TableHead>
+                        <TableHead className="w-[320px] text-slate-200 text-center">
+                          Amazon
+                        </TableHead>
+                        <TableHead className="w-[320px] text-slate-200 text-center">
+                          eBay
+                        </TableHead>
+                        <TableHead className="w-[140px] text-slate-200 text-center">
+                          Links
+                        </TableHead>
                       </TableRow>
                     </TableHeader>
 
@@ -948,11 +1032,17 @@ export default function MatchesPage() {
                             </Badge>
                           );
 
-                        const offersQuery = `${it.amazon_brand ?? ""} ${it.amazon_title ?? it.asin}`.trim();
+                        const offersQuery = `${it.amazon_brand ?? ""} ${
+                          it.amazon_title ?? it.asin
+                        }`.trim();
                         const ebayOffersUrl = makeEbaySearchUrl(offersQuery);
 
                         const minQty = it.ebay_min_available_qty ?? null;
-                        const shouldShowStockBadge = showStock && minQty != null;
+                        const shouldShowStockBadge =
+                          showStockGate &&
+                          minQty != null &&
+                          typeof minQty === "number" &&
+                          minQty > 0;
 
                         return (
                           <TableRow
@@ -988,18 +1078,28 @@ export default function MatchesPage() {
                                       ASIN: <b className="text-slate-100">{it.asin}</b>
                                     </span>
                                     <span>
-                                      Marca: <b className="text-slate-100">{it.amazon_brand ?? "—"}</b>
+                                      Marca:{" "}
+                                      <b className="text-slate-100">
+                                        {it.amazon_brand ?? "—"}
+                                      </b>
                                     </span>
                                     <span>
-                                      BSR: <b className="text-slate-100">{it.amazon_bsr ?? "—"}</b>
+                                      BSR:{" "}
+                                      <b className="text-slate-100">
+                                        {it.amazon_bsr ?? "—"}
+                                      </b>
                                     </span>
                                   </div>
 
                                   <div className="mt-2 text-xs text-slate-300">
                                     Categoria:{" "}
-                                    <b className="text-slate-100">{it.amazon_category_root ?? "—"}</b>{" "}
+                                    <b className="text-slate-100">
+                                      {it.amazon_category_root ?? "—"}
+                                    </b>{" "}
                                     • Sub:{" "}
-                                    <b className="text-slate-100">{it.amazon_category_child ?? "—"}</b>
+                                    <b className="text-slate-100">
+                                      {it.amazon_category_child ?? "—"}
+                                    </b>
                                   </div>
                                 </div>
                               </div>
@@ -1012,7 +1112,9 @@ export default function MatchesPage() {
                                 </div>
                                 <div className="text-slate-300">
                                   Condição:{" "}
-                                  <b className="text-slate-100">{prettyCondPt(it.amazon_condition)}</b>
+                                  <b className="text-slate-100">
+                                    {prettyCondPt(it.amazon_condition)}
+                                  </b>
                                 </div>
                                 <div className="flex flex-wrap gap-2 justify-center">
                                   {badgePrime} {badgeFB}
@@ -1027,10 +1129,13 @@ export default function MatchesPage() {
                                 </div>
                                 <div className="text-slate-300">
                                   Condição:{" "}
-                                  <b className="text-slate-100">{prettyCondPt(it.ebay_condition)}</b>
+                                  <b className="text-slate-100">
+                                    {prettyCondPt(it.ebay_condition)}
+                                  </b>
                                 </div>
                                 <div className="text-slate-300">
-                                  Vendedor: <b className="text-slate-100">{it.ebay_seller ?? "—"}</b>
+                                  Vendedor:{" "}
+                                  <b className="text-slate-100">{it.ebay_seller ?? "—"}</b>
                                 </div>
 
                                 {shouldShowStockBadge && (
