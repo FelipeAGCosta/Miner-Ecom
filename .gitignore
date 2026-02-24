@@ -151,6 +151,7 @@ update_browse_node_candidates.py
 
 # Heurísticas privadas (não versionar)
 lib/bsr_heuristics_private.py
+lib/image_cache.py
 
 # Dependências específicas deste ambiente (se não quiser versionar)
 requirements.txt
