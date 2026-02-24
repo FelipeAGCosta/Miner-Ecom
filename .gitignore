@@ -168,3 +168,7 @@ compute_match_map_image_distance.py
 crawler_amazon.py
 crawler_amazon_batch.py
 run_crawler_daily.bat
+
+# cache de imagens / dhash
+cache/images/
+cache/
