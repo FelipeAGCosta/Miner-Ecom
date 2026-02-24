@@ -13,8 +13,8 @@ STALE_LOCK_HOURS = int(os.getenv("STALE_LOCK_HOURS", "12"))
 # Defaults (você pode ajustar depois)
 CAND_ARGS = [
     "--max-asins", "1200",
-    "--candidate-limit", "50",
-    "--top-k", "12",
+    "--candidate-limit", "100",
+    "--top-k", "20",
     "--only-with-image",
     "--only-unmatched",
     "--cooldown-days", "7",
