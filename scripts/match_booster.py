@@ -6,10 +6,7 @@ import sys
 import subprocess
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import List, Optional, Dict, Any
-
-
-STALE_LOCK_HOURS = int(os.getenv("STALE_LOCK_HOURS", "12"))
+from typing import List, Dict, Any
 
 
 def _env_int(name: str, default: int) -> int:
@@ -161,10 +158,6 @@ def _should_run_refresh(state_path: Path, refresh_every_days: int, force: bool) 
 
 
 def _build_cand_args(mode: str) -> List[str]:
-    """
-    build_match_candidates_from_amazon.py
-    """
-    # base
     candidate_limit = _env_int("BOOST_CAND_LIMIT", 200)
     ebay_pages = _env_int("BOOST_CAND_EBAY_PAGES", 1)
     top_k = _env_int("BOOST_CAND_TOP_K", 20)
@@ -173,19 +166,15 @@ def _build_cand_args(mode: str) -> List[str]:
     sleep_s = _env_float("BOOST_CAND_SLEEP", 0.10)
     conditions = _env_str("BOOST_CAND_CONDITIONS", "NEW,USED")
     sorts = _env_str("BOOST_CAND_SORTS", "price,bestMatch")
-
     only_with_image = _env_int("BOOST_CAND_ONLY_WITH_IMAGE", 1)
 
-    # por modo
     if mode == "refresh":
         max_asins = _env_int("BOOST_REFRESH_CAND_MAX_ASINS", 300)
         cooldown_days = _env_int("BOOST_REFRESH_CAND_COOLDOWN_DAYS", 15)
-        only_unmatched = 0  # refresh NUNCA ignora matchados
+        only_unmatched = 0
     else:
         max_asins = _env_int("BOOST_DISCOVERY_CAND_MAX_ASINS", 200)
         cooldown_days = _env_int("BOOST_DISCOVERY_CAND_COOLDOWN_DAYS", 7)
-        # você falou "não quero mais ignorar tudo que já tem offer"
-        # então por padrão: NÃO usa only-unmatched
         only_unmatched = _env_int("BOOST_DISCOVERY_ONLY_UNMATCHED", 0)
 
     args = [
@@ -203,7 +192,6 @@ def _build_cand_args(mode: str) -> List[str]:
 
     if only_with_image == 1:
         args.insert(0, "--only-with-image")
-
     if only_unmatched == 1:
         args.insert(0, "--only-unmatched")
 
@@ -211,10 +199,6 @@ def _build_cand_args(mode: str) -> List[str]:
 
 
 def _build_prom_args(mode: str) -> List[str]:
-    """
-    promote_match_offers.py
-    """
-    # base
     top_per_asin = _env_int("BOOST_PROM_TOP_PER_ASIN", 50)
     max_offers_per_asin = _env_int("BOOST_PROM_MAX_OFFERS_PER_ASIN", 5)
     dist_strict = _env_int("BOOST_PROM_DIST_STRICT", 8)
@@ -227,35 +211,39 @@ def _build_prom_args(mode: str) -> List[str]:
 
     if mode == "refresh":
         max_asins = _env_int("BOOST_REFRESH_PROM_MAX_ASINS", 2000)
-        # 15 dias -> 360 horas
-        cooldown_hours = _env_int("BOOST_REFRESH_PROM_COOLDOWN_HOURS", 360)
+        cooldown_hours = _env_int("BOOST_REFRESH_PROM_COOLDOWN_HOURS", 360)  # 15 dias
     else:
         max_asins = _env_int("BOOST_DISCOVERY_PROM_MAX_ASINS", 1200)
         cooldown_hours = _env_int("BOOST_DISCOVERY_PROM_COOLDOWN_HOURS", 12)
 
-    args = [
+    return [
         "--max-asins", str(max_asins),
         "--top-per-asin", str(top_per_asin),
         "--max-offers-per-asin", str(max_offers_per_asin),
         "--cooldown-hours", str(cooldown_hours),
-
         "--dist-strict", str(dist_strict),
         "--dist-relaxed", str(dist_relaxed),
-
         "--gtin-min-title-sim", f"{gtin_min_title_sim:.2f}",
         "--gtin-max-dist", str(gtin_max_dist),
-
         "--title-min-sim", f"{title_min_sim:.2f}",
         "--title-min-sim-no-signals", f"{title_min_sim_no_signals:.2f}",
-
         "--sleep", f"{sleep_s:.2f}",
-
         "--no-refresh-availability",
     ]
-    return args
 
 
 def main() -> int:
+    # carrega .env (Windows não carrega sozinho)
+    try:
+        from dotenv import load_dotenv  # type: ignore
+        env_path = project_root() / ".env"
+        if env_path.exists():
+            load_dotenv(env_path)
+    except Exception:
+        pass
+
+    stale_lock_hours = _env_int("STALE_LOCK_HOURS", 12)
+
     root = project_root()
     _, pipeline_dir, booster_dir = ensure_dirs(root)
 
@@ -264,10 +252,6 @@ def main() -> int:
     boost_lock = booster_dir / "match_booster.lock"
     refresh_state_path = booster_dir / "refresh_state.json"
 
-    # modo:
-    # - BOOST_MODE=auto (default): roda refresh a cada N dias, senão discovery
-    # - BOOST_MODE=refresh: força refresh
-    # - BOOST_MODE=discovery: força discovery
     boost_mode = _env_str("BOOST_MODE", "auto").lower()
     refresh_every_days = _env_int("BOOST_REFRESH_EVERY_DAYS", 15)
     force_refresh = _env_int("BOOST_REFRESH_FORCE", 0) == 1
@@ -282,8 +266,8 @@ def main() -> int:
     else:
         mode = "refresh" if _should_run_refresh(refresh_state_path, refresh_every_days, force_refresh) else "discovery"
 
-    CAND_ARGS = _build_cand_args(mode)
-    PROM_ARGS = _build_prom_args(mode)
+    cand_args = _build_cand_args(mode)
+    prom_args = _build_prom_args(mode)
 
     with open(log_path, "w", encoding="utf-8") as logf:
         logf.write("==================================================\n")
@@ -291,16 +275,15 @@ def main() -> int:
         logf.write("==================================================\n")
         logf.write(f"[INFO] ROOT={root}\n")
         logf.write(f"[INFO] PY={sys.executable}\n")
-        logf.write(f"[INFO] STALE_LOCK_HOURS={STALE_LOCK_HOURS}\n")
+        logf.write(f"[INFO] STALE_LOCK_HOURS={stale_lock_hours}\n")
         logf.write(f"[INFO] BOOST_MODE={boost_mode} -> mode={mode}\n")
         logf.write(f"[INFO] REFRESH_EVERY_DAYS={refresh_every_days} FORCE={int(force_refresh)}\n")
         logf.write(f"[INFO] REFRESH_STATE={refresh_state_path}\n")
-        logf.write(f"[INFO] CAND_ARGS={' '.join(CAND_ARGS)}\n")
-        logf.write(f"[INFO] PROM_ARGS={' '.join(PROM_ARGS)}\n")
+        logf.write(f"[INFO] CAND_ARGS={' '.join(cand_args)}\n")
+        logf.write(f"[INFO] PROM_ARGS={' '.join(prom_args)}\n")
 
-        # stale cleanup
-        remove_if_stale(match_lock, logf, STALE_LOCK_HOURS)
-        remove_if_stale(boost_lock, logf, STALE_LOCK_HOURS)
+        remove_if_stale(match_lock, logf, stale_lock_hours)
+        remove_if_stale(boost_lock, logf, stale_lock_hours)
 
         if match_lock.exists():
             logf.write("[INFO] MATCH_LOCK ativo. Saindo.\n")
@@ -321,10 +304,7 @@ def main() -> int:
         try:
             logf.write("--------------------------------------------------\n")
             logf.write(f"[STEP] Candidates ({mode})\n")
-            rc = run_step(
-                [sys.executable, "-u", "crawlers_ebay/build_match_candidates_from_amazon.py", *CAND_ARGS],
-                logf,
-            )
+            rc = run_step([sys.executable, "-u", "crawlers_ebay/build_match_candidates_from_amazon.py", *cand_args], logf)
             final_rc = rc
             if rc != 0:
                 logf.write("[ERROR] Candidates falhou. Abortando.\n")
@@ -332,16 +312,12 @@ def main() -> int:
 
             logf.write("--------------------------------------------------\n")
             logf.write(f"[STEP] Promote match_offers ({mode})\n")
-            rc = run_step(
-                [sys.executable, "-u", "crawlers_ebay/promote_match_offers.py", *PROM_ARGS],
-                logf,
-            )
+            rc = run_step([sys.executable, "-u", "crawlers_ebay/promote_match_offers.py", *prom_args], logf)
             final_rc = rc
             if rc != 0:
                 logf.write("[ERROR] Promote match_offers falhou.\n")
                 return rc
 
-            # se foi refresh e deu certo, atualiza estado
             if mode == "refresh":
                 _write_refresh_state(refresh_state_path, {
                     "last_refresh_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
