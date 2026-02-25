@@ -37,7 +37,13 @@ class MatchItem(BaseModel):
     ebay_currency: Optional[str] = None
     ebay_condition: Optional[str] = None
     ebay_seller: Optional[str] = None
+
+    # link direto da oferta mais barata (já existe)
     ebay_url: Optional[str] = None
+
+    # link "+ ofertas" (novo)
+    ebay_search_url: Optional[str] = None
+
     ebay_available_qty: Optional[int] = None
     ebay_qty_flag: Optional[str] = None
     ebay_min_available_qty: Optional[int] = None
