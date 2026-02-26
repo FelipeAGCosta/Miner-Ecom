@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Optional, Dict, Any, List
 import re
-from urllib.parse import quote_plus
 
 from fastapi import FastAPI, Query
 from sqlalchemy import text
@@ -10,65 +9,14 @@ from sqlalchemy import text
 from lib.config import make_engine
 from api.models import MatchListResponse, MatchItem
 
-app = FastAPI(title="miner-ecom API", version="0.4.5")
+app = FastAPI(title="miner-ecom API", version="0.4.7")
 
 DEFAULT_MEDIA_REGEX = r"(movie|movies|dvd|blu(\s|-)?ray|book|books|kindle|music|cd|vinyl|video\s?game|video\s?games|tv)"
-
-STOPWORDS = {
-    "the", "and", "or", "with", "for", "to", "of", "in", "on", "a", "an",
-    "new", "original", "genuine", "authentic", "lot", "set", "bundle",
-    "kids", "kid", "pack", "pcs", "piece", "pieces", "size",
-    "gift", "gifts",
-}
+ASIN_RE = re.compile(r"^[A-Z0-9]{10}$", re.IGNORECASE)
 
 
 def _clamp_int(v: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, int(v)))
-
-
-def _make_ebay_search_url(
-    amazon_gtin: Optional[str],
-    amazon_title: Optional[str],
-    amazon_brand: Optional[str],
-) -> Optional[str]:
-    """
-    Gera URL de busca do eBay ("+ ofertas") de forma robusta:
-    - Se tiver GTIN (numérico), usa (GTIN) como query principal
-    - Senão, monta uma query curta baseada em brand + tokens relevantes do título
-    """
-    gtin = (amazon_gtin or "").strip()
-    if gtin and re.fullmatch(r"\d{8,14}", gtin):
-        q = f"({gtin})"
-        return f"https://www.ebay.com/sch/i.html?_nkw={quote_plus(q)}&_sop=15"
-
-    title = (amazon_title or "").strip()
-    brand = (amazon_brand or "").strip()
-
-    if not title and not brand:
-        return None
-
-    # tokens do título (curto, tipo o que você fez no crawler)
-    tokens = re.findall(r"[A-Za-z0-9]+", title.lower())
-    tokens = [t for t in tokens if len(t) >= 4 and t not in STOPWORDS]
-    # dedupe preservando ordem
-    seen = set()
-    tokens2 = []
-    for t in tokens:
-        if t not in seen:
-            seen.add(t)
-            tokens2.append(t)
-
-    parts: List[str] = []
-    if brand and brand.lower() not in ("generic", "unknown", "na", "n/a") and len(brand) <= 45:
-        parts.append(brand)
-
-    parts.extend(tokens2[:6])
-
-    q = " ".join(parts).strip()
-    if not q:
-        q = title[:80]
-
-    return f"https://www.ebay.com/sch/i.html?_nkw={quote_plus(q)}&_sop=15"
 
 
 @app.get("/health")
@@ -78,16 +26,6 @@ def health() -> Dict[str, Any]:
 
 @app.get("/filters/categories")
 def list_categories() -> Dict[str, Any]:
-    """
-    Retorna categorias/subcategorias existentes na amazon_products:
-    {
-      "categories": [
-        {"name": "Casa & Cozinha", "children": ["Utensílios ...", ...]},
-        ...
-      ]
-    }
-    Remove AUTO - Browse Nodes.
-    """
     sql = text("""
         SELECT source_root_name AS root, source_child_name AS child
         FROM amazon_products
@@ -128,16 +66,18 @@ def list_matches(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
 
-    # regras (UI não expõe, mas a API suporta)
-    max_image_distance: int = Query(8, ge=0, le=20),
-    gtin_max_dist: int = Query(15, ge=0, le=40),
+    # filtros de validação (agora alinhados ao promote “sem imagem determinante”)
+    gtin_min_title_sim: float = Query(35.0, ge=0, le=100),
+    title_min_sim: float = Query(88.0, ge=0, le=100),
+    title_min_score: float = Query(80.0, ge=0, le=100),
 
-    # gate TITLE-only (novo, conservador)
-    title_min_sim: float = Query(92.0, ge=0, le=100),
-    title_min_score: float = Query(88.0, ge=0, le=100),
+    # legado IMAGE (pra não sumir dado antigo)
+    image_min_title_sim: float = Query(85.0, ge=0, le=100),
+    image_min_score: float = Query(80.0, ge=0, le=100),
 
     # filtros Amazon
     keyword: Optional[str] = None,
+    asin: Optional[str] = None,  # filtro direto por ASIN (debug e uso futuro)
     source_root_name: Optional[str] = None,
     source_child_name: Optional[str] = None,
     amazon_price_min: Optional[float] = None,
@@ -151,7 +91,7 @@ def list_matches(
     ebay_price_max: Optional[float] = None,
     ebay_condition: Optional[str] = None,
 
-    # estoque eBay (min_available_qty)
+    # estoque eBay
     ebay_stock_min: Optional[int] = Query(None, ge=0),
 
     # ordenação
@@ -167,35 +107,38 @@ def list_matches(
     params: Dict[str, Any] = {
         "lim": page_size,
         "off": offset,
-        "max_dist": int(max_image_distance),
-        "gtin_max_dist": int(gtin_max_dist),
         "media_re": DEFAULT_MEDIA_REGEX,
+
+        "gtin_min_title_sim": float(gtin_min_title_sim),
         "title_min_sim": float(title_min_sim),
         "title_min_score": float(title_min_score),
+
+        "image_min_title_sim": float(image_min_title_sim),
+        "image_min_score": float(image_min_score),
     }
 
-    # Gate de validade
+    # Gate de validade (sem depender de image_distance)
     where.append(
         "("
-        # GTIN
+        # GTIN (ou legado: validated_method NULL mas amazon_gtin existe)
         " ("
         "   ((mo.validated_method = 'GTIN' OR (mo.validated_method IS NULL AND ap.gtin IS NOT NULL))"
-        "    AND (mo.image_distance IS NULL OR mo.image_distance <= :gtin_max_dist))"
+        "    AND COALESCE(mo.title_sim,0) >= :gtin_min_title_sim)"
         " )"
         " OR "
-        # IMAGE (não-GTIN)
-        " ("
-        "   ((mo.validated_method <> 'GTIN' OR (mo.validated_method IS NULL AND ap.gtin IS NULL))"
-        "    AND mo.image_distance IS NOT NULL AND mo.image_distance <= :max_dist)"
-        " )"
-        " OR "
-        # TITLE-only (novo)
+        # TITLE
         " ("
         "   (mo.validated_method = 'TITLE'"
         "    AND COALESCE(mo.validated_score,0) >= :title_min_score"
         "    AND COALESCE(mo.title_sim,0) >= :title_min_sim"
-        "    AND (COALESCE(mo.brand_in,0) = 1 OR COALESCE(mo.model_hit,0) = 1)"
-        "   )"
+        "    AND (COALESCE(mo.brand_in,0) = 1 OR COALESCE(mo.model_hit,0) = 1))"
+        " )"
+        " OR "
+        # IMAGE legado (não usa dist; só um mínimo de score/título)
+        " ("
+        "   (mo.validated_method = 'IMAGE'"
+        "    AND COALESCE(mo.validated_score,0) >= :image_min_score"
+        "    AND COALESCE(mo.title_sim,0) >= :image_min_title_sim)"
         " )"
         ")"
     )
@@ -203,12 +146,25 @@ def list_matches(
     if include_media != 1:
         where.append("(ap.browse_node_name IS NULL OR LOWER(ap.browse_node_name) NOT REGEXP :media_re)")
 
+    # filtro direto por ASIN
+    if asin:
+        a = asin.strip().upper()
+        if a:
+            where.append("ap.asin = :asin_exact")
+            params["asin_exact"] = a
+
     # -------- Amazon filters --------
     if keyword:
-        kw = keyword.strip().lower()
-        if kw:
-            where.append("(LOWER(ap.title) LIKE :kw OR LOWER(ap.brand) LIKE :kw)")
-            params["kw"] = f"%{kw}%"
+        raw = keyword.strip()
+        if raw:
+            if ASIN_RE.match(raw):
+                where.append("(ap.asin = :asin_kw OR LOWER(ap.title) LIKE :kw OR LOWER(ap.brand) LIKE :kw)")
+                params["asin_kw"] = raw.upper()
+                params["kw"] = f"%{raw.lower()}%"
+            else:
+                kw = raw.lower()
+                where.append("(LOWER(ap.title) LIKE :kw OR LOWER(ap.brand) LIKE :kw)")
+                params["kw"] = f"%{kw}%"
 
     if source_root_name:
         where.append("ap.source_root_name = :root")
@@ -280,16 +236,12 @@ def list_matches(
             where.append("el.`condition` = :eb_cond")
             params["eb_cond"] = str(ebay_condition).strip()
 
-    # -------- eBay stock filter --------
     if ebay_stock_min is not None:
         where.append("el.min_available_qty >= :eb_stock_min")
         params["eb_stock_min"] = int(ebay_stock_min)
 
     where_sql = " AND ".join(where) if where else "1=1"
 
-    # -----------------------------------------
-    # Ordenação
-    # -----------------------------------------
     sort_map = {
         "recent": "created_at DESC, asin ASC",
         "spread_desc": "spread IS NULL ASC, spread DESC, asin ASC",
@@ -428,16 +380,5 @@ def list_matches(
         total = int(conn.execute(sql_total, params).scalar() or 0)
         rows = conn.execute(sql_items, params).mappings().all()
 
-    # Injeta ebay_search_url em cada item
-    enriched: List[Dict[str, Any]] = []
-    for r in rows:
-        d = dict(r)
-        d["ebay_search_url"] = _make_ebay_search_url(
-            amazon_gtin=d.get("amazon_gtin"),
-            amazon_title=d.get("amazon_title"),
-            amazon_brand=d.get("amazon_brand"),
-        )
-        enriched.append(d)
-
-    items = [MatchItem(**d) for d in enriched]
+    items = [MatchItem(**dict(r)) for r in rows]
     return MatchListResponse(page=page, page_size=page_size, total=total, items=items)
