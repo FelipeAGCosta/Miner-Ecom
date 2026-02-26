@@ -98,7 +98,7 @@ def acquire_lock(p: Path, logf) -> bool:
 def release_lock(p: Path, logf) -> None:
     try:
         if p.exists():
-            p.unlink()
+            p.unlink(missing_ok=True)
             logf.write(f"[LOCK] released: {p}\n")
     except Exception as e:
         logf.write(f"[LOCK] release error: {p} -> {type(e).__name__}: {e}\n")
@@ -206,10 +206,8 @@ def _build_prom_args(mode: str) -> List[str]:
     max_asins = _env_int("BOOST_REFRESH_PROM_MAX_ASINS", 2000) if mode == "refresh" else _env_int("BOOST_DISCOVERY_PROM_MAX_ASINS", 1200)
     top_per_asin = _env_int("BOOST_PROM_TOP_PER_ASIN", 50)
 
-    # você quer 10:
     max_offers_per_asin = _env_int("BOOST_PROM_MAX_OFFERS_PER_ASIN", 10)
 
-    # no promote novo, cooldown pode ser 0 pra testar, e depois você sobe
     cooldown_hours = _env_int("BOOST_REFRESH_PROM_COOLDOWN_HOURS", 0) if mode == "refresh" else _env_int("BOOST_DISCOVERY_PROM_COOLDOWN_HOURS", 12)
 
     gtin_min_title_sim = _env_float("BOOST_PROM_GTIN_MIN_TITLE_SIM", 40.0)
@@ -220,6 +218,21 @@ def _build_prom_args(mode: str) -> List[str]:
     sleep_s = _env_float("BOOST_PROM_SLEEP", 0.02)
 
     calc_img = _env_int("BOOST_PROM_CALC_IMAGE_DISTANCE", 0)
+
+    # NOVO: controle por ENV (mantém o comportamento atual como default = 1)
+    # - Se 1 => passa --no-refresh-availability (não faz chamadas extras)
+    # - Se 0 => NÃO passa a flag (deixa o promote fazer refresh, se ele suportar)
+    #
+    # Você pode setar específico por modo:
+    #   BOOST_REFRESH_PROM_NO_REFRESH_AVAILABILITY=0  (refresh mode refresca availability)
+    #   BOOST_DISCOVERY_PROM_NO_REFRESH_AVAILABILITY=1 (discovery não refresca)
+    no_refresh_av = _env_int(
+        "BOOST_REFRESH_PROM_NO_REFRESH_AVAILABILITY",
+        _env_int("BOOST_PROM_NO_REFRESH_AVAILABILITY", 1),
+    ) if mode == "refresh" else _env_int(
+        "BOOST_DISCOVERY_PROM_NO_REFRESH_AVAILABILITY",
+        _env_int("BOOST_PROM_NO_REFRESH_AVAILABILITY", 1),
+    )
 
     args = [
         "--max-asins", str(max_asins),
@@ -233,11 +246,13 @@ def _build_prom_args(mode: str) -> List[str]:
 
         "--timeout", str(timeout_s),
         "--sleep", f"{sleep_s:.2f}",
-
-        "--no-refresh-availability",
     ]
+
     if calc_img == 1:
         args.append("--calc-image-distance")
+
+    if int(no_refresh_av) == 1:
+        args.append("--no-refresh-availability")
 
     return args
 
@@ -266,6 +281,9 @@ def main() -> int:
     refresh_every_days = _env_int("BOOST_REFRESH_EVERY_DAYS", 15)
     force_refresh = _env_int("BOOST_REFRESH_FORCE", 0) == 1
 
+    # candidates truncation rc (padrão do candidates novo)
+    cand_trunc_rc = _env_int("CANDIDATES_RC_TRUNCATED_RATE_LIMIT", 22)
+
     if boost_mode not in ("auto", "refresh", "discovery"):
         boost_mode = "auto"
 
@@ -289,6 +307,7 @@ def main() -> int:
         logf.write(f"[INFO] BOOST_MODE={boost_mode} -> mode={mode}\n")
         logf.write(f"[INFO] REFRESH_EVERY_DAYS={refresh_every_days} FORCE={int(force_refresh)}\n")
         logf.write(f"[INFO] REFRESH_STATE={refresh_state_path}\n")
+        logf.write(f"[INFO] CAND_TRUNC_RC={cand_trunc_rc}\n")
         logf.write(f"[INFO] CAND_ARGS={' '.join(cand_args)}\n")
         logf.write(f"[INFO] PROM_ARGS={' '.join(prom_args)}\n")
 
@@ -317,7 +336,11 @@ def main() -> int:
             rc = run_step([sys.executable, "-u", "crawlers_ebay/build_match_candidates_from_amazon.py", *cand_args], logf)
             final_rc = rc
             if rc != 0:
-                logf.write("[ERROR] Candidates falhou. Abortando.\n")
+                if rc == cand_trunc_rc:
+                    logf.write("[ERROR] Candidates TRUNCADO por rate limit (429). Abortando.\n")
+                    logf.write("[HINT] Ajuste: aumentar CANDIDATES_BASE_SLEEP_S/CAP/JITTER e/ou CANDIDATES_REQ_SLEEP_S; reduzir BOOST_*_CAND_MAX_ASINS.\n")
+                else:
+                    logf.write("[ERROR] Candidates falhou. Abortando.\n")
                 return rc
 
             logf.write("--------------------------------------------------\n")
