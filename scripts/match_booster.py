@@ -9,6 +9,10 @@ from pathlib import Path
 from typing import List, Dict, Any
 
 
+def project_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
 def _env_int(name: str, default: int) -> int:
     v = os.getenv(name)
     if v is None or str(v).strip() == "":
@@ -32,10 +36,6 @@ def _env_float(name: str, default: float) -> float:
 def _env_str(name: str, default: str) -> str:
     v = os.getenv(name)
     return str(v).strip() if v is not None and str(v).strip() != "" else default
-
-
-def project_root() -> Path:
-    return Path(__file__).resolve().parents[1]
 
 
 def ensure_dirs(root: Path) -> tuple[Path, Path, Path]:
@@ -158,19 +158,22 @@ def _should_run_refresh(state_path: Path, refresh_every_days: int, force: bool) 
 
 
 def _build_cand_args(mode: str) -> List[str]:
-    candidate_limit = _env_int("BOOST_CAND_LIMIT", 200)
+    # candidates
+    candidate_limit = _env_int("BOOST_CAND_LIMIT", 120)
     ebay_pages = _env_int("BOOST_CAND_EBAY_PAGES", 1)
     top_k = _env_int("BOOST_CAND_TOP_K", 20)
     top_k_cheap = _env_int("BOOST_CAND_TOP_K_CHEAP", 20)
     min_title_sim = _env_float("BOOST_CAND_MIN_TITLE_SIM", 35.0)
     sleep_s = _env_float("BOOST_CAND_SLEEP", 0.10)
+
     conditions = _env_str("BOOST_CAND_CONDITIONS", "NEW,USED")
     sorts = _env_str("BOOST_CAND_SORTS", "price,bestMatch")
+
     only_with_image = _env_int("BOOST_CAND_ONLY_WITH_IMAGE", 1)
 
     if mode == "refresh":
-        max_asins = _env_int("BOOST_REFRESH_CAND_MAX_ASINS", 300)
-        cooldown_days = _env_int("BOOST_REFRESH_CAND_COOLDOWN_DAYS", 15)
+        max_asins = _env_int("BOOST_REFRESH_CAND_MAX_ASINS", 80)
+        cooldown_days = _env_int("BOOST_REFRESH_CAND_COOLDOWN_DAYS", 0)
         only_unmatched = 0
     else:
         max_asins = _env_int("BOOST_DISCOVERY_CAND_MAX_ASINS", 200)
@@ -199,37 +202,44 @@ def _build_cand_args(mode: str) -> List[str]:
 
 
 def _build_prom_args(mode: str) -> List[str]:
+    # promote (NOVO promote_match_offers.py)
+    max_asins = _env_int("BOOST_REFRESH_PROM_MAX_ASINS", 2000) if mode == "refresh" else _env_int("BOOST_DISCOVERY_PROM_MAX_ASINS", 1200)
     top_per_asin = _env_int("BOOST_PROM_TOP_PER_ASIN", 50)
-    max_offers_per_asin = _env_int("BOOST_PROM_MAX_OFFERS_PER_ASIN", 5)
-    dist_strict = _env_int("BOOST_PROM_DIST_STRICT", 8)
-    dist_relaxed = _env_int("BOOST_PROM_DIST_RELAXED", 10)
-    gtin_min_title_sim = _env_float("BOOST_PROM_GTIN_MIN_TITLE_SIM", 55.0)
-    gtin_max_dist = _env_int("BOOST_PROM_GTIN_MAX_DIST", 15)
-    title_min_sim = _env_float("BOOST_PROM_TITLE_MIN_SIM", 92.0)
-    title_min_sim_no_signals = _env_float("BOOST_PROM_TITLE_MIN_SIM_NO_SIGNALS", 95.0)
-    sleep_s = _env_float("BOOST_PROM_SLEEP", 0.03)
 
-    if mode == "refresh":
-        max_asins = _env_int("BOOST_REFRESH_PROM_MAX_ASINS", 2000)
-        cooldown_hours = _env_int("BOOST_REFRESH_PROM_COOLDOWN_HOURS", 360)  # 15 dias
-    else:
-        max_asins = _env_int("BOOST_DISCOVERY_PROM_MAX_ASINS", 1200)
-        cooldown_hours = _env_int("BOOST_DISCOVERY_PROM_COOLDOWN_HOURS", 12)
+    # você quer 10:
+    max_offers_per_asin = _env_int("BOOST_PROM_MAX_OFFERS_PER_ASIN", 10)
 
-    return [
+    # no promote novo, cooldown pode ser 0 pra testar, e depois você sobe
+    cooldown_hours = _env_int("BOOST_REFRESH_PROM_COOLDOWN_HOURS", 0) if mode == "refresh" else _env_int("BOOST_DISCOVERY_PROM_COOLDOWN_HOURS", 12)
+
+    gtin_min_title_sim = _env_float("BOOST_PROM_GTIN_MIN_TITLE_SIM", 40.0)
+    title_min_sim = _env_float("BOOST_PROM_TITLE_MIN_SIM", 86.0)
+    title_min_sim_no_signals = _env_float("BOOST_PROM_TITLE_MIN_SIM_NO_SIGNALS", 90.0)
+
+    timeout_s = _env_int("BOOST_PROM_TIMEOUT", 25)
+    sleep_s = _env_float("BOOST_PROM_SLEEP", 0.02)
+
+    calc_img = _env_int("BOOST_PROM_CALC_IMAGE_DISTANCE", 0)
+
+    args = [
         "--max-asins", str(max_asins),
         "--top-per-asin", str(top_per_asin),
         "--max-offers-per-asin", str(max_offers_per_asin),
         "--cooldown-hours", str(cooldown_hours),
-        "--dist-strict", str(dist_strict),
-        "--dist-relaxed", str(dist_relaxed),
+
         "--gtin-min-title-sim", f"{gtin_min_title_sim:.2f}",
-        "--gtin-max-dist", str(gtin_max_dist),
         "--title-min-sim", f"{title_min_sim:.2f}",
         "--title-min-sim-no-signals", f"{title_min_sim_no_signals:.2f}",
+
+        "--timeout", str(timeout_s),
         "--sleep", f"{sleep_s:.2f}",
+
         "--no-refresh-availability",
     ]
+    if calc_img == 1:
+        args.append("--calc-image-distance")
+
+    return args
 
 
 def main() -> int:
