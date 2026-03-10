@@ -4,9 +4,10 @@ import json
 import os
 import sys
 import subprocess
+import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 
 def project_root() -> Path:
@@ -60,9 +61,79 @@ def lock_age_hours(p: Path) -> int:
         return -1
 
 
-def remove_if_stale(p: Path, logf, stale_hours: int) -> bool:
+def _read_lock_pid(p: Path) -> Optional[int]:
+    """
+    Tenta extrair pid=123 de um lock.
+    - locks do booster têm "pid=..."
+    - locks do pipeline podem ter só timestamp -> retorna None
+    """
+    try:
+        if not p.exists():
+            return None
+        txt = p.read_text(encoding="utf-8", errors="ignore")
+        for part in txt.split():
+            if part.startswith("pid="):
+                raw = part.split("=", 1)[1].strip()
+                if raw.isdigit():
+                    return int(raw)
+    except Exception:
+        return None
+    return None
+
+
+def _pid_is_running(pid: int) -> bool:
+    """
+    Checagem best-effort.
+    - Windows: tasklist
+    - Outros: os.kill(pid, 0)
+    """
+    if pid <= 0:
+        return False
+
+    try:
+        if os.name == "nt":
+            # tasklist sempre existe no Windows
+            p = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="ignore",
+            )
+            out = (p.stdout or "") + "\n" + (p.stderr or "")
+            return str(pid) in out
+        else:
+            os.kill(pid, 0)
+            return True
+    except Exception:
+        return False
+
+
+def remove_if_stale_or_orphan(p: Path, logf, stale_hours: int) -> bool:
+    """
+    Remove lock se:
+    - stale (>= stale_hours) OU
+    - for lock do booster (tem pid) e o pid não existir (órfão)
+    Retorna True se removeu.
+    """
     if not p.exists():
         return False
+
+    pid = _read_lock_pid(p)
+    if pid is not None:
+        running = _pid_is_running(pid)
+        logf.write(f"[LOCK] {p} pid={pid} running={int(running)}\n")
+        if not running:
+            logf.write(f"[LOCK] orphan pid -> removendo: {p}\n")
+            try:
+                p.unlink(missing_ok=True)
+            except Exception:
+                try:
+                    os.remove(str(p))
+                except Exception:
+                    pass
+            return True
+
     age = lock_age_hours(p)
     logf.write(f"[LOCK] {p} age_hours={age}\n")
     if age == -1:
@@ -105,20 +176,39 @@ def release_lock(p: Path, logf) -> None:
 
 
 def run_step(cmd: list[str], logf) -> int:
+    """
+    Executa passo e faz stream do stdout/stderr direto pro log (não guarda tudo em memória).
+    """
     logf.write(f"[CMD] {' '.join(cmd)}\n")
     logf.flush()
-    p = subprocess.run(cmd, capture_output=True, text=True, cwd=str(project_root()))
-    if p.stdout:
-        logf.write(p.stdout)
-        if not p.stdout.endswith("\n"):
+
+    try:
+        p = subprocess.Popen(
+            cmd,
+            cwd=str(project_root()),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+        )
+    except Exception as e:
+        logf.write(f"[ERROR] Popen falhou: {type(e).__name__}: {e}\n")
+        logf.write("[RC] 1\n")
+        logf.flush()
+        return 1
+
+    assert p.stdout is not None
+    for line in p.stdout:
+        logf.write(line)
+        if not line.endswith("\n"):
             logf.write("\n")
-    if p.stderr:
-        logf.write(p.stderr)
-        if not p.stderr.endswith("\n"):
-            logf.write("\n")
-    logf.write(f"[RC] {p.returncode}\n")
+    rc = p.wait()
+
+    logf.write(f"[RC] {rc}\n")
     logf.flush()
-    return int(p.returncode)
+    return int(rc)
 
 
 def _read_refresh_state(state_path: Path) -> Dict[str, Any]:
@@ -217,7 +307,7 @@ def _build_prom_args(mode: str) -> List[str]:
 
     calc_img = _env_int("BOOST_PROM_CALC_IMAGE_DISTANCE", 0)
 
-    # mantém default = 1 (como você já usa hoje)
+    # mantém default = 1
     no_refresh_av = _env_int("BOOST_PROM_NO_REFRESH_AVAILABILITY", 1)
 
     args = [
@@ -242,6 +332,13 @@ def _build_prom_args(mode: str) -> List[str]:
 
 
 def main() -> int:
+    # ✅ garante que qualquer execução (Task Scheduler, CMD aleatório) funcione com paths relativos
+    try:
+        os.chdir(str(project_root()))
+    except Exception:
+        pass
+
+    # carrega .env
     try:
         from dotenv import load_dotenv  # type: ignore
         env_path = project_root() / ".env"
@@ -251,6 +348,9 @@ def main() -> int:
         pass
 
     stale_lock_hours = _env_int("STALE_LOCK_HOURS", 12)
+
+    # opcional: aguardar lock por alguns segundos antes de desistir (default = 0, mantém comportamento atual)
+    wait_match_lock_s = _env_int("BOOST_WAIT_MATCH_LOCK_SECONDS", 0)
 
     root = project_root()
     _, pipeline_dir, booster_dir = ensure_dirs(root)
@@ -265,8 +365,6 @@ def main() -> int:
     force_refresh = _env_int("BOOST_REFRESH_FORCE", 0) == 1
 
     cand_trunc_rc = _env_int("CANDIDATES_RC_TRUNCATED_RATE_LIMIT", 22)
-
-    # NOVO: se 1, não aborta booster quando candidates truncar (RC=22)
     continue_on_trunc = _env_int("BOOST_CONTINUE_ON_CAND_TRUNCATION", 1) == 1
 
     if boost_mode not in ("auto", "refresh", "discovery"):
@@ -289,6 +387,7 @@ def main() -> int:
         logf.write(f"[INFO] ROOT={root}\n")
         logf.write(f"[INFO] PY={sys.executable}\n")
         logf.write(f"[INFO] STALE_LOCK_HOURS={stale_lock_hours}\n")
+        logf.write(f"[INFO] BOOST_WAIT_MATCH_LOCK_SECONDS={wait_match_lock_s}\n")
         logf.write(f"[INFO] BOOST_MODE={boost_mode} -> mode={mode}\n")
         logf.write(f"[INFO] REFRESH_EVERY_DAYS={refresh_every_days} FORCE={int(force_refresh)}\n")
         logf.write(f"[INFO] REFRESH_STATE={refresh_state_path}\n")
@@ -296,12 +395,23 @@ def main() -> int:
         logf.write(f"[INFO] CAND_ARGS={' '.join(cand_args)}\n")
         logf.write(f"[INFO] PROM_ARGS={' '.join(prom_args)}\n")
 
-        remove_if_stale(match_lock, logf, stale_lock_hours)
-        remove_if_stale(boost_lock, logf, stale_lock_hours)
+        # ✅ remove lock stale/órfão (quando for lock do booster)
+        remove_if_stale_or_orphan(match_lock, logf, stale_lock_hours)
+        remove_if_stale_or_orphan(boost_lock, logf, stale_lock_hours)
 
+        # ✅ se match.lock estiver ativo, opcionalmente espera um pouco (se configurado), senão sai (comportamento atual)
         if match_lock.exists():
-            logf.write("[INFO] MATCH_LOCK ativo. Saindo.\n")
-            return 0
+            if wait_match_lock_s > 0:
+                logf.write("[INFO] MATCH_LOCK ativo. Aguardando liberar...\n")
+                t0 = time.time()
+                while match_lock.exists() and (time.time() - t0) < float(wait_match_lock_s):
+                    time.sleep(1.0)
+                remove_if_stale_or_orphan(match_lock, logf, stale_lock_hours)
+
+            if match_lock.exists():
+                logf.write("[INFO] MATCH_LOCK ativo. Saindo.\n")
+                return 0
+
         if boost_lock.exists():
             logf.write("[INFO] BOOST_LOCK ativo. Saindo.\n")
             return 0
@@ -309,6 +419,7 @@ def main() -> int:
         if not acquire_lock(boost_lock, logf):
             logf.write("[INFO] Não consegui adquirir BOOST_LOCK. Saindo.\n")
             return 0
+
         if not acquire_lock(match_lock, logf):
             logf.write("[INFO] Não consegui adquirir MATCH_LOCK. Saindo.\n")
             release_lock(boost_lock, logf)
