@@ -253,7 +253,7 @@ def _build_cand_args(mode: str) -> List[str]:
     top_k = _env_int("BOOST_CAND_TOP_K", 20)
     top_k_cheap = _env_int("BOOST_CAND_TOP_K_CHEAP", 20)
     min_title_sim = _env_float("BOOST_CAND_MIN_TITLE_SIM", 35.0)
-    sleep_s = _env_float("BOOST_CAND_SLEEP", 0.10)
+    sleep_s = _env_float("BOOST_CAND_SLEEP", 0.60)
 
     conditions = _env_str("BOOST_CAND_CONDITIONS", "NEW,USED")
     sorts = _env_str("BOOST_CAND_SORTS", "price,bestMatch")
@@ -266,8 +266,8 @@ def _build_cand_args(mode: str) -> List[str]:
         only_unmatched = 0
     else:
         max_asins = _env_int("BOOST_DISCOVERY_CAND_MAX_ASINS", 200)
-        cooldown_days = _env_int("BOOST_DISCOVERY_CAND_COOLDOWN_DAYS", 7)
-        only_unmatched = _env_int("BOOST_DISCOVERY_ONLY_UNMATCHED", 0)
+        cooldown_days = _env_int("BOOST_DISCOVERY_CAND_COOLDOWN_DAYS", 0)
+        only_unmatched = _env_int("BOOST_DISCOVERY_ONLY_UNMATCHED", 1)
 
     args = [
         "--max-asins", str(max_asins),
@@ -291,16 +291,16 @@ def _build_cand_args(mode: str) -> List[str]:
 
 
 def _build_prom_args(mode: str) -> List[str]:
-    max_asins = _env_int("BOOST_REFRESH_PROM_MAX_ASINS", 2000) if mode == "refresh" else _env_int("BOOST_DISCOVERY_PROM_MAX_ASINS", 1200)
+    max_asins = _env_int("BOOST_REFRESH_PROM_MAX_ASINS", 2000) if mode == "refresh" else _env_int("BOOST_DISCOVERY_PROM_MAX_ASINS", 2000)
     top_per_asin = _env_int("BOOST_PROM_TOP_PER_ASIN", 50)
 
     max_offers_per_asin = _env_int("BOOST_PROM_MAX_OFFERS_PER_ASIN", 10)
 
     cooldown_hours = _env_int("BOOST_REFRESH_PROM_COOLDOWN_HOURS", 0) if mode == "refresh" else _env_int("BOOST_DISCOVERY_PROM_COOLDOWN_HOURS", 12)
 
-    gtin_min_title_sim = _env_float("BOOST_PROM_GTIN_MIN_TITLE_SIM", 40.0)
-    title_min_sim = _env_float("BOOST_PROM_TITLE_MIN_SIM", 86.0)
-    title_min_sim_no_signals = _env_float("BOOST_PROM_TITLE_MIN_SIM_NO_SIGNALS", 90.0)
+    gtin_min_title_sim = _env_float("BOOST_PROM_GTIN_MIN_TITLE_SIM", 35)
+    title_min_sim = _env_float("BOOST_PROM_TITLE_MIN_SIM", 84.0)
+    title_min_sim_no_signals = _env_float("BOOST_PROM_TITLE_MIN_SIM_NO_SIGNALS", 88.0)
 
     timeout_s = _env_int("BOOST_PROM_TIMEOUT", 25)
     sleep_s = _env_float("BOOST_PROM_SLEEP", 0.02)
